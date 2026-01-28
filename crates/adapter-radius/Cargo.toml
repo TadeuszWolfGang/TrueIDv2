@@ -1,0 +1,12 @@
+[package]
+name = "net-identity-adapter-radius"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+chrono = { workspace = true }
+net-identity-core = { path = "../core" }
+radius = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
