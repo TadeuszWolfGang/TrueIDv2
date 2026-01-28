@@ -5,6 +5,7 @@ members = [
   "crates/ingest",
   "crates/adapter-radius",
   "crates/adapter-ad-logs",
+  "crates/utils",
   "apps/server",
 ]
 resolver = "2"

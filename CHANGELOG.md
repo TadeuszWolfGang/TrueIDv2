@@ -16,3 +16,5 @@
 - Static file serving via `tower-http`.
 - Auto-refresh logic for realtime-like experience.
 - Verified End-to-End flow with UI visualization.
+- Include `source` in mapping responses (PascalCase).
+- Add RADIUS accounting test client utility.

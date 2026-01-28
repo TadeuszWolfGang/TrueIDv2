@@ -6,6 +6,7 @@ use std::net::IpAddr;
 
 /// Origin of identity data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
 pub enum SourceType {
     /// RADIUS authentication logs.
     Radius,
@@ -43,6 +44,8 @@ pub struct DeviceMapping {
     pub current_users: Vec<String>,
     /// Last time the device was seen.
     pub last_seen: DateTime<Utc>,
+    /// Source of the most recent mapping.
+    pub source: SourceType,
     /// Confidence score in 0..=100.
     pub confidence_score: u8,
 }

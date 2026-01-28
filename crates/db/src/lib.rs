@@ -105,7 +105,7 @@ impl Db {
     /// Returns: optional `DeviceMapping` if found or an error.
     pub async fn get_mapping(&self, ip: &str) -> Result<Option<DeviceMapping>> {
         let row = sqlx::query(
-            "SELECT ip, user, last_seen, confidence
+            "SELECT ip, user, source, last_seen, confidence
              FROM mappings
              WHERE ip = ?",
         )
@@ -119,6 +119,7 @@ impl Db {
 
         let ip: String = row.try_get("ip")?;
         let user: String = row.try_get("user")?;
+        let source: String = row.try_get("source")?;
         let last_seen: DateTime<Utc> = row.try_get("last_seen")?;
         let confidence: i64 = row.try_get("confidence")?;
         let confidence_score =
@@ -129,6 +130,7 @@ impl Db {
             mac: None,
             current_users: vec![user],
             last_seen,
+            source: source_from_str(&source),
             confidence_score,
         }))
     }
@@ -139,7 +141,7 @@ impl Db {
     /// Returns: list of recent `DeviceMapping` values or an error.
     pub async fn get_recent_mappings(&self, limit: i64) -> Result<Vec<DeviceMapping>> {
         let rows = sqlx::query(
-            "SELECT ip, user, last_seen, confidence
+            "SELECT ip, user, source, last_seen, confidence
              FROM mappings
              ORDER BY last_seen DESC
              LIMIT ?",
@@ -152,6 +154,7 @@ impl Db {
         for row in rows {
             let ip: String = row.try_get("ip")?;
             let user: String = row.try_get("user")?;
+            let source: String = row.try_get("source")?;
             let last_seen: DateTime<Utc> = row.try_get("last_seen")?;
             let confidence: i64 = row.try_get("confidence")?;
             let confidence_score =
@@ -162,6 +165,7 @@ impl Db {
                 mac: None,
                 current_users: vec![user],
                 last_seen,
+                source: source_from_str(&source),
                 confidence_score,
             });
         }
