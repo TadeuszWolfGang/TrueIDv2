@@ -1,0 +1,12 @@
+[package]
+name = "net-identity-adapter-ad-logs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+chrono = { workspace = true }
+net-identity-core = { path = "../core" }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

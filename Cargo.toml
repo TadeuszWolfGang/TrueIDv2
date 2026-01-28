@@ -4,6 +4,7 @@ members = [
   "crates/db",
   "crates/ingest",
   "crates/adapter-radius",
+  "crates/adapter-ad-logs",
   "apps/server",
 ]
 resolver = "2"
