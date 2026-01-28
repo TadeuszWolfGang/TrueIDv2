@@ -133,6 +133,8 @@ fn parse_event(message: &[u8]) -> Result<Option<IdentityEvent>> {
             user,
             timestamp: Utc::now(),
             raw_data: raw,
+            mac: None,
+            confidence_score: 90,
         }));
     }
 
@@ -142,6 +144,8 @@ fn parse_event(message: &[u8]) -> Result<Option<IdentityEvent>> {
         user,
         timestamp: Utc::now(),
         raw_data: raw,
+        mac: None,
+        confidence_score: 90,
     }))
 }
 

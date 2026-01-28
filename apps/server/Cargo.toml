@@ -7,6 +7,7 @@ edition = "2021"
 anyhow = { workspace = true }
 axum = { workspace = true }
 net-identity-adapter-ad-logs = { path = "../../crates/adapter-ad-logs" }
+net-identity-adapter-dhcp-logs = { path = "../../crates/adapter-dhcp-logs" }
 net-identity-adapter-radius = { path = "../../crates/adapter-radius" }
 net-identity-core = { path = "../../crates/core" }
 net-identity-db = { path = "../../crates/db" }

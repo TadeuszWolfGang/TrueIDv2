@@ -22,3 +22,7 @@
 - `ad_client` utility: Verified payload format to match server parser regex.
 - Verified End-to-End AD Syslog ingestion (User -> Syslog -> DB -> API).
 - Fixed port binding issue on macOS (respecting `AD_SYSLOG_BIND` from env).
+- DHCP Syslog Adapter: listening for `DHCPACK` logs to map non-802.1x devices.
+- Hostname extraction: DHCP adapter now parses hostnames (e.g., `(Printer-HP)`) into the User field.
+- `dhcp_client` utility: Tool for simulating DHCP syslog traffic.
+- Full multi-protocol ingest support (RADIUS + AD + DHCP).

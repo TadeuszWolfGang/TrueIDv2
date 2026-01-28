@@ -9,6 +9,7 @@ use axum::{
     Json, Router,
 };
 use net_identity_adapter_ad_logs::AdLogsAdapter;
+use net_identity_adapter_dhcp_logs::DhcpLogsAdapter;
 use net_identity_adapter_radius::RadiusAdapter;
 use net_identity_db::Db;
 use net_identity_core::model::IdentityEvent;
@@ -23,6 +24,7 @@ use tracing_subscriber::EnvFilter;
 const DEFAULT_DB_URL: &str = "sqlite://net-identity.db";
 const DEFAULT_RADIUS_ADDR: &str = "0.0.0.0:1813";
 const DEFAULT_AD_SYSLOG_ADDR: &str = "0.0.0.0:514";
+const DEFAULT_DHCP_SYSLOG_ADDR: &str = "0.0.0.0:5516";
 const DEFAULT_HTTP_ADDR: &str = "0.0.0.0:3000";
 const CHANNEL_CAPACITY: usize = 1024;
 
@@ -149,6 +151,8 @@ async fn main() -> Result<()> {
         parse_socket_addr(&env_or_default("RADIUS_BIND", DEFAULT_RADIUS_ADDR), DEFAULT_RADIUS_ADDR)?;
     let ad_syslog_addr =
         parse_socket_addr(&env_or_default("AD_SYSLOG_BIND", DEFAULT_AD_SYSLOG_ADDR), DEFAULT_AD_SYSLOG_ADDR)?;
+    let dhcp_syslog_addr =
+        parse_socket_addr(&env_or_default("DHCP_SYSLOG_BIND", DEFAULT_DHCP_SYSLOG_ADDR), DEFAULT_DHCP_SYSLOG_ADDR)?;
     let http_addr =
         parse_socket_addr(&env_or_default("HTTP_BIND", DEFAULT_HTTP_ADDR), DEFAULT_HTTP_ADDR)?;
     let radius_secret = env_or_default("RADIUS_SECRET", "secret");
@@ -168,6 +172,7 @@ async fn main() -> Result<()> {
 
     spawn_radius_adapter(radius_addr, radius_secret.as_bytes(), sender.clone());
     spawn_ad_logs_adapter(ad_syslog_addr, sender.clone());
+    spawn_dhcp_logs_adapter(dhcp_syslog_addr, sender.clone());
 
     info!(%http_addr, "Starting HTTP server");
     let app = Router::new()
@@ -208,6 +213,20 @@ fn spawn_ad_logs_adapter(bind_addr: SocketAddr, sender: Sender<IdentityEvent>) {
     tokio::spawn(async move {
         if let Err(err) = adapter.run().await {
             warn!(error = %err, "AD syslog adapter stopped");
+        }
+    });
+}
+
+/// Spawns the DHCP syslog adapter task.
+///
+/// Parameters: `bind_addr` - UDP bind address, `sender` - event channel.
+/// Returns: none.
+fn spawn_dhcp_logs_adapter(bind_addr: SocketAddr, sender: Sender<IdentityEvent>) {
+    let adapter = DhcpLogsAdapter::new(bind_addr, sender);
+    info!(%bind_addr, "DHCP Adapter listening on");
+    tokio::spawn(async move {
+        if let Err(err) = adapter.run().await {
+            warn!(error = %err, "DHCP adapter stopped");
         }
     });
 }

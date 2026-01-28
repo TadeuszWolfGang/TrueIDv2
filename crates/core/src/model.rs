@@ -13,7 +13,7 @@ pub enum SourceType {
     /// Active Directory logs.
     AdLog,
     /// DHCP lease logs.
-    Dhcp,
+    DhcpLease,
     /// Manually entered records.
     Manual,
 }
@@ -31,6 +31,12 @@ pub struct IdentityEvent {
     pub timestamp: DateTime<Utc>,
     /// Raw source payload for auditing.
     pub raw_data: String,
+    /// Optional MAC address.
+    #[serde(default)]
+    pub mac: Option<String>,
+    /// Confidence score in 0..=100.
+    #[serde(default = "default_confidence_score")]
+    pub confidence_score: u8,
 }
 
 /// Current device-to-user mapping for an IP.
@@ -48,4 +54,12 @@ pub struct DeviceMapping {
     pub source: SourceType,
     /// Confidence score in 0..=100.
     pub confidence_score: u8,
+}
+
+/// Default confidence score for events.
+///
+/// Parameters: none.
+/// Returns: default confidence score.
+fn default_confidence_score() -> u8 {
+    100
 }

@@ -950,6 +950,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "net-identity-adapter-dhcp-logs"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "net-identity-core",
+ "once_cell",
+ "regex",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "net-identity-adapter-radius"
 version = "0.1.0"
 dependencies = [
@@ -1001,6 +1014,7 @@ dependencies = [
  "axum",
  "dotenvy",
  "net-identity-adapter-ad-logs",
+ "net-identity-adapter-dhcp-logs",
  "net-identity-adapter-radius",
  "net-identity-core",
  "net-identity-db",
@@ -1310,6 +1324,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "49f3fe0889e69e2ae9e41f4d6c4c0181701d00e4697b356fb1f74173a5e0ee27"
 dependencies = [
  "bitflags",
+]
+
+[[package]]
+name = "regex"
+version = "1.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "843bc0191f75f3e22651ae5f1e72939ab2f72a4bc30fa80a066bd66edefc24d4"
+dependencies = [
+ "aho-corasick",
+ "memchr",
+ "regex-automata",
+ "regex-syntax",
 ]
 
 [[package]]

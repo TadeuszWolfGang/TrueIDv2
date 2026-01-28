@@ -87,6 +87,8 @@ impl RadiusAdapter {
             user,
             timestamp: Utc::now(),
             raw_data: bytes_to_hex(packet_bytes),
+            mac: None,
+            confidence_score: 100,
         }))
     }
 }

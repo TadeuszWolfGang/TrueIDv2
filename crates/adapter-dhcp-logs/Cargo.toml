@@ -1,0 +1,13 @@
+[package]
+name = "net-identity-adapter-dhcp-logs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+chrono = { workspace = true }
+net-identity-core = { path = "../core" }
+once_cell = { workspace = true }
+regex = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

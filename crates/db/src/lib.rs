@@ -27,7 +27,7 @@ impl Db {
         let source = source_to_str(event.source);
         let ip = event.ip.to_string();
         let last_seen = event.timestamp;
-        let confidence: i64 = 100;
+        let confidence: i64 = i64::from(event.confidence_score);
 
         let mut tx = self.pool.begin().await?;
         sqlx::query(
@@ -42,24 +42,27 @@ impl Db {
         .execute(&mut *tx)
         .await?;
 
-        let existing_source: Option<String> = sqlx::query("SELECT source FROM mappings WHERE ip = ?")
+        let existing_source: Option<String> =
+            sqlx::query("SELECT source FROM mappings WHERE ip = ?")
             .bind(&ip)
             .fetch_optional(&mut *tx)
             .await?
             .map(|row| row.try_get("source"))
             .transpose()?;
 
+        let mac = event.mac.as_deref();
         match existing_source {
             None => {
                 sqlx::query(
-                    "INSERT INTO mappings (ip, user, source, last_seen, confidence)
-                     VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO mappings (ip, user, source, last_seen, confidence, mac)
+                     VALUES (?, ?, ?, ?, ?, ?)",
                 )
                 .bind(&ip)
                 .bind(&event.user)
                 .bind(source)
                 .bind(last_seen)
                 .bind(confidence)
+                .bind(mac)
                 .execute(&mut *tx)
                 .await?;
             }
@@ -69,24 +72,26 @@ impl Db {
                 if incoming_priority >= existing_priority {
                     sqlx::query(
                         "UPDATE mappings
-                         SET user = ?, source = ?, last_seen = ?, confidence = ?
+                         SET user = ?, source = ?, last_seen = ?, confidence = ?, mac = COALESCE(?, mac)
                          WHERE ip = ?",
                     )
                     .bind(&event.user)
                     .bind(source)
                     .bind(last_seen)
                     .bind(confidence)
+                    .bind(mac)
                     .bind(&ip)
                     .execute(&mut *tx)
                     .await?;
                 } else {
                     sqlx::query(
                         "UPDATE mappings
-                         SET last_seen = ?, confidence = ?
+                         SET last_seen = ?, confidence = ?, mac = COALESCE(?, mac)
                          WHERE ip = ?",
                     )
                     .bind(last_seen)
                     .bind(confidence)
+                    .bind(mac)
                     .bind(&ip)
                     .execute(&mut *tx)
                     .await?;
@@ -105,7 +110,7 @@ impl Db {
     /// Returns: optional `DeviceMapping` if found or an error.
     pub async fn get_mapping(&self, ip: &str) -> Result<Option<DeviceMapping>> {
         let row = sqlx::query(
-            "SELECT ip, user, source, last_seen, confidence
+            "SELECT ip, user, source, last_seen, confidence, mac
              FROM mappings
              WHERE ip = ?",
         )
@@ -120,6 +125,7 @@ impl Db {
         let ip: String = row.try_get("ip")?;
         let user: String = row.try_get("user")?;
         let source: String = row.try_get("source")?;
+        let mac: Option<String> = row.try_get("mac")?;
         let last_seen: DateTime<Utc> = row.try_get("last_seen")?;
         let confidence: i64 = row.try_get("confidence")?;
         let confidence_score =
@@ -127,7 +133,7 @@ impl Db {
 
         Ok(Some(DeviceMapping {
             ip,
-            mac: None,
+            mac,
             current_users: vec![user],
             last_seen,
             source: source_from_str(&source),
@@ -141,7 +147,7 @@ impl Db {
     /// Returns: list of recent `DeviceMapping` values or an error.
     pub async fn get_recent_mappings(&self, limit: i64) -> Result<Vec<DeviceMapping>> {
         let rows = sqlx::query(
-            "SELECT ip, user, source, last_seen, confidence
+            "SELECT ip, user, source, last_seen, confidence, mac
              FROM mappings
              ORDER BY last_seen DESC
              LIMIT ?",
@@ -155,6 +161,7 @@ impl Db {
             let ip: String = row.try_get("ip")?;
             let user: String = row.try_get("user")?;
             let source: String = row.try_get("source")?;
+            let mac: Option<String> = row.try_get("mac")?;
             let last_seen: DateTime<Utc> = row.try_get("last_seen")?;
             let confidence: i64 = row.try_get("confidence")?;
             let confidence_score =
@@ -162,7 +169,7 @@ impl Db {
 
             results.push(DeviceMapping {
                 ip,
-                mac: None,
+                mac,
                 current_users: vec![user],
                 last_seen,
                 source: source_from_str(&source),
@@ -182,7 +189,7 @@ fn source_to_str(source: SourceType) -> &'static str {
     match source {
         SourceType::Radius => "Radius",
         SourceType::AdLog => "AdLog",
-        SourceType::Dhcp => "Dhcp",
+        SourceType::DhcpLease => "DhcpLease",
         SourceType::Manual => "Manual",
     }
 }
@@ -195,7 +202,8 @@ fn source_from_str(value: &str) -> SourceType {
     match value {
         "Radius" => SourceType::Radius,
         "AdLog" => SourceType::AdLog,
-        "Dhcp" => SourceType::Dhcp,
+        "Dhcp" => SourceType::DhcpLease,
+        "DhcpLease" => SourceType::DhcpLease,
         "Manual" => SourceType::Manual,
         _ => SourceType::Manual,
     }
@@ -209,7 +217,7 @@ fn source_priority(source: &SourceType) -> u8 {
     match source {
         SourceType::Radius => 3,
         SourceType::AdLog => 2,
-        SourceType::Dhcp => 1,
+        SourceType::DhcpLease => 1,
         SourceType::Manual => 0,
     }
 }
