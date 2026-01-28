@@ -69,6 +69,7 @@ async fn lookup(
 /// Returns: `Ok(())` when the channel closes.
 async fn run_event_loop(mut receiver: Receiver<IdentityEvent>, db: Arc<Db>) -> Result<()> {
     while let Some(event) = receiver.recv().await {
+        info!(?event, "Processing event");
         if let Err(err) = db.upsert_mapping(event).await {
             warn!(error = %err, "Failed to upsert mapping");
         }
@@ -99,9 +100,8 @@ fn parse_socket_addr(value: &str, default_value: &str) -> Result<SocketAddr> {
 /// Returns: `Ok(())` on clean shutdown or an error.
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .init();
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    tracing_subscriber::fmt().with_env_filter(env_filter).init();
 
     let db_url = env_or_default("DATABASE_URL", DEFAULT_DB_URL);
     let radius_addr =

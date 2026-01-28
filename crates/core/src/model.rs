@@ -11,6 +11,8 @@ pub enum SourceType {
     Radius,
     /// Active Directory logs.
     AdLog,
+    /// DHCP lease logs.
+    Dhcp,
     /// Manually entered records.
     Manual,
 }

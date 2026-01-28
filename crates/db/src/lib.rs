@@ -29,23 +29,72 @@ impl Db {
         let last_seen = event.timestamp;
         let confidence: i64 = 100;
 
+        let mut tx = self.pool.begin().await?;
         sqlx::query(
-            "INSERT INTO mappings (ip, user, source, last_seen, confidence)
-             VALUES (?, ?, ?, ?, ?)
-             ON CONFLICT(ip) DO UPDATE SET
-               user = excluded.user,
-               source = excluded.source,
-               last_seen = excluded.last_seen,
-               confidence = excluded.confidence
-             WHERE excluded.last_seen > mappings.last_seen",
+            "INSERT INTO events (ip, user, source, timestamp, raw_data)
+             VALUES (?, ?, ?, ?, ?)",
         )
-        .bind(ip)
-        .bind(event.user)
+        .bind(&ip)
+        .bind(&event.user)
         .bind(source)
         .bind(last_seen)
-        .bind(confidence)
-        .execute(&self.pool)
+        .bind(&event.raw_data)
+        .execute(&mut *tx)
         .await?;
+
+        let existing_source: Option<String> = sqlx::query("SELECT source FROM mappings WHERE ip = ?")
+            .bind(&ip)
+            .fetch_optional(&mut *tx)
+            .await?
+            .map(|row| row.try_get("source"))
+            .transpose()?;
+
+        match existing_source {
+            None => {
+                sqlx::query(
+                    "INSERT INTO mappings (ip, user, source, last_seen, confidence)
+                     VALUES (?, ?, ?, ?, ?)",
+                )
+                .bind(&ip)
+                .bind(&event.user)
+                .bind(source)
+                .bind(last_seen)
+                .bind(confidence)
+                .execute(&mut *tx)
+                .await?;
+            }
+            Some(existing_source) => {
+                let existing_priority = source_priority(&source_from_str(&existing_source));
+                let incoming_priority = source_priority(&event.source);
+                if incoming_priority >= existing_priority {
+                    sqlx::query(
+                        "UPDATE mappings
+                         SET user = ?, source = ?, last_seen = ?, confidence = ?
+                         WHERE ip = ?",
+                    )
+                    .bind(&event.user)
+                    .bind(source)
+                    .bind(last_seen)
+                    .bind(confidence)
+                    .bind(&ip)
+                    .execute(&mut *tx)
+                    .await?;
+                } else {
+                    sqlx::query(
+                        "UPDATE mappings
+                         SET last_seen = ?, confidence = ?
+                         WHERE ip = ?",
+                    )
+                    .bind(last_seen)
+                    .bind(confidence)
+                    .bind(&ip)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+            }
+        }
+
+        tx.commit().await?;
 
         Ok(())
     }
@@ -93,6 +142,34 @@ fn source_to_str(source: SourceType) -> &'static str {
     match source {
         SourceType::Radius => "Radius",
         SourceType::AdLog => "AdLog",
+        SourceType::Dhcp => "Dhcp",
         SourceType::Manual => "Manual",
+    }
+}
+
+/// Converts a string value to a source type.
+///
+/// Parameters: `value` - source string from storage.
+/// Returns: parsed `SourceType` or `Manual` for unknown values.
+fn source_from_str(value: &str) -> SourceType {
+    match value {
+        "Radius" => SourceType::Radius,
+        "AdLog" => SourceType::AdLog,
+        "Dhcp" => SourceType::Dhcp,
+        "Manual" => SourceType::Manual,
+        _ => SourceType::Manual,
+    }
+}
+
+/// Returns priority for comparing sources.
+///
+/// Parameters: `source` - source type.
+/// Returns: integer priority where higher wins.
+fn source_priority(source: &SourceType) -> u8 {
+    match source {
+        SourceType::Radius => 3,
+        SourceType::AdLog => 2,
+        SourceType::Dhcp => 1,
+        SourceType::Manual => 0,
     }
 }

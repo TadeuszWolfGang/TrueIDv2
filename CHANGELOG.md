@@ -8,3 +8,4 @@
 - Add RADIUS adapter with UDP listener and event parsing.
 - Add AD syslog adapter for event 4768/4624.
 - Integrate adapters, DB, and HTTP server in main app.
+- Add events history table and source-priority mapping logic.
