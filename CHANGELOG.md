@@ -18,3 +18,7 @@
 - Verified End-to-End flow with UI visualization.
 - Include `source` in mapping responses (PascalCase).
 - Add RADIUS accounting test client utility.
+- `dotenvy` support: Server now automatically loads `.env` file on startup.
+- `ad_client` utility: Verified payload format to match server parser regex.
+- Verified End-to-End AD Syslog ingestion (User -> Syslog -> DB -> API).
+- Fixed port binding issue on macOS (respecting `AD_SYSLOG_BIND` from env).

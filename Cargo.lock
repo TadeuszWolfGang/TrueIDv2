@@ -999,6 +999,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "dotenvy",
  "net-identity-adapter-ad-logs",
  "net-identity-adapter-radius",
  "net-identity-core",
