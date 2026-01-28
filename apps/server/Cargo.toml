@@ -6,6 +6,13 @@ edition = "2021"
 [dependencies]
 anyhow = { workspace = true }
 axum = { workspace = true }
+net-identity-adapter-ad-logs = { path = "../../crates/adapter-ad-logs" }
+net-identity-adapter-radius = { path = "../../crates/adapter-radius" }
+net-identity-core = { path = "../../crates/core" }
+net-identity-db = { path = "../../crates/db" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

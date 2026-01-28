@@ -983,6 +983,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "net-identity-adapter-ad-logs",
+ "net-identity-adapter-radius",
+ "net-identity-core",
+ "net-identity-db",
+ "serde",
+ "serde_json",
+ "sqlx",
  "tokio",
  "tracing",
  "tracing-subscriber",
