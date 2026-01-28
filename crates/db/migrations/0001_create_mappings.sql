@@ -1,0 +1,7 @@
+CREATE TABLE IF NOT EXISTS mappings (
+  ip TEXT PRIMARY KEY,
+  user TEXT NOT NULL,
+  source TEXT NOT NULL,
+  last_seen DATETIME NOT NULL,
+  confidence INTEGER NOT NULL
+);
