@@ -2,17 +2,17 @@
 
 use anyhow::Result;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use net_identity_adapter_ad_logs::AdLogsAdapter;
 use net_identity_adapter_radius::RadiusAdapter;
 use net_identity_db::Db;
 use net_identity_core::model::IdentityEvent;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::{env, net::SocketAddr, sync::Arc};
 use tokio::sync::mpsc::{self, Receiver, Sender};
@@ -33,6 +33,11 @@ struct AppState {
 #[derive(Serialize)]
 struct LookupResponse {
     user: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RecentQuery {
+    limit: Option<i64>,
 }
 
 /// Returns 200 OK for health checks.
@@ -61,6 +66,40 @@ async fn lookup(
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
+}
+
+/// Returns recent mappings, ordered by last_seen.
+///
+/// Parameters: `query` - optional limit, `state` - app state.
+/// Returns: JSON list of mappings.
+async fn recent(
+    Query(query): Query<RecentQuery>,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, StatusCode> {
+    let limit = query.limit.unwrap_or(50);
+    let limit = if limit <= 0 { 50 } else { limit };
+    match state.db.get_recent_mappings(limit).await {
+        Ok(mappings) => Ok(Json(mappings)),
+        Err(err) => {
+            warn!(error = %err, "Recent mappings query failed");
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+/// Accepts a debug event payload and persists it.
+///
+/// Parameters: `event` - incoming identity event, `state` - app state.
+/// Returns: HTTP status code.
+async fn debug_event(
+    State(state): State<AppState>,
+    Json(event): Json<IdentityEvent>,
+) -> Result<StatusCode, StatusCode> {
+    if let Err(err) = state.db.upsert_mapping(event).await {
+        warn!(error = %err, "Debug event upsert failed");
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Runs the event processing loop.
@@ -132,6 +171,8 @@ async fn main() -> Result<()> {
     let app = Router::new()
         .route("/health", get(health))
         .route("/lookup/:ip", get(lookup))
+        .route("/api/recent", get(recent))
+        .route("/api/debug/event", post(debug_event))
         .with_state(AppState { db });
     let listener = tokio::net::TcpListener::bind(http_addr).await?;
     axum::serve(listener, app).await?;

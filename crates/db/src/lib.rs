@@ -132,6 +132,42 @@ impl Db {
             confidence_score,
         }))
     }
+
+    /// Retrieves recent mappings ordered by last_seen.
+    ///
+    /// Parameters: `limit` - maximum number of records to return.
+    /// Returns: list of recent `DeviceMapping` values or an error.
+    pub async fn get_recent_mappings(&self, limit: i64) -> Result<Vec<DeviceMapping>> {
+        let rows = sqlx::query(
+            "SELECT ip, user, last_seen, confidence
+             FROM mappings
+             ORDER BY last_seen DESC
+             LIMIT ?",
+        )
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut results = Vec::with_capacity(rows.len());
+        for row in rows {
+            let ip: String = row.try_get("ip")?;
+            let user: String = row.try_get("user")?;
+            let last_seen: DateTime<Utc> = row.try_get("last_seen")?;
+            let confidence: i64 = row.try_get("confidence")?;
+            let confidence_score =
+                u8::try_from(confidence).context("confidence value out of u8 range")?;
+
+            results.push(DeviceMapping {
+                ip,
+                mac: None,
+                current_users: vec![user],
+                last_seen,
+                confidence_score,
+            });
+        }
+
+        Ok(results)
+    }
 }
 
 /// Converts `SourceType` to a stable string.
