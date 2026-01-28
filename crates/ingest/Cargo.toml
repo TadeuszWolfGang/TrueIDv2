@@ -1,0 +1,9 @@
+[package]
+name = "net-identity-ingest"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+net-identity-core = { path = "../core" }
+tracing = { workspace = true }
