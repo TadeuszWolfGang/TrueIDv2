@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>net-identity dashboard</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      body {
+        background: #0b0f0d;
+        color: #c7f9cc;
+        font-family: "SFMono-Regular", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", "Courier New", monospace;
+        margin: 0;
+        padding: 24px;
+      }
+      h1 {
+        margin: 0 0 16px;
+        font-size: 20px;
+        color: #80ffdb;
+        letter-spacing: 0.02em;
+      }
+      .panel {
+        border: 1px solid #1e2a24;
+        border-radius: 8px;
+        background: #0f1512;
+        padding: 16px;
+        box-shadow: 0 0 18px rgba(0, 255, 128, 0.08);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      thead th {
+        text-align: left;
+        font-weight: 600;
+        color: #80ffdb;
+        border-bottom: 1px solid #1e2a24;
+        padding: 10px 8px;
+      }
+      tbody td {
+        padding: 8px;
+        border-bottom: 1px solid rgba(30, 42, 36, 0.6);
+      }
+      tbody tr:hover {
+        background: rgba(0, 255, 128, 0.05);
+      }
+      .muted {
+        color: #6b8579;
+      }
+      .status {
+        margin-top: 12px;
+        font-size: 12px;
+        color: #6b8579;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>net-identity :: recent mappings</h1>
+    <div class="panel">
+      <table>
+        <thead>
+          <tr>
+            <th>IP</th>
+            <th>MAC</th>
+            <th>User</th>
+            <th>Last Seen</th>
+            <th>Source</th>
+            <th>Confidence</th>
+          </tr>
+        </thead>
+        <tbody id="recent-body">
+          <tr>
+            <td colspan="6" class="muted">Waiting for data...</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="status" id="status">Last update: never</div>
+    </div>
+
+    <script>
+      const body = document.getElementById("recent-body");
+      const status = document.getElementById("status");
+
+      function renderRows(items) {
+        if (!Array.isArray(items) || items.length === 0) {
+          body.innerHTML =
+            '<tr><td colspan="6" class="muted">No data yet.</td></tr>';
+          return;
+        }
+
+        body.innerHTML = items
+          .map((item) => {
+            const ip = item.ip ?? "-";
+            const mac = item.mac ?? "-";
+            const user = Array.isArray(item.current_users)
+              ? item.current_users.join(", ")
+              : item.user ?? "-";
+            const lastSeen = item.last_seen ?? "-";
+            const source = item.source ?? "-";
+            const confidence =
+              item.confidence_score ?? item.confidence ?? "-";
+            return `
+              <tr>
+                <td>${ip}</td>
+                <td>${mac}</td>
+                <td>${user}</td>
+                <td>${lastSeen}</td>
+                <td>${source}</td>
+                <td>${confidence}</td>
+              </tr>
+            `;
+          })
+          .join("");
+      }
+
+      async function refresh() {
+        try {
+          const response = await fetch("/api/recent");
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+          const data = await response.json();
+          renderRows(data);
+          status.textContent = `Last update: ${new Date().toLocaleTimeString()}`;
+        } catch (err) {
+          status.textContent = `Last update failed: ${err}`;
+        }
+      }
+
+      refresh();
+      setInterval(refresh, 2000);
+    </script>
+  </body>
+</html>

@@ -12,3 +12,7 @@
 - Debug endpoint `POST /api/debug/event` for manual ingest.
 - Public API `GET /api/recent` for dashboard data.
 - Verified End-to-End data flow (API -> DB -> API).
+- Minimalist HTML/JS Dashboard served from `/`.
+- Static file serving via `tower-http`.
+- Auto-refresh logic for realtime-like experience.
+- Verified End-to-End flow with UI visualization.

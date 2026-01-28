@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::{env, net::SocketAddr, sync::Arc};
 use tokio::sync::mpsc::{self, Receiver, Sender};
+use tower_http::services::ServeDir;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
@@ -173,7 +174,8 @@ async fn main() -> Result<()> {
         .route("/lookup/:ip", get(lookup))
         .route("/api/recent", get(recent))
         .route("/api/debug/event", post(debug_event))
-        .with_state(AppState { db });
+        .with_state(AppState { db })
+        .fallback_service(ServeDir::new(concat!(env!("CARGO_MANIFEST_DIR"), "/assets")));
     let listener = tokio::net::TcpListener::bind(http_addr).await?;
     axum::serve(listener, app).await?;
 
