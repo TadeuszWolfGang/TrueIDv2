@@ -7,7 +7,6 @@ use anyhow::Result;
 use net_identity_adapter_ad_logs::AdLogsAdapter;
 use net_identity_adapter_dhcp_logs::DhcpLogsAdapter;
 use net_identity_adapter_radius::RadiusAdapter;
-use serde::Deserialize;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::Path;
@@ -32,33 +31,39 @@ const DEFAULT_OUI_PATH: &str = "./data/oui.csv";
 /// OUI-to-vendor lookup table (key: uppercase 6-char hex prefix).
 type VendorMap = HashMap<String, String>;
 
-/// Single row from the IEEE OUI CSV export.
-#[derive(Deserialize)]
-struct OuiRecord {
-    #[serde(rename = "Assignment")]
-    assignment: String,
-    #[serde(rename = "Organization Name")]
-    organization_name: String,
-}
-
 /// Loads the IEEE OUI database from a CSV file into a `VendorMap`.
+///
+/// CSV format: Registry, Assignment, Organization Name, Organization Address.
+/// Uses index-based field access for robustness with quoted fields.
 ///
 /// Parameters: `path` - filesystem path to oui.csv.
 /// Returns: populated `VendorMap` or an error.
 fn load_oui_csv(path: &Path) -> Result<VendorMap> {
     let mut reader = csv::Reader::from_path(path)?;
     let mut map = HashMap::with_capacity(40_000);
-    for result in reader.deserialize() {
-        let record: OuiRecord = result?;
-        let key = record.assignment.to_ascii_uppercase();
-        if !key.is_empty() {
-            map.insert(key, record.organization_name);
+    let mut sample_count = 0_u32;
+
+    for result in reader.records() {
+        let record = result?;
+        let oui = record.get(1).unwrap_or("").trim().to_ascii_uppercase();
+        let vendor = record.get(2).unwrap_or("").trim().to_string();
+
+        if sample_count < 5 {
+            info!(oui = %oui, vendor = %vendor, "Sample parsed");
+            sample_count += 1;
+        }
+
+        if !oui.is_empty() && !vendor.is_empty() {
+            map.insert(oui, vendor);
         }
     }
     Ok(map)
 }
 
 /// Resolves a MAC address to a vendor name using the OUI map.
+///
+/// Strips separators (`:`, `-`, `.`), takes the first 6 hex chars,
+/// uppercases them, and queries the map.
 ///
 /// Parameters: `mac` - raw MAC string (any separator), `vendors` - OUI lookup table.
 /// Returns: vendor name if found.

@@ -2103,7 +2103,6 @@ dependencies = [
  "net-identity-adapter-ad-logs",
  "net-identity-adapter-dhcp-logs",
  "net-identity-adapter-radius",
- "serde",
  "tokio",
  "tracing",
  "tracing-subscriber",

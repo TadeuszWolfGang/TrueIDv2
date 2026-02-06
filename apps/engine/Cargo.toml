@@ -14,4 +14,3 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 csv = "1"
 dotenvy = "0.15"
-serde = { workspace = true }
