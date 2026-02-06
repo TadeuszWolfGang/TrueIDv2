@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>net-identity dashboard</title>
+    <title>TrueID Dashboard</title>
     <style>
       :root {
         color-scheme: dark;
@@ -50,6 +50,24 @@
       .muted {
         color: #6b8579;
       }
+      tr.offline td {
+        opacity: 0.45;
+      }
+      .dot {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin-right: 6px;
+        vertical-align: middle;
+      }
+      .dot.online {
+        background: #22c55e;
+        box-shadow: 0 0 6px #22c55e;
+      }
+      .dot.offline {
+        background: #3a3a3a;
+      }
       .status {
         margin-top: 12px;
         font-size: 12px;
@@ -58,11 +76,12 @@
     </style>
   </head>
   <body>
-    <h1>net-identity :: recent mappings</h1>
+    <h1>TrueID :: recent mappings</h1>
     <div class="panel">
       <table>
         <thead>
           <tr>
+            <th></th>
             <th>IP</th>
             <th>MAC</th>
             <th>User</th>
@@ -73,7 +92,7 @@
         </thead>
         <tbody id="recent-body">
           <tr>
-            <td colspan="6" class="muted">Waiting for data...</td>
+            <td colspan="7" class="muted">Waiting for data...</td>
           </tr>
         </tbody>
       </table>
@@ -84,26 +103,43 @@
       const body = document.getElementById("recent-body");
       const status = document.getElementById("status");
 
+      function timeAgo(isoStr) {
+        if (!isoStr || isoStr === "-") return "-";
+        const diff = Date.now() - new Date(isoStr).getTime();
+        if (diff < 0) return "just now";
+        const sec = Math.floor(diff / 1000);
+        if (sec < 60) return sec + "s ago";
+        const min = Math.floor(sec / 60);
+        if (min < 60) return min + " min ago";
+        const hrs = Math.floor(min / 60);
+        if (hrs < 24) return hrs + "h ago";
+        return Math.floor(hrs / 24) + "d ago";
+      }
+
       function renderRows(items) {
         if (!Array.isArray(items) || items.length === 0) {
           body.innerHTML =
-            '<tr><td colspan="6" class="muted">No data yet.</td></tr>';
+            '<tr><td colspan="7" class="muted">No data yet.</td></tr>';
           return;
         }
 
         body.innerHTML = items
           .map((item) => {
+            const active = item.is_active !== false;
+            const cls = active ? "" : "offline";
+            const dotCls = active ? "online" : "offline";
             const ip = item.ip ?? "-";
             const mac = item.mac ?? "-";
             const user = Array.isArray(item.current_users)
               ? item.current_users.join(", ")
               : item.user ?? "-";
-            const lastSeen = item.last_seen ?? "-";
+            const lastSeen = timeAgo(item.last_seen);
             const source = item.source ?? "-";
             const confidence =
               item.confidence_score ?? item.confidence ?? "-";
             return `
-              <tr>
+              <tr class="${cls}">
+                <td><span class="dot ${dotCls}"></span></td>
                 <td>${ip}</td>
                 <td>${mac}</td>
                 <td>${user}</td>
