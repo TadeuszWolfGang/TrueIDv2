@@ -12,6 +12,7 @@
 - **Feature:** `is_active` TTL flag on mappings — janitor task deactivates stale entries every 60s (5 min TTL).
 - **UI:** Dashboard shows online/offline status (green/grey dot, dimmed rows, relative time in Last Seen).
 - **Docker:** Multi-stage Dockerfile + docker-compose.yml (engine + web services with shared SQLite volume).
+- **Feature:** OUI vendor lookup — engine loads IEEE `oui.csv` at startup for MAC-to-vendor resolution.
 - Set up Rust workspace and crate structure.
 - Add core domain models and ingestion trait.
 - Scaffold Axum server and data/access crates.

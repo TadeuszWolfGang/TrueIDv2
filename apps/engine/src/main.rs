@@ -7,7 +7,10 @@ use anyhow::Result;
 use net_identity_adapter_ad_logs::AdLogsAdapter;
 use net_identity_adapter_dhcp_logs::DhcpLogsAdapter;
 use net_identity_adapter_radius::RadiusAdapter;
+use serde::Deserialize;
+use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{self, Receiver, Sender};
@@ -24,14 +27,69 @@ const DEFAULT_DHCP_SYSLOG_ADDR: &str = "0.0.0.0:5516";
 const CHANNEL_CAPACITY: usize = 1024;
 const JANITOR_INTERVAL_SECS: u64 = 60;
 const STALE_TTL_MINUTES: i64 = 5;
+const DEFAULT_OUI_PATH: &str = "./data/oui.csv";
+
+/// OUI-to-vendor lookup table (key: uppercase 6-char hex prefix).
+type VendorMap = HashMap<String, String>;
+
+/// Single row from the IEEE OUI CSV export.
+#[derive(Deserialize)]
+struct OuiRecord {
+    #[serde(rename = "Assignment")]
+    assignment: String,
+    #[serde(rename = "Organization Name")]
+    organization_name: String,
+}
+
+/// Loads the IEEE OUI database from a CSV file into a `VendorMap`.
+///
+/// Parameters: `path` - filesystem path to oui.csv.
+/// Returns: populated `VendorMap` or an error.
+fn load_oui_csv(path: &Path) -> Result<VendorMap> {
+    let mut reader = csv::Reader::from_path(path)?;
+    let mut map = HashMap::with_capacity(40_000);
+    for result in reader.deserialize() {
+        let record: OuiRecord = result?;
+        let key = record.assignment.to_ascii_uppercase();
+        if !key.is_empty() {
+            map.insert(key, record.organization_name);
+        }
+    }
+    Ok(map)
+}
+
+/// Resolves a MAC address to a vendor name using the OUI map.
+///
+/// Parameters: `mac` - raw MAC string (any separator), `vendors` - OUI lookup table.
+/// Returns: vendor name if found.
+fn resolve_vendor(mac: &str, vendors: &VendorMap) -> Option<String> {
+    let hex: String = mac
+        .chars()
+        .filter(|c| c.is_ascii_hexdigit())
+        .flat_map(|c| c.to_uppercase())
+        .collect();
+    if hex.len() < 6 {
+        return None;
+    }
+    vendors.get(&hex[..6]).cloned()
+}
 
 /// Runs the event processing loop, persisting each event to the database.
 ///
-/// Parameters: `receiver` - incoming event channel, `db` - database handle.
+/// Parameters: `receiver` - incoming event channel, `db` - database handle,
+/// `vendors` - OUI vendor lookup table.
 /// Returns: `Ok(())` when the channel closes.
-async fn run_event_loop(mut receiver: Receiver<IdentityEvent>, db: Arc<Db>) -> Result<()> {
+async fn run_event_loop(
+    mut receiver: Receiver<IdentityEvent>,
+    db: Arc<Db>,
+    vendors: Arc<VendorMap>,
+) -> Result<()> {
     while let Some(event) = receiver.recv().await {
-        info!(?event, "Processing event");
+        let vendor = event
+            .mac
+            .as_deref()
+            .and_then(|mac| resolve_vendor(mac, &vendors));
+        info!(?event, ?vendor, "Processing event");
         if let Err(err) = db.upsert_mapping(event).await {
             warn!(error = %err, "Failed to upsert mapping");
         }
@@ -125,13 +183,26 @@ async fn main() -> Result<()> {
     )?;
     let radius_secret = env_or_default("RADIUS_SECRET", "secret");
 
+    let oui_path = env_or_default("OUI_CSV_PATH", DEFAULT_OUI_PATH);
+    let vendors: Arc<VendorMap> = match load_oui_csv(Path::new(&oui_path)) {
+        Ok(map) => {
+            info!(count = map.len(), path = %oui_path, "Loaded OUI vendor database");
+            Arc::new(map)
+        }
+        Err(err) => {
+            warn!(error = %err, path = %oui_path, "Failed to load OUI CSV — vendor lookup disabled");
+            Arc::new(HashMap::new())
+        }
+    };
+
     info!(db_url = %db_url, "Initializing database");
     let db = Arc::new(trueid_common::db::init_db(&db_url).await?);
 
     let (sender, receiver) = mpsc::channel(CHANNEL_CAPACITY);
     let event_db = db.clone();
+    let event_vendors = vendors.clone();
     tokio::spawn(async move {
-        if let Err(err) = run_event_loop(receiver, event_db).await {
+        if let Err(err) = run_event_loop(receiver, event_db, event_vendors).await {
             warn!(error = %err, "Event loop stopped");
         }
     });
