@@ -1,6 +1,13 @@
 # Changelog
 
 ## Unreleased
+
+### Changed
+- **Architectural Overhaul:** Split monolithic `net-identity-server` into two separate applications:
+  - `trueid-engine`: Headless service for passive ingestion (UDP/Syslog) and DB writing.
+  - `trueid-web`: HTTP service for API and Dashboard visualization.
+- **Refactor:** Extracted shared logic (models, DB pool, migrations) to `trueid-common`.
+- **Removed:** Legacy `crates/core` and `crates/db` (merged into common).
 - Set up Rust workspace and crate structure.
 - Add core domain models and ingestion trait.
 - Scaffold Axum server and data/access crates.

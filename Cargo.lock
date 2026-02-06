@@ -943,10 +943,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
- "net-identity-core",
  "serde_json",
  "tokio",
  "tracing",
+ "trueid-common",
 ]
 
 [[package]]
@@ -955,11 +955,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
- "net-identity-core",
  "once_cell",
  "regex",
  "tokio",
  "tracing",
+ "trueid-common",
 ]
 
 [[package]]
@@ -968,33 +968,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
- "net-identity-core",
  "radius",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "net-identity-core"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "net-identity-db"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "net-identity-core",
- "serde",
- "serde_json",
- "sqlx",
- "tokio",
- "tracing",
+ "trueid-common",
 ]
 
 [[package]]
@@ -1002,29 +979,8 @@ name = "net-identity-ingest"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "net-identity-core",
  "tracing",
-]
-
-[[package]]
-name = "net-identity-server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "dotenvy",
- "net-identity-adapter-ad-logs",
- "net-identity-adapter-dhcp-logs",
- "net-identity-adapter-radius",
- "net-identity-core",
- "net-identity-db",
- "serde",
- "serde_json",
- "sqlx",
- "tokio",
- "tower-http",
- "tracing",
- "tracing-subscriber",
+ "trueid-common",
 ]
 
 [[package]]
@@ -2102,6 +2058,49 @@ dependencies = [
  "tracing",
  "tracing-core",
  "tracing-log",
+]
+
+[[package]]
+name = "trueid-common"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tracing",
+]
+
+[[package]]
+name = "trueid-engine"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dotenvy",
+ "net-identity-adapter-ad-logs",
+ "net-identity-adapter-dhcp-logs",
+ "net-identity-adapter-radius",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "trueid-common",
+]
+
+[[package]]
+name = "trueid-web"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "dotenvy",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "trueid-common",
 ]
 
 [[package]]
