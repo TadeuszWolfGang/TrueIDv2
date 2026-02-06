@@ -1,5 +1,5 @@
 # Stage 1: Build
-FROM rust:1.84-slim AS builder
+FROM rust:slim as builder
 
 RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 
@@ -21,6 +21,6 @@ COPY --from=builder /src/apps/web/assets              /app/assets
 
 WORKDIR /app
 
-ENV DATABASE_URL=sqlite:///app/data/trueid.db?mode=rwc
+ENV DATABASE_URL=sqlite:///app/data/net-identity.db?mode=rwc
 
 EXPOSE 1813/udp 5514/udp 5516/udp 3000
