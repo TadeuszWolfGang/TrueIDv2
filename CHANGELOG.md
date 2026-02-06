@@ -9,6 +9,7 @@
 - **Refactor:** Extracted shared logic (models, DB pool, migrations) to `trueid-common`.
 - **Removed:** Legacy `crates/core` and `crates/db` (merged into common).
 - **Docs:** Updated README with ASCII architecture diagram and Engine/Web split.
+- **Feature:** `is_active` TTL flag on mappings — janitor task deactivates stale entries every 60s (5 min TTL).
 - Set up Rust workspace and crate structure.
 - Add core domain models and ingestion trait.
 - Scaffold Axum server and data/access crates.

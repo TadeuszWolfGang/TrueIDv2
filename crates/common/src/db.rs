@@ -63,8 +63,8 @@ impl Db {
         match existing_source {
             None => {
                 sqlx::query(
-                    "INSERT INTO mappings (ip, user, source, last_seen, confidence, mac)
-                     VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO mappings (ip, user, source, last_seen, confidence, mac, is_active)
+                     VALUES (?, ?, ?, ?, ?, ?, true)",
                 )
                 .bind(&ip)
                 .bind(&event.user)
@@ -81,7 +81,7 @@ impl Db {
                 if incoming_priority >= existing_priority {
                     sqlx::query(
                         "UPDATE mappings
-                         SET user = ?, source = ?, last_seen = ?, confidence = ?, mac = COALESCE(?, mac)
+                         SET user = ?, source = ?, last_seen = ?, confidence = ?, mac = COALESCE(?, mac), is_active = true
                          WHERE ip = ?",
                     )
                     .bind(&event.user)
@@ -95,7 +95,7 @@ impl Db {
                 } else {
                     sqlx::query(
                         "UPDATE mappings
-                         SET last_seen = ?, confidence = ?, mac = COALESCE(?, mac)
+                         SET last_seen = ?, confidence = ?, mac = COALESCE(?, mac), is_active = true
                          WHERE ip = ?",
                     )
                     .bind(last_seen)
@@ -119,7 +119,7 @@ impl Db {
     /// Returns: optional `DeviceMapping` if found or an error.
     pub async fn get_mapping(&self, ip: &str) -> Result<Option<DeviceMapping>> {
         let row = sqlx::query(
-            "SELECT ip, user, source, last_seen, confidence, mac
+            "SELECT ip, user, source, last_seen, confidence, mac, is_active
              FROM mappings
              WHERE ip = ?",
         )
@@ -139,6 +139,7 @@ impl Db {
         let confidence: i64 = row.try_get("confidence")?;
         let confidence_score =
             u8::try_from(confidence).context("confidence value out of u8 range")?;
+        let is_active: bool = row.try_get("is_active")?;
 
         Ok(Some(DeviceMapping {
             ip,
@@ -147,7 +148,24 @@ impl Db {
             last_seen,
             source: source_from_str(&source),
             confidence_score,
+            is_active,
         }))
+    }
+
+    /// Marks mappings as inactive when `last_seen` exceeds the TTL.
+    ///
+    /// Parameters: `ttl_minutes` - inactivity threshold in minutes.
+    /// Returns: number of deactivated rows or an error.
+    pub async fn deactivate_stale(&self, ttl_minutes: i64) -> Result<u64> {
+        let result = sqlx::query(
+            "UPDATE mappings SET is_active = false
+             WHERE last_seen < datetime('now', ? || ' minutes')
+               AND is_active = true",
+        )
+        .bind(-ttl_minutes)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
     }
 
     /// Retrieves recent mappings ordered by last_seen.
@@ -156,7 +174,7 @@ impl Db {
     /// Returns: list of recent `DeviceMapping` values or an error.
     pub async fn get_recent_mappings(&self, limit: i64) -> Result<Vec<DeviceMapping>> {
         let rows = sqlx::query(
-            "SELECT ip, user, source, last_seen, confidence, mac
+            "SELECT ip, user, source, last_seen, confidence, mac, is_active
              FROM mappings
              ORDER BY last_seen DESC
              LIMIT ?",
@@ -175,6 +193,7 @@ impl Db {
             let confidence: i64 = row.try_get("confidence")?;
             let confidence_score =
                 u8::try_from(confidence).context("confidence value out of u8 range")?;
+            let is_active: bool = row.try_get("is_active")?;
 
             results.push(DeviceMapping {
                 ip,
@@ -183,6 +202,7 @@ impl Db {
                 last_seen,
                 source: source_from_str(&source),
                 confidence_score,
+                is_active,
             });
         }
 

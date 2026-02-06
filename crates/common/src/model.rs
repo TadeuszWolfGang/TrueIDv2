@@ -54,6 +54,8 @@ pub struct DeviceMapping {
     pub source: SourceType,
     /// Confidence score in 0..=100.
     pub confidence_score: u8,
+    /// Whether the device is currently active (seen within TTL window).
+    pub is_active: bool,
 }
 
 /// Default confidence score for events.

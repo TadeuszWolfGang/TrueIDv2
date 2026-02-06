@@ -9,6 +9,7 @@ use net_identity_adapter_dhcp_logs::DhcpLogsAdapter;
 use net_identity_adapter_radius::RadiusAdapter;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
@@ -21,6 +22,8 @@ const DEFAULT_RADIUS_ADDR: &str = "0.0.0.0:1813";
 const DEFAULT_AD_SYSLOG_ADDR: &str = "0.0.0.0:5514";
 const DEFAULT_DHCP_SYSLOG_ADDR: &str = "0.0.0.0:5516";
 const CHANNEL_CAPACITY: usize = 1024;
+const JANITOR_INTERVAL_SECS: u64 = 60;
+const STALE_TTL_MINUTES: i64 = 5;
 
 /// Runs the event processing loop, persisting each event to the database.
 ///
@@ -76,6 +79,27 @@ fn spawn_dhcp_logs_adapter(bind_addr: SocketAddr, sender: Sender<IdentityEvent>)
     });
 }
 
+/// Periodically deactivates mappings that have not been seen within the TTL.
+///
+/// Parameters: `db` - shared database handle.
+fn start_janitor(db: Arc<Db>) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(JANITOR_INTERVAL_SECS));
+        loop {
+            interval.tick().await;
+            match db.deactivate_stale(STALE_TTL_MINUTES).await {
+                Ok(count) if count > 0 => {
+                    info!(deactivated = count, "Janitor: marked stale mappings as inactive");
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    warn!(error = %err, "Janitor: failed to deactivate stale mappings");
+                }
+            }
+        }
+    });
+}
+
 /// Starts all adapters, processes events and waits for Ctrl+C.
 ///
 /// Parameters: none.
@@ -115,6 +139,7 @@ async fn main() -> Result<()> {
     spawn_radius_adapter(radius_addr, radius_secret.as_bytes(), sender.clone());
     spawn_ad_logs_adapter(ad_syslog_addr, sender.clone());
     spawn_dhcp_logs_adapter(dhcp_syslog_addr, sender);
+    start_janitor(db.clone());
 
     info!("Engine running — press Ctrl+C to stop");
     tokio::signal::ctrl_c().await?;
