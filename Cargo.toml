@@ -6,6 +6,7 @@ members = [
   "crates/adapter-ad-logs",
   "crates/adapter-dhcp-logs",
   "crates/utils",
+  "crates/agent",
   "apps/engine",
   "apps/web",
 ]

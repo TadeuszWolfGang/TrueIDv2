@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = { workspace = true }
+chrono = { workspace = true }
 net-identity-adapter-ad-logs = { path = "../../crates/adapter-ad-logs" }
 net-identity-adapter-dhcp-logs = { path = "../../crates/adapter-dhcp-logs" }
 net-identity-adapter-radius = { path = "../../crates/adapter-radius" }
@@ -14,3 +15,6 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 csv = "1"
 dotenvy = "0.15"
+rustls = { version = "0.23", features = ["ring"] }
+rustls-pemfile = "2"
+tokio-rustls = "0.26"

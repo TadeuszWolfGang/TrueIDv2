@@ -1,7 +1,10 @@
 //! TrueID Engine — ingestion-only process (no HTTP).
 //!
-//! Starts RADIUS, AD syslog and DHCP syslog adapters, processes
-//! incoming identity events and persists them to SQLite.
+//! Starts RADIUS, AD syslog and DHCP syslog adapters (UDP, legacy),
+//! optional TLS syslog listeners (secure), processes incoming identity
+//! events and persists them to SQLite.
+
+mod tls_listener;
 
 use anyhow::Result;
 use net_identity_adapter_ad_logs::AdLogsAdapter;
@@ -12,6 +15,7 @@ use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
+use chrono;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
@@ -27,6 +31,11 @@ const CHANNEL_CAPACITY: usize = 1024;
 const JANITOR_INTERVAL_SECS: u64 = 60;
 const STALE_TTL_MINUTES: i64 = 5;
 const DEFAULT_OUI_PATH: &str = "./data/oui.csv";
+const DEFAULT_AD_TLS_ADDR: &str = "0.0.0.0:5615";
+const DEFAULT_DHCP_TLS_ADDR: &str = "0.0.0.0:5617";
+const DEFAULT_TLS_CA: &str = "./certs/ca.pem";
+const DEFAULT_TLS_CERT: &str = "./certs/server.pem";
+const DEFAULT_TLS_KEY: &str = "./certs/server-key.pem";
 
 /// OUI-to-vendor lookup table (key: uppercase 6-char hex prefix).
 type VendorMap = HashMap<String, String>;
@@ -221,8 +230,87 @@ async fn main() -> Result<()> {
 
     spawn_radius_adapter(radius_addr, radius_secret.as_bytes(), sender.clone());
     spawn_ad_logs_adapter(ad_syslog_addr, sender.clone());
-    spawn_dhcp_logs_adapter(dhcp_syslog_addr, sender);
+    spawn_dhcp_logs_adapter(dhcp_syslog_addr, sender.clone());
     start_janitor(db.clone());
+
+    // Optional TLS listeners (only started if cert files exist).
+    let tls_ca = env_or_default("TLS_CA_CERT", DEFAULT_TLS_CA);
+    let tls_cert = env_or_default("TLS_SERVER_CERT", DEFAULT_TLS_CERT);
+    let tls_key = env_or_default("TLS_SERVER_KEY", DEFAULT_TLS_KEY);
+
+    if std::path::Path::new(&tls_ca).exists()
+        && std::path::Path::new(&tls_cert).exists()
+        && std::path::Path::new(&tls_key).exists()
+    {
+        match tls_listener::build_tls_acceptor(
+            std::path::Path::new(&tls_ca),
+            std::path::Path::new(&tls_cert),
+            std::path::Path::new(&tls_key),
+        ) {
+            Ok(acceptor) => {
+                let ad_tls_addr = parse_socket_addr(
+                    &env_or_default("AD_TLS_BIND", DEFAULT_AD_TLS_ADDR),
+                    DEFAULT_AD_TLS_ADDR,
+                )?;
+                let dhcp_tls_addr = parse_socket_addr(
+                    &env_or_default("DHCP_TLS_BIND", DEFAULT_DHCP_TLS_ADDR),
+                    DEFAULT_DHCP_TLS_ADDR,
+                )?;
+
+                // AD TLS listener — feeds into the same sender as UDP AD adapter.
+                let ad_sender = sender.clone();
+                let ad_acceptor = acceptor.clone();
+                let ad_handler: tls_listener::MessageHandler =
+                    Arc::new(move |msg: &str, _peer: SocketAddr| {
+                        if let Ok(Some(event)) = parse_tls_syslog_ad(msg) {
+                            let s = ad_sender.clone();
+                            tokio::spawn(async move {
+                                if let Err(err) = s.send(event).await {
+                                    warn!(error = %err, "Failed to send TLS AD event");
+                                }
+                            });
+                        }
+                    });
+                tokio::spawn(async move {
+                    if let Err(err) =
+                        tls_listener::run_tls_listener(ad_tls_addr, ad_acceptor, ad_handler, "AD-TLS")
+                            .await
+                    {
+                        warn!(error = %err, "AD TLS listener stopped");
+                    }
+                });
+
+                // DHCP TLS listener.
+                let dhcp_sender = sender.clone();
+                let dhcp_handler: tls_listener::MessageHandler =
+                    Arc::new(move |msg: &str, _peer: SocketAddr| {
+                        if let Ok(Some(event)) = parse_tls_syslog_dhcp(msg) {
+                            let s = dhcp_sender.clone();
+                            tokio::spawn(async move {
+                                if let Err(err) = s.send(event).await {
+                                    warn!(error = %err, "Failed to send TLS DHCP event");
+                                }
+                            });
+                        }
+                    });
+                tokio::spawn(async move {
+                    if let Err(err) =
+                        tls_listener::run_tls_listener(dhcp_tls_addr, acceptor, dhcp_handler, "DHCP-TLS")
+                            .await
+                    {
+                        warn!(error = %err, "DHCP TLS listener stopped");
+                    }
+                });
+
+                info!("TLS listeners started (AD: {}, DHCP: {})", ad_tls_addr, dhcp_tls_addr);
+            }
+            Err(err) => {
+                warn!(error = %err, "Failed to build TLS acceptor — TLS listeners disabled");
+            }
+        }
+    } else {
+        info!("TLS cert files not found — TLS listeners disabled (UDP-only mode)");
+    }
 
     info!("Engine running — press Ctrl+C to stop");
     tokio::signal::ctrl_c().await?;
@@ -230,4 +318,75 @@ async fn main() -> Result<()> {
     db.close().await;
 
     Ok(())
+}
+
+/// Parses a TLS-transported AD syslog message into an IdentityEvent.
+///
+/// Expected format: `<PRI>... TrueID-Agent: AD_LOGON user=X ip=X port=X event_id=X status=X`
+///
+/// Parameters: `msg` - raw syslog payload.
+/// Returns: optional IdentityEvent if the message matches.
+fn parse_tls_syslog_ad(msg: &str) -> anyhow::Result<Option<IdentityEvent>> {
+    let payload = msg.split("TrueID-Agent: ").nth(1).unwrap_or("");
+    if !payload.starts_with("AD_LOGON") {
+        return Ok(None);
+    }
+    let get = |key: &str| -> Option<String> {
+        payload
+            .split_whitespace()
+            .find(|s| s.starts_with(&format!("{}=", key)))
+            .and_then(|s| s.split_once('='))
+            .map(|(_, v)| v.to_string())
+    };
+    let user = get("user").unwrap_or_default();
+    let ip_str = get("ip").unwrap_or_default();
+    let ip: std::net::IpAddr = match ip_str.parse() {
+        Ok(ip) => ip,
+        Err(_) => return Ok(None),
+    };
+    Ok(Some(IdentityEvent {
+        source: trueid_common::model::SourceType::AdLog,
+        ip,
+        user,
+        timestamp: chrono::Utc::now(),
+        raw_data: msg.to_string(),
+        mac: None,
+        confidence_score: 90,
+    }))
+}
+
+/// Parses a TLS-transported DHCP syslog message into an IdentityEvent.
+///
+/// Expected format: `<PRI>... TrueID-Agent: DHCP_LEASE ip=X mac=X hostname=X lease=X`
+///
+/// Parameters: `msg` - raw syslog payload.
+/// Returns: optional IdentityEvent if the message matches.
+fn parse_tls_syslog_dhcp(msg: &str) -> anyhow::Result<Option<IdentityEvent>> {
+    let payload = msg.split("TrueID-Agent: ").nth(1).unwrap_or("");
+    if !payload.starts_with("DHCP_LEASE") {
+        return Ok(None);
+    }
+    let get = |key: &str| -> Option<String> {
+        payload
+            .split_whitespace()
+            .find(|s| s.starts_with(&format!("{}=", key)))
+            .and_then(|s| s.split_once('='))
+            .map(|(_, v)| v.to_string())
+    };
+    let ip_str = get("ip").unwrap_or_default();
+    let ip: std::net::IpAddr = match ip_str.parse() {
+        Ok(ip) => ip,
+        Err(_) => return Ok(None),
+    };
+    let mac = get("mac");
+    let hostname = get("hostname").unwrap_or_default();
+    Ok(Some(IdentityEvent {
+        source: trueid_common::model::SourceType::DhcpLease,
+        ip,
+        user: hostname,
+        timestamp: chrono::Utc::now(),
+        raw_data: msg.to_string(),
+        mac,
+        confidence_score: 60,
+    }))
 }

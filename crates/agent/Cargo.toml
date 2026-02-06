@@ -1,0 +1,36 @@
+[package]
+name = "net-identity-agent"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "net_identity_agent"
+path = "src/lib.rs"
+
+[[bin]]
+name = "net-identity-agent"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+chrono = { workspace = true }
+clap = { version = "4", features = ["derive"] }
+hostname = "0.4"
+quick-xml = "0.37"
+serde = { workspace = true }
+tokio = { workspace = true }
+tokio-rustls = "0.26"
+toml = "0.8"
+tracing = { workspace = true }
+tracing-appender = "0.2"
+tracing-subscriber = { workspace = true }
+rustls = { version = "0.23", features = ["ring"] }
+rustls-pemfile = "2"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_System_EventLog",
+    "Win32_Foundation",
+    "Win32_Security",
+] }
+windows-service = "0.7"

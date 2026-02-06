@@ -1,0 +1,23 @@
+<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+  <System>
+    <Provider Name="Microsoft-Windows-DHCP-Server" Guid="{6D64F02C-A125-4DAC-9A01-F0555B41FA2C}"/>
+    <EventID>10</EventID>
+    <Version>0</Version>
+    <Level>4</Level>
+    <Task>0</Task>
+    <Opcode>0</Opcode>
+    <Keywords>0x8000000000000000</Keywords>
+    <TimeCreated SystemTime="2026-01-29T12:40:00.5555555Z"/>
+    <EventRecordID>9876</EventRecordID>
+    <Correlation/>
+    <Execution ProcessID="4" ThreadID="8"/>
+    <Channel>Microsoft-Windows-DHCP-Server/Operational</Channel>
+    <Computer>DHCP01.contoso.local</Computer>
+  </System>
+  <EventData>
+    <Data Name="IPAddress">10.0.1.50</Data>
+    <Data Name="MACAddress">AA:BB:CC:DD:EE:FF</Data>
+    <Data Name="HostName">WORKSTATION01</Data>
+    <Data Name="LeaseDuration">86400</Data>
+  </EventData>
+</Event>

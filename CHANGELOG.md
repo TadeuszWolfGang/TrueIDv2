@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+- **net-identity-agent:** New Rust-based Windows Event Log agent (`crates/agent/`) with TCP+TLS transport (mTLS), ring buffer, exponential-backoff reconnect, heartbeat, and `--dry-run` mode.
+- **TLS listeners on engine:** Dual-protocol support — existing UDP (NXLog) preserved, new TCP+TLS listeners (AD:5615, DHCP:5617) activated when cert files are present.
+- **PKI tooling:** `scripts/gen-certs.sh` generates CA + server + agent certificates for mTLS.
+- **Unit tests:** 8 tests for XML event parsers (4768, 4624, DHCP 10) and syslog octet-counting framing.
+
 ### Changed
 - **Architectural Overhaul:** Split monolithic `net-identity-server` into two separate applications:
   - `trueid-engine`: Headless service for passive ingestion (UDP/Syslog) and DB writing.
