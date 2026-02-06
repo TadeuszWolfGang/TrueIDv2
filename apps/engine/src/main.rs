@@ -71,12 +71,14 @@ fn resolve_vendor(mac: &str, vendors: &VendorMap) -> Option<String> {
     let hex: String = mac
         .chars()
         .filter(|c| c.is_ascii_hexdigit())
-        .flat_map(|c| c.to_uppercase())
-        .collect();
+        .collect::<String>()
+        .to_uppercase();
     if hex.len() < 6 {
         return None;
     }
-    vendors.get(&hex[..6]).cloned()
+    let oui_key = &hex[..6];
+    info!(oui_key = %oui_key, mac = %mac, "Looking up OUI");
+    vendors.get(oui_key).cloned()
 }
 
 /// Runs the event processing loop, persisting each event to the database.
