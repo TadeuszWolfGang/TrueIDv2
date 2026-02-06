@@ -56,6 +56,9 @@ pub struct DeviceMapping {
     pub confidence_score: u8,
     /// Whether the device is currently active (seen within TTL window).
     pub is_active: bool,
+    /// Hardware vendor name resolved from OUI database.
+    #[serde(default)]
+    pub vendor: Option<String>,
 }
 
 /// Default confidence score for events.

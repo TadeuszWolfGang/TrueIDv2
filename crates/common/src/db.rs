@@ -30,9 +30,10 @@ impl Db {
 
     /// Inserts or updates a mapping based on event freshness.
     ///
-    /// Parameters: `event` - identity event to persist.
+    /// Parameters: `event` - identity event to persist,
+    /// `vendor` - optional vendor name resolved from OUI database.
     /// Returns: `Ok(())` on success or an error.
-    pub async fn upsert_mapping(&self, event: IdentityEvent) -> Result<()> {
+    pub async fn upsert_mapping(&self, event: IdentityEvent, vendor: Option<&str>) -> Result<()> {
         let source = source_to_str(event.source);
         let ip = event.ip.to_string();
         let last_seen = event.timestamp;
@@ -63,8 +64,8 @@ impl Db {
         match existing_source {
             None => {
                 sqlx::query(
-                    "INSERT INTO mappings (ip, user, source, last_seen, confidence, mac, is_active)
-                     VALUES (?, ?, ?, ?, ?, ?, true)",
+                    "INSERT INTO mappings (ip, user, source, last_seen, confidence, mac, is_active, vendor)
+                     VALUES (?, ?, ?, ?, ?, ?, true, ?)",
                 )
                 .bind(&ip)
                 .bind(&event.user)
@@ -72,6 +73,7 @@ impl Db {
                 .bind(last_seen)
                 .bind(confidence)
                 .bind(mac)
+                .bind(vendor)
                 .execute(&mut *tx)
                 .await?;
             }
@@ -81,7 +83,9 @@ impl Db {
                 if incoming_priority >= existing_priority {
                     sqlx::query(
                         "UPDATE mappings
-                         SET user = ?, source = ?, last_seen = ?, confidence = ?, mac = COALESCE(?, mac), is_active = true
+                         SET user = ?, source = ?, last_seen = ?, confidence = ?,
+                             mac = COALESCE(?, mac), is_active = true,
+                             vendor = COALESCE(?, vendor)
                          WHERE ip = ?",
                     )
                     .bind(&event.user)
@@ -89,18 +93,21 @@ impl Db {
                     .bind(last_seen)
                     .bind(confidence)
                     .bind(mac)
+                    .bind(vendor)
                     .bind(&ip)
                     .execute(&mut *tx)
                     .await?;
                 } else {
                     sqlx::query(
                         "UPDATE mappings
-                         SET last_seen = ?, confidence = ?, mac = COALESCE(?, mac), is_active = true
+                         SET last_seen = ?, confidence = ?, mac = COALESCE(?, mac),
+                             is_active = true, vendor = COALESCE(?, vendor)
                          WHERE ip = ?",
                     )
                     .bind(last_seen)
                     .bind(confidence)
                     .bind(mac)
+                    .bind(vendor)
                     .bind(&ip)
                     .execute(&mut *tx)
                     .await?;
@@ -119,7 +126,7 @@ impl Db {
     /// Returns: optional `DeviceMapping` if found or an error.
     pub async fn get_mapping(&self, ip: &str) -> Result<Option<DeviceMapping>> {
         let row = sqlx::query(
-            "SELECT ip, user, source, last_seen, confidence, mac, is_active
+            "SELECT ip, user, source, last_seen, confidence, mac, is_active, vendor
              FROM mappings
              WHERE ip = ?",
         )
@@ -140,6 +147,7 @@ impl Db {
         let confidence_score =
             u8::try_from(confidence).context("confidence value out of u8 range")?;
         let is_active: bool = row.try_get("is_active")?;
+        let vendor: Option<String> = row.try_get("vendor")?;
 
         Ok(Some(DeviceMapping {
             ip,
@@ -149,6 +157,7 @@ impl Db {
             source: source_from_str(&source),
             confidence_score,
             is_active,
+            vendor,
         }))
     }
 
@@ -174,7 +183,7 @@ impl Db {
     /// Returns: list of recent `DeviceMapping` values or an error.
     pub async fn get_recent_mappings(&self, limit: i64) -> Result<Vec<DeviceMapping>> {
         let rows = sqlx::query(
-            "SELECT ip, user, source, last_seen, confidence, mac, is_active
+            "SELECT ip, user, source, last_seen, confidence, mac, is_active, vendor
              FROM mappings
              ORDER BY last_seen DESC
              LIMIT ?",
@@ -194,6 +203,7 @@ impl Db {
             let confidence_score =
                 u8::try_from(confidence).context("confidence value out of u8 range")?;
             let is_active: bool = row.try_get("is_active")?;
+            let vendor: Option<String> = row.try_get("vendor")?;
 
             results.push(DeviceMapping {
                 ip,
@@ -203,6 +213,7 @@ impl Db {
                 source: source_from_str(&source),
                 confidence_score,
                 is_active,
+                vendor,
             });
         }
 

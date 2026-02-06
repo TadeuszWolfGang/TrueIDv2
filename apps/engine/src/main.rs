@@ -96,8 +96,13 @@ async fn run_event_loop(
             .mac
             .as_deref()
             .and_then(|mac| resolve_vendor(mac, &vendors));
-        info!(?event, ?vendor, "Processing event");
-        if let Err(err) = db.upsert_mapping(event).await {
+        info!(
+            mac = ?event.mac,
+            vendor = ?vendor,
+            ip = %event.ip,
+            "Vendor lookup result"
+        );
+        if let Err(err) = db.upsert_mapping(event, vendor.as_deref()).await {
             warn!(error = %err, "Failed to upsert mapping");
         }
     }
