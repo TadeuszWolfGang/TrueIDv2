@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 anyhow = { workspace = true }
 chrono = { workspace = true }
-net-identity-core = { path = "../core" }
+trueid-common = { path = "../common" }
 radius = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

@@ -1,0 +1,15 @@
+[package]
+name = "trueid-engine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+net-identity-adapter-ad-logs = { path = "../../crates/adapter-ad-logs" }
+net-identity-adapter-dhcp-logs = { path = "../../crates/adapter-dhcp-logs" }
+net-identity-adapter-radius = { path = "../../crates/adapter-radius" }
+trueid-common = { path = "../../crates/common" }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+dotenvy = "0.15"

@@ -2,7 +2,7 @@
 
 use anyhow::{anyhow, Result};
 use chrono::Utc;
-use net_identity_core::model::{IdentityEvent, SourceType};
+use trueid_common::model::{IdentityEvent, SourceType};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::net::{IpAddr, SocketAddr};

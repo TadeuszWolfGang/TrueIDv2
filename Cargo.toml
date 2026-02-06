@@ -1,13 +1,13 @@
 [workspace]
 members = [
-  "crates/core",
-  "crates/db",
+  "crates/common",
   "crates/ingest",
   "crates/adapter-radius",
   "crates/adapter-ad-logs",
   "crates/adapter-dhcp-logs",
   "crates/utils",
-  "apps/server",
+  "apps/engine",
+  "apps/web",
 ]
 resolver = "2"
 

@@ -1,12 +1,12 @@
 [package]
-name = "net-identity-adapter-ad-logs"
+name = "trueid-common"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
 anyhow = { workspace = true }
 chrono = { workspace = true }
-trueid-common = { path = "../common" }
+serde = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true }
+sqlx = { workspace = true }
 tracing = { workspace = true }

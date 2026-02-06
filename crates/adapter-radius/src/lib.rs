@@ -2,7 +2,7 @@
 
 use anyhow::{anyhow, Result};
 use chrono::Utc;
-use net_identity_core::model::{IdentityEvent, SourceType};
+use trueid_common::model::{IdentityEvent, SourceType};
 use radius::core::code::Code;
 use radius::core::packet::Packet;
 use radius::core::rfc2865;

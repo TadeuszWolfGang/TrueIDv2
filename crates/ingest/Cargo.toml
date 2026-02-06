@@ -5,5 +5,5 @@ edition = "2021"
 
 [dependencies]
 anyhow = { workspace = true }
-net-identity-core = { path = "../core" }
+trueid-common = { path = "../common" }
 tracing = { workspace = true }

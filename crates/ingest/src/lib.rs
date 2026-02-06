@@ -1,7 +1,7 @@
 //! Shared ingestion traits for adapter implementations.
 
 use anyhow::Result;
-use net_identity_core::model::IdentityEvent;
+use trueid_common::model::IdentityEvent;
 
 /// Common interface for ingestion adapters.
 pub trait IngestAdapter {
