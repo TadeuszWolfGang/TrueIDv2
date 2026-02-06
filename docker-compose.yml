@@ -1,0 +1,30 @@
+services:
+  engine:
+    build: .
+    command: trueid-engine
+    ports:
+      - "1813:1813/udp"
+      - "5514:5514/udp"
+      - "5516:5516/udp"
+    volumes:
+      - ./data:/app/data
+    environment:
+      DATABASE_URL: "sqlite:///app/data/trueid.db?mode=rwc"
+      RADIUS_BIND: "0.0.0.0:1813"
+      AD_SYSLOG_BIND: "0.0.0.0:5514"
+      DHCP_SYSLOG_BIND: "0.0.0.0:5516"
+    restart: unless-stopped
+
+  web:
+    build: .
+    command: trueid-web
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      DATABASE_URL: "sqlite:///app/data/trueid.db?mode=rwc"
+      HTTP_BIND: "0.0.0.0:3000"
+    depends_on:
+      - engine
+    restart: unless-stopped
