@@ -2,6 +2,7 @@ services:
   engine:
     build: .
     command: trueid-engine
+    working_dir: /app
     ports:
       - "1813:1813/udp"
       - "5514:5514/udp"
@@ -18,6 +19,7 @@ services:
   web:
     build: .
     command: trueid-web
+    working_dir: /app
     ports:
       - "3000:3000"
     volumes:
@@ -26,6 +28,7 @@ services:
     environment:
       DATABASE_URL: "sqlite:///app/data/net-identity.db?mode=rwc"
       HTTP_BIND: "0.0.0.0:3000"
+      ASSETS_DIR: "/app/assets"
     depends_on:
       - engine
     restart: unless-stopped

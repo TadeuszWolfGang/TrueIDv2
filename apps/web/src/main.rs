@@ -21,6 +21,7 @@ use trueid_common::{env_or_default, parse_socket_addr};
 
 const DEFAULT_DB_URL: &str = "sqlite://trueid.db?mode=rwc";
 const DEFAULT_HTTP_ADDR: &str = "0.0.0.0:3000";
+const DEFAULT_ASSETS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets");
 
 #[derive(Clone)]
 struct AppState {
@@ -108,7 +109,7 @@ async fn main() -> Result<()> {
         .route("/lookup/{ip}", get(lookup))
         .route("/api/recent", get(recent))
         .with_state(AppState { db })
-        .fallback_service(ServeDir::new(concat!(env!("CARGO_MANIFEST_DIR"), "/assets")));
+        .fallback_service(ServeDir::new(env_or_default("ASSETS_DIR", DEFAULT_ASSETS_DIR)));
 
     info!(%http_addr, "Starting HTTP server");
     let listener = tokio::net::TcpListener::bind(http_addr).await?;
