@@ -78,6 +78,54 @@ pub struct StoredEvent {
     pub raw_data: String,
 }
 
+/// Agent heartbeat information from the agents table.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentInfo {
+    pub hostname: String,
+    pub last_heartbeat: DateTime<Utc>,
+    pub uptime_seconds: i64,
+    pub events_sent: i64,
+    pub events_dropped: i64,
+    pub transport: String,
+    /// Computed: "online" if heartbeat < 3 min ago, else "offline".
+    pub status: String,
+}
+
+/// Sync integration status row.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncStatus {
+    pub integration: String,
+    pub last_run_at: Option<DateTime<Utc>>,
+    pub status: Option<String>,
+    pub message: Option<String>,
+    pub records_synced: i64,
+}
+
+/// Live adapter status (kept in engine memory, not DB).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdapterStatus {
+    pub name: String,
+    pub protocol: String,
+    pub bind: String,
+    pub status: String,
+    pub last_event_at: Option<DateTime<Utc>>,
+    pub events_total: u64,
+}
+
+/// Converts a stored string back to `SourceType`.
+///
+/// Parameters: `value` - source string from storage.
+/// Returns: parsed `SourceType` or `Manual` for unknown values.
+pub fn source_from_str(value: &str) -> SourceType {
+    match value {
+        "Radius" => SourceType::Radius,
+        "AdLog" => SourceType::AdLog,
+        "Dhcp" | "DhcpLease" => SourceType::DhcpLease,
+        "Manual" => SourceType::Manual,
+        _ => SourceType::Manual,
+    }
+}
+
 /// Default confidence score for events.
 ///
 /// Parameters: none.

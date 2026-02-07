@@ -4,7 +4,9 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use sqlx::{Row, SqlitePool};
 
-use crate::model::{DeviceMapping, IdentityEvent, SourceType, StoredEvent};
+use std::collections::HashMap;
+
+use crate::model::{AgentInfo, DeviceMapping, IdentityEvent, SourceType, StoredEvent, SyncStatus};
 
 /// SQLite-backed database access.
 pub struct Db {
@@ -18,6 +20,13 @@ impl Db {
     /// Returns: `Db` instance.
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
+    }
+
+    /// Returns a reference to the underlying connection pool.
+    ///
+    /// Useful for running custom queries not covered by Db methods.
+    pub fn pool(&self) -> &SqlitePool {
+        &self.pool
     }
 
     /// Gracefully closes the database connection pool.
@@ -249,6 +258,191 @@ impl Db {
         Ok(results)
     }
 
+    // ── Config CRUD ──────────────────────────────────────────
+
+    /// Reads a config value by key.
+    pub async fn get_config(&self, key: &str) -> Result<Option<String>> {
+        let row = sqlx::query("SELECT value FROM config WHERE key = ?")
+            .bind(key)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(|r| r.try_get("value")).transpose()?)
+    }
+
+    /// Reads a config value as i64, returning `default` if missing.
+    pub async fn get_config_i64(&self, key: &str, default: i64) -> i64 {
+        self.get_config(key)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(default)
+    }
+
+    /// Writes a config key-value pair (upsert).
+    pub async fn set_config(&self, key: &str, value: &str) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO config (key, value, updated_at) VALUES (?, ?, datetime('now'))
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+        )
+        .bind(key)
+        .bind(value)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    // ── Agents ──────────────────────────────────────────────
+
+    /// Upserts an agent heartbeat record.
+    pub async fn upsert_agent(
+        &self, hostname: &str, uptime: i64, sent: i64, dropped: i64, transport: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO agents (hostname, last_heartbeat, uptime_secs, events_sent, events_dropped, transport, updated_at)
+             VALUES (?, datetime('now'), ?, ?, ?, ?, datetime('now'))
+             ON CONFLICT(hostname) DO UPDATE SET
+                last_heartbeat = datetime('now'), uptime_secs = excluded.uptime_secs,
+                events_sent = excluded.events_sent, events_dropped = excluded.events_dropped,
+                transport = excluded.transport, updated_at = datetime('now')",
+        )
+        .bind(hostname).bind(uptime).bind(sent).bind(dropped).bind(transport)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Returns all registered agents with computed online/offline status.
+    pub async fn get_agents(&self) -> Result<Vec<AgentInfo>> {
+        let rows = sqlx::query(
+            "SELECT hostname, last_heartbeat, uptime_secs, events_sent, events_dropped, transport
+             FROM agents ORDER BY last_heartbeat DESC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let now = Utc::now();
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            let hb: DateTime<Utc> = r.try_get("last_heartbeat")?;
+            let status = if (now - hb).num_minutes() < 3 { "online" } else { "offline" };
+            out.push(AgentInfo {
+                hostname: r.try_get("hostname")?,
+                last_heartbeat: hb,
+                uptime_seconds: r.try_get("uptime_secs")?,
+                events_sent: r.try_get("events_sent")?,
+                events_dropped: r.try_get("events_dropped")?,
+                transport: r.try_get("transport")?,
+                status: status.to_string(),
+            });
+        }
+        Ok(out)
+    }
+
+    // ── Sync status ─────────────────────────────────────────
+
+    /// Reads sync status for an integration.
+    pub async fn get_sync_status(&self, integration: &str) -> Result<Option<SyncStatus>> {
+        let row = sqlx::query(
+            "SELECT integration, last_run_at, status, message, records_synced
+             FROM sync_status WHERE integration = ?",
+        )
+        .bind(integration)
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some(r) = row else { return Ok(None) };
+        Ok(Some(SyncStatus {
+            integration: r.try_get("integration")?,
+            last_run_at: r.try_get("last_run_at")?,
+            status: r.try_get("status")?,
+            message: r.try_get("message")?,
+            records_synced: r.try_get::<i64, _>("records_synced").unwrap_or(0),
+        }))
+    }
+
+    /// Upserts sync status for an integration.
+    pub async fn set_sync_status(
+        &self, integration: &str, status: &str, message: Option<&str>, records: i64,
+    ) -> Result<()> {
+        sqlx::query(
+            "INSERT INTO sync_status (integration, last_run_at, status, message, records_synced)
+             VALUES (?, datetime('now'), ?, ?, ?)
+             ON CONFLICT(integration) DO UPDATE SET
+                last_run_at = datetime('now'), status = excluded.status,
+                message = excluded.message, records_synced = excluded.records_synced",
+        )
+        .bind(integration).bind(status).bind(message).bind(records)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    // ── Aggregate queries ───────────────────────────────────
+
+    /// Counts mappings, optionally filtered by active status.
+    pub async fn count_mappings(&self, active_only: Option<bool>) -> Result<i64> {
+        let sql = match active_only {
+            Some(true) => "SELECT COUNT(*) as c FROM mappings WHERE is_active = true",
+            Some(false) => "SELECT COUNT(*) as c FROM mappings WHERE is_active = false",
+            None => "SELECT COUNT(*) as c FROM mappings",
+        };
+        let row = sqlx::query(sql).fetch_one(&self.pool).await?;
+        Ok(row.try_get("c")?)
+    }
+
+    /// Counts all events.
+    pub async fn count_events(&self) -> Result<i64> {
+        let row = sqlx::query("SELECT COUNT(*) as c FROM events")
+            .fetch_one(&self.pool).await?;
+        Ok(row.try_get("c")?)
+    }
+
+    /// Counts events grouped by source.
+    pub async fn count_events_by_source(&self) -> Result<HashMap<String, i64>> {
+        let rows = sqlx::query("SELECT source, COUNT(*) as c FROM events GROUP BY source")
+            .fetch_all(&self.pool).await?;
+        let mut map = HashMap::new();
+        for r in rows {
+            map.insert(r.try_get("source")?, r.try_get("c")?);
+        }
+        Ok(map)
+    }
+
+    /// Returns the timestamp of the most recent event.
+    pub async fn get_last_event_timestamp(&self) -> Result<Option<DateTime<Utc>>> {
+        let row = sqlx::query("SELECT MAX(timestamp) as t FROM events")
+            .fetch_one(&self.pool).await?;
+        Ok(row.try_get("t")?)
+    }
+
+    /// Deletes a mapping by IP. Returns true if a row was deleted.
+    pub async fn delete_mapping(&self, ip: &str) -> Result<bool> {
+        let res = sqlx::query("DELETE FROM mappings WHERE ip = ?")
+            .bind(ip).execute(&self.pool).await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Returns events for a specific IP, most recent first.
+    pub async fn get_events_for_ip(&self, ip: &str, limit: i64) -> Result<Vec<StoredEvent>> {
+        let rows = sqlx::query(
+            "SELECT id, ip, user, source, timestamp, raw_data
+             FROM events WHERE ip = ? ORDER BY timestamp DESC LIMIT ?",
+        )
+        .bind(ip).bind(limit)
+        .fetch_all(&self.pool).await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            out.push(StoredEvent {
+                id: r.try_get("id")?,
+                ip: r.try_get("ip")?,
+                user: r.try_get("user")?,
+                source: r.try_get("source")?,
+                timestamp: r.try_get("timestamp")?,
+                raw_data: r.try_get("raw_data")?,
+            });
+        }
+        Ok(out)
+    }
+
     /// Retrieves recent mappings ordered by last_seen.
     ///
     /// Parameters: `limit` - maximum number of records to return.
@@ -316,19 +510,8 @@ fn source_to_str(source: SourceType) -> &'static str {
     }
 }
 
-/// Converts a stored string back to `SourceType`.
-///
-/// Parameters: `value` - source string from storage.
-/// Returns: parsed `SourceType` or `Manual` for unknown values.
-fn source_from_str(value: &str) -> SourceType {
-    match value {
-        "Radius" => SourceType::Radius,
-        "AdLog" => SourceType::AdLog,
-        "Dhcp" | "DhcpLease" => SourceType::DhcpLease,
-        "Manual" => SourceType::Manual,
-        _ => SourceType::Manual,
-    }
-}
+/// Re-export for backwards compatibility.
+pub use crate::model::source_from_str;
 
 /// Returns numeric priority for comparing sources (higher wins).
 ///

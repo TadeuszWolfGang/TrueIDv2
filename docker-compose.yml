@@ -7,6 +7,7 @@ services:
       - "1813:1813/udp"
       - "5514:5514/udp"
       - "5516:5516/udp"
+      # 8080 NOT exposed — internal only (docker network)
     volumes:
       - ./data:/app/data
     environment:
@@ -14,6 +15,8 @@ services:
       RADIUS_BIND: "0.0.0.0:1813"
       AD_SYSLOG_BIND: "0.0.0.0:5514"
       DHCP_SYSLOG_BIND: "0.0.0.0:5516"
+      ADMIN_HTTP_BIND: "0.0.0.0:8080"
+      RUST_LOG: info
     restart: unless-stopped
 
   web:
@@ -29,6 +32,8 @@ services:
       DATABASE_URL: "sqlite:///app/data/net-identity.db?mode=rwc"
       HTTP_BIND: "0.0.0.0:3000"
       ASSETS_DIR: "/app/assets"
+      ENGINE_API_URL: "http://engine:8080"
+      RUST_LOG: info
     depends_on:
       - engine
     restart: unless-stopped
