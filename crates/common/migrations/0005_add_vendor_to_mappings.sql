@@ -1,0 +1,1 @@
+ALTER TABLE mappings ADD COLUMN vendor TEXT;

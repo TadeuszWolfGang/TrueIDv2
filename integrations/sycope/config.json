@@ -13,5 +13,7 @@
   "lookup_name": "TrueID_Enrichment",
 
   "enable_event_index": true,
-  "index_name": "trueid_events"
+  "index_name": "trueid_events",
+
+  "sync_interval_seconds": 300
 }

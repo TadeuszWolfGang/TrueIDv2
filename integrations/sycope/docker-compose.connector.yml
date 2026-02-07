@@ -8,8 +8,8 @@ services:
     container_name: trueid-sycope-connector
     restart: always
     volumes:
-      - ./config.json:/app/trueid/config.json:ro
-      - connector-state:/app/trueid/state
+      - ./config.json:/app/integrations/sycope/config.json:ro
+      - connector-state:/app/integrations/sycope/state
     environment:
       - TZ=Europe/Warsaw
     # Script runs once per invocation.

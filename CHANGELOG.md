@@ -8,7 +8,9 @@
 - **PKI tooling:** `scripts/gen-certs.sh` generates CA + server + agent certificates for mTLS.
 - **Unit tests:** 8 tests for XML event parsers (4768, 4624, DHCP 10) and syslog octet-counting framing.
 - **Sycope connector:** Python integration (`integrations/sycope/`) — CSV Lookup enrichment (Pattern A) and Custom Index event injection (Pattern B) following official SycopeSolutions/Integrations SDK patterns.
+- **Sycope SDK:** Vendored `sycope/` package from SycopeSolutions/Integrations for API auth, lookups, indexes.
 - **Web API v1:** `GET /api/v1/mappings` (active only) and `GET /api/v1/events?since=<ts>` endpoints on `trueid-web`.
+- **Migration:** `0005_add_vendor_to_mappings.sql` — ensures `vendor` column exists on fresh deployments.
 
 ### Changed
 - **Architectural Overhaul:** Split monolithic `net-identity-server` into two separate applications:

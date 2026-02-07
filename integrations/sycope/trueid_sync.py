@@ -21,10 +21,11 @@ Requires Sycope >= 3.1
 import logging
 import os
 import sys
+import time
 
 import requests
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
 from trueid_api import TrueIdApi
 from sycope.api import SycopeApi
@@ -40,8 +41,12 @@ CONFIG_FILE = os.path.join(SCRIPT_DIR, "config.json")
 # Lookup column definition for TrueID enrichment.
 CSV_COLUMNS = ["ip", "mac", "user", "hostname", "vendor", "last_seen"]
 
+# State directory for persistent data (must match docker volume mount).
+STATE_DIR = os.path.join(SCRIPT_DIR, "state")
+os.makedirs(STATE_DIR, exist_ok=True)
+
 # Timestamp tracking file for event deduplication (Pattern B).
-LAST_TIMESTAMP_FILE = os.path.join(SCRIPT_DIR, "last_event_timestamp.txt")
+LAST_TIMESTAMP_FILE = os.path.join(STATE_DIR, "last_event_timestamp.txt")
 
 
 def build_trueid_conn(cfg: dict) -> TrueIdApi:
@@ -399,6 +404,11 @@ def main() -> None:
         sycope.log_out()
 
     logger.debug("Script complete")
+
+    # Sleep before exit so Docker restart: always doesn't create a tight loop.
+    sleep_secs = cfg.get("sync_interval_seconds", 300)
+    logging.info(f"Sleeping {sleep_secs}s before next run...")
+    time.sleep(sleep_secs)
 
 
 if __name__ == "__main__":
