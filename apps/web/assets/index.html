@@ -164,6 +164,23 @@
       async function refresh() {
         try {
           const response = await fetch("/api/recent");
+          if (response.status === 503) {
+            body.innerHTML = `
+              <tr><td colspan="7">
+                <div style="max-width:520px;margin:40px auto;text-align:center;color:#c7f9cc">
+                  <h2 style="color:#f59e0b">Database not connected</h2>
+                  <p>The TrueID database is not available.</p>
+                  <ol style="text-align:left;margin:16px 0">
+                    <li>Check <code>.env</code> contains <code>DATABASE_URL=sqlite://net-identity.db?mode=rwc</code></li>
+                    <li>Run <code>cargo run -p trueid-engine</code> to create the database</li>
+                    <li>Restart this web server</li>
+                  </ol>
+                  <p class="muted">See README.md for full setup instructions.</p>
+                </div>
+              </td></tr>`;
+            status.textContent = "Database unavailable";
+            return;
+          }
           if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
           }

@@ -1,8 +1,41 @@
-# TrueID v0.3.0
+# TrueID
 
 **Real-time Identity Correlation Engine** written in Rust.
 Maps IP addresses to user identities using RADIUS (802.1x), Active Directory
 (Kerberos/Syslog) and DHCP — with source-priority scoring and a live dashboard.
+
+## Requirements
+
+- Rust (stable, >= 1.75) — install: https://rustup.rs
+- macOS / Linux (Windows: WSL2)
+
+## Quick Start
+
+```bash
+git clone <repo-url> && cd TrueID
+
+# 1. Setup (first time only)
+make setup
+
+# 2. Run engine (Terminal 1)
+make engine
+
+# 3. Run web dashboard (Terminal 2)
+make web
+# Dashboard: http://127.0.0.1:3000
+```
+
+## Commands
+
+| Command       | Description                              |
+|---------------|------------------------------------------|
+| `make setup`  | First-time setup: .env, build, init DB   |
+| `make engine` | Run engine (ingestion + admin API)       |
+| `make web`    | Start web dashboard (port 3000)          |
+| `make run`    | Run engine + web together                |
+| `make check`  | Health check: .env, DB, server status    |
+| `make clean`  | Remove local database                    |
+| `make help`   | Show all available commands              |
 
 ## Architecture
 
@@ -16,7 +49,7 @@ Maps IP addresses to user identities using RADIUS (802.1x), Active Directory
             ┌────────────────┐
             │ TrueID Engine  │   (trueid-engine)
             │  adapters +    │
-            │  event loop    │
+            │  admin API     │   :8080 (internal)
             └───────┬────────┘
                     │ write
                     ▼
@@ -27,12 +60,8 @@ Maps IP addresses to user identities using RADIUS (802.1x), Active Directory
                     ▼
             ┌────────────────┐
             │  TrueID Web    │   (trueid-web)
-            │  API + static  │
-            └───────┬────────┘
-                    │ HTTP :3000
-                    ▼
-            ┌────────────────┐
-            │ Admin Dashboard│
+            │  API + proxy   │
+            │  + static UI   │   :3000
             └────────────────┘
 ```
 
@@ -40,51 +69,33 @@ Maps IP addresses to user identities using RADIUS (802.1x), Active Directory
 
 | Crate | Path | Role |
 |-------|------|------|
-| **trueid-common** | `crates/common` | Shared models (`IdentityEvent`, `DeviceMapping`, `SourceType`), DB pool, migrations, helpers. |
-| **trueid-engine** | `apps/engine` | Passive UDP/Syslog listener. Writes to DB. No HTTP. Graceful shutdown on Ctrl+C. |
-| **trueid-web** | `apps/web` | Read-only Axum HTTP server. API (`/api/recent`, `/lookup/{ip}`) and static dashboard. Decoupled from ingestion. |
+| **trueid-common** | `crates/common` | Shared models, DB pool, migrations, helpers |
+| **trueid-engine** | `apps/engine` | Passive UDP/TLS listener + Admin API (:8080). Writes to DB |
+| **trueid-web** | `apps/web` | HTTP API gateway + dashboard. Reads from DB, proxies writes to engine |
 
-## Quick Start
+## Configuration
 
-### Requirements
-
-- Rust 1.75+ & Cargo
-- SQLite (bundled via `libsqlite3-sys`)
-
-### Configuration
-
-Both services share the same `.env` file:
-
-```bash
-cp .env.example .env
-```
+Copy `.env.example` to `.env` (done automatically by `make setup`):
 
 ```env
-DATABASE_URL=sqlite://trueid.db?mode=rwc
+DATABASE_URL=sqlite://net-identity.db?mode=rwc
 RADIUS_BIND=0.0.0.0:1813
 AD_SYSLOG_BIND=0.0.0.0:5514
 DHCP_SYSLOG_BIND=0.0.0.0:5516
-RADIUS_SECRET=secret
 HTTP_BIND=0.0.0.0:3000
+RUST_LOG=info
 ```
 
-### Build
+All defaults work out of the box — no changes needed for local development.
 
-```bash
-cargo build --release
-```
+## Troubleshooting
 
-### Run
-
-Start the engine (data collection) and web (dashboard) in separate terminals:
-
-```bash
-# Terminal 1 — ingestion
-cargo run -p trueid-engine
-
-# Terminal 2 — dashboard
-cargo run -p trueid-web
-```
+| Problem | Solution |
+|---------|----------|
+| White screen on port 3000 | Run `make engine` first, then `make web` |
+| "unable to open database" | Check `DATABASE_URL` in `.env`, run `make setup` |
+| DB exists but tables missing | Run `make engine` to apply migrations |
+| Need full reset | `make clean && make setup` |
 
 ## Integration
 

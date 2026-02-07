@@ -8,7 +8,7 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    routing::{delete, get, post, put},
+    routing::{delete, get},
     Json, Router,
 };
 use sqlx::Row;
@@ -22,16 +22,30 @@ use trueid_common::db::Db;
 use trueid_common::model::DeviceMapping;
 use trueid_common::{env_or_default, parse_socket_addr};
 
-const DEFAULT_DB_URL: &str = "sqlite://trueid.db?mode=rwc";
+const DEFAULT_DB_URL: &str = "sqlite://net-identity.db?mode=rwc";
 const DEFAULT_HTTP_ADDR: &str = "0.0.0.0:3000";
 const DEFAULT_ASSETS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets");
 const DEFAULT_ENGINE_URL: &str = "http://127.0.0.1:8080";
 
 #[derive(Clone)]
 struct AppState {
-    db: Arc<Db>,
+    db: Option<Arc<Db>>,
     engine_url: String,
     http_client: reqwest::Client,
+}
+
+/// Extracts the DB handle from state or returns a 503 JSON response.
+fn require_db(state: &AppState) -> Result<&Arc<Db>, (StatusCode, Json<serde_json::Value>)> {
+    state.db.as_ref().ok_or_else(|| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({
+                "error": "Database unavailable",
+                "hint": "Run 'cargo run -p trueid-engine' to initialize the database, then restart the web server.",
+                "docs": "See README.md for setup instructions."
+            })),
+        )
+    })
 }
 
 // ── Proxy helper ────────────────────────────────────────────
@@ -94,7 +108,8 @@ struct PaginatedMappings {
 async fn api_v1_mappings(
     Query(q): Query<MappingsQuery>,
     State(s): State<AppState>,
-) -> Result<impl IntoResponse, StatusCode> {
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let db = require_db(&s)?;
     let page = q.page.unwrap_or(1).max(1);
     let per_page = q.per_page.unwrap_or(50).clamp(1, 200);
     let offset = (page - 1) * per_page;
@@ -146,7 +161,7 @@ async fn api_v1_mappings(
     );
 
     // Execute count query.
-    let pool = s.db.pool();
+    let pool = db.pool();
 
     // SQLx doesn't support dynamic bind count easily, so build a raw query with
     // explicit bind calls.  query_scalar needs a concrete type annotation.
@@ -155,7 +170,7 @@ async fn api_v1_mappings(
         for b in &binds { q = q.bind(b.clone()); }
         q.fetch_one(pool).await.map_err(|e| {
             warn!(error = %e, "Mappings count query failed");
-            StatusCode::INTERNAL_SERVER_ERROR
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "query failed"})))
         })?
     };
 
@@ -166,7 +181,7 @@ async fn api_v1_mappings(
         q = q.bind(per_page).bind(offset);
         q.fetch_all(pool).await.map_err(|e| {
             warn!(error = %e, "Mappings data query failed");
-            StatusCode::INTERNAL_SERVER_ERROR
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "query failed"})))
         })?
     };
 
@@ -211,7 +226,8 @@ struct EventsQuery {
 async fn api_v1_events(
     Query(q): Query<EventsQuery>,
     State(s): State<AppState>,
-) -> Result<impl IntoResponse, StatusCode> {
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let db = require_db(&s)?;
     let limit = q.limit.unwrap_or(100).clamp(1, 1000);
     let since_dt = q.since
         .and_then(|ts| Utc.timestamp_opt(ts, 0).single())
@@ -244,7 +260,7 @@ async fn api_v1_events(
         where_clause,
     );
 
-    let pool = s.db.pool();
+    let pool = db.pool();
     let rows = {
         let mut q = sqlx::query(&sql).bind(since_dt);
         for b in &str_binds { q = q.bind(b.clone()); }
@@ -255,7 +271,7 @@ async fn api_v1_events(
         q = q.bind(limit);
         q.fetch_all(pool).await.map_err(|e| {
             warn!(error = %e, "Events query failed");
-            StatusCode::INTERNAL_SERVER_ERROR
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "query failed"})))
         })?
     };
 
@@ -285,12 +301,13 @@ struct LookupDetailResponse {
 async fn lookup(
     Path(ip): Path<String>,
     State(s): State<AppState>,
-) -> Result<impl IntoResponse, StatusCode> {
-    let mapping = s.db.get_mapping(&ip).await.map_err(|e| {
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let db = require_db(&s)?;
+    let mapping = db.get_mapping(&ip).await.map_err(|e| {
         warn!(error = %e, %ip, "Lookup failed");
-        StatusCode::INTERNAL_SERVER_ERROR
+        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "query failed"})))
     })?;
-    let events = s.db.get_events_for_ip(&ip, 20).await.unwrap_or_default();
+    let events = db.get_events_for_ip(&ip, 20).await.unwrap_or_default();
     Ok(Json(LookupDetailResponse { mapping, recent_events: events }))
 }
 
@@ -304,13 +321,14 @@ struct RecentQuery {
 async fn recent(
     Query(query): Query<RecentQuery>,
     State(s): State<AppState>,
-) -> Result<impl IntoResponse, StatusCode> {
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    let db = require_db(&s)?;
     let limit = query.limit.unwrap_or(50).max(1);
-    match s.db.get_recent_mappings(limit).await {
+    match db.get_recent_mappings(limit).await {
         Ok(mappings) => Ok(Json(mappings)),
         Err(err) => {
             warn!(error = %err, "Recent mappings query failed");
-            Err(StatusCode::INTERNAL_SERVER_ERROR)
+            Err((StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "query failed"}))))
         }
     }
 }
@@ -384,7 +402,13 @@ async fn main() -> Result<()> {
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt().with_env_filter(env_filter).init();
 
-    let db_url = env_or_default("DATABASE_URL", DEFAULT_DB_URL);
+    let db_url = match std::env::var("DATABASE_URL") {
+        Ok(v) => v,
+        Err(_) => {
+            warn!("DATABASE_URL not set — using default: {}", DEFAULT_DB_URL);
+            DEFAULT_DB_URL.to_string()
+        }
+    };
     let http_addr = parse_socket_addr(
         &env_or_default("HTTP_BIND", DEFAULT_HTTP_ADDR),
         DEFAULT_HTTP_ADDR,
@@ -392,7 +416,21 @@ async fn main() -> Result<()> {
     let engine_url = env_or_default("ENGINE_API_URL", DEFAULT_ENGINE_URL);
 
     info!(db_url = %db_url, "Initializing database (read-only dashboard)");
-    let db = Arc::new(trueid_common::db::init_db(&db_url).await?);
+    let db = match trueid_common::db::init_db(&db_url).await {
+        Ok(d) => {
+            info!("Database connected successfully");
+            Some(Arc::new(d))
+        }
+        Err(e) => {
+            tracing::error!(
+                "Database connection failed: {e:#}\n\
+                 -> Check DATABASE_URL in .env\n\
+                 -> Run 'cargo run -p trueid-engine' first to create tables\n\
+                 -> Server will start but API will return 503"
+            );
+            None
+        }
+    };
 
     let state = AppState {
         db,

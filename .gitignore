@@ -1,4 +1,13 @@
+# Rust build artifacts
 /target/
+
+# Local configuration (template: .env.example)
 .env
+
+# SQLite database (generated locally)
 *.db
+*.db-shm
+*.db-wal
+
+# Data directory
 data/

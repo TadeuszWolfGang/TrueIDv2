@@ -29,7 +29,7 @@ use trueid_common::{env_or_default, parse_socket_addr};
 
 use crate::admin_api::{EngineAdminState, RuntimeEnv};
 
-const DEFAULT_DB_URL: &str = "sqlite://trueid.db?mode=rwc";
+const DEFAULT_DB_URL: &str = "sqlite://net-identity.db?mode=rwc";
 const DEFAULT_RADIUS_ADDR: &str = "0.0.0.0:1813";
 const DEFAULT_AD_SYSLOG_ADDR: &str = "0.0.0.0:5514";
 const DEFAULT_DHCP_SYSLOG_ADDR: &str = "0.0.0.0:5516";
@@ -279,7 +279,13 @@ async fn main() -> Result<()> {
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt().with_env_filter(env_filter).init();
 
-    let db_url = env_or_default("DATABASE_URL", DEFAULT_DB_URL);
+    let db_url = match std::env::var("DATABASE_URL") {
+        Ok(v) => v,
+        Err(_) => {
+            warn!("DATABASE_URL not set — using default: {}", DEFAULT_DB_URL);
+            DEFAULT_DB_URL.to_string()
+        }
+    };
     let radius_bind_str = env_or_default("RADIUS_BIND", DEFAULT_RADIUS_ADDR);
     let ad_syslog_bind_str = env_or_default("AD_SYSLOG_BIND", DEFAULT_AD_SYSLOG_ADDR);
     let dhcp_syslog_bind_str = env_or_default("DHCP_SYSLOG_BIND", DEFAULT_DHCP_SYSLOG_ADDR);
