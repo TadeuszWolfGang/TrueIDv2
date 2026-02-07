@@ -5,23 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>TrueID Dashboard</title>
     <style>
-      :root {
-        color-scheme: dark;
-      }
+      :root { color-scheme: dark; }
       body {
         background: #0b0f0d;
         color: #c7f9cc;
-        font-family: "SFMono-Regular", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+        font-family: "SFMono-Regular", ui-monospace, Menlo, Monaco, Consolas,
           "Liberation Mono", "Courier New", monospace;
         margin: 0;
         padding: 24px;
       }
-      h1 {
-        margin: 0 0 16px;
-        font-size: 20px;
-        color: #80ffdb;
-        letter-spacing: 0.02em;
-      }
+      h1 { margin: 0 0 16px; font-size: 20px; color: #80ffdb; letter-spacing: 0.02em; }
       .panel {
         border: 1px solid #1e2a24;
         border-radius: 8px;
@@ -29,171 +22,519 @@
         padding: 16px;
         box-shadow: 0 0 18px rgba(0, 255, 128, 0.08);
       }
-      table {
-        width: 100%;
-        border-collapse: collapse;
-      }
+      table { width: 100%; border-collapse: collapse; }
       thead th {
-        text-align: left;
-        font-weight: 600;
-        color: #80ffdb;
-        border-bottom: 1px solid #1e2a24;
-        padding: 10px 8px;
+        text-align: left; font-weight: 600; color: #80ffdb;
+        border-bottom: 1px solid #1e2a24; padding: 10px 8px;
       }
       tbody td {
         padding: 8px;
         border-bottom: 1px solid rgba(30, 42, 36, 0.6);
       }
-      tbody tr:hover {
-        background: rgba(0, 255, 128, 0.05);
-      }
-      .muted {
-        color: #6b8579;
-      }
-      tr.offline td {
-        opacity: 0.45;
-      }
+      tbody tr:hover { background: rgba(0, 255, 128, 0.05); }
+      .muted { color: #6b8579; }
+      tr.offline td { opacity: 0.45; }
       .dot {
-        display: inline-block;
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        margin-right: 6px;
-        vertical-align: middle;
+        display: inline-block; width: 8px; height: 8px;
+        border-radius: 50%; margin-right: 6px; vertical-align: middle;
       }
-      .dot.online {
-        background: #22c55e;
-        box-shadow: 0 0 6px #22c55e;
-      }
-      .dot.offline {
-        background: #3a3a3a;
-      }
-      .vendor {
-        display: block;
-        font-size: 11px;
+      .dot.online { background: #22c55e; box-shadow: 0 0 6px #22c55e; }
+      .dot.offline { background: #3a3a3a; }
+      .vendor { display: block; font-size: 11px; color: #6b8579; margin-top: 2px; }
+      .status { margin-top: 12px; font-size: 12px; color: #6b8579; }
+
+      /* Tabs */
+      .tab {
+        padding: 8px 24px;
+        background: #0f1512;
         color: #6b8579;
-        margin-top: 2px;
+        border: 1px solid #1e2a24;
+        border-bottom: none;
+        cursor: pointer;
+        font-family: inherit;
+        font-size: 14px;
+        transition: all 0.2s;
       }
-      .status {
-        margin-top: 12px;
-        font-size: 12px;
-        color: #6b8579;
+      .tab:hover { color: #80ffdb; }
+      .tab.active {
+        color: #80ffdb;
+        background: #0b0f0d;
+        border-color: #80ffdb;
+        border-bottom: 2px solid #0b0f0d;
+        margin-bottom: -1px;
+        z-index: 1;
+      }
+
+      /* Setting rows */
+      .setting-row {
+        display: flex; justify-content: space-between;
+        align-items: center; padding: 12px 0; gap: 16px;
+      }
+      .setting-label { flex: 1; }
+      .setting-title { display: block; color: #c7f9cc; font-size: 14px; }
+      .setting-desc { display: block; color: #6b8579; font-size: 12px; margin-top: 2px; }
+      .setting-input {
+        background: #0b0f0d; border: 1px solid #1e2a24; border-radius: 4px;
+        color: #c7f9cc; padding: 8px 12px; font-family: inherit; font-size: 13px;
+        width: 280px; transition: border-color 0.2s;
+      }
+      .setting-input:focus { outline: none; border-color: #80ffdb; }
+      .setting-divider { border-top: 1px solid #1e2a24; margin: 8px 0; }
+      .section-title { color: #80ffdb; font-size: 15px; margin: 16px 0 4px; font-weight: 600; }
+      .section-desc { color: #6b8579; font-size: 12px; margin: 0 0 8px; }
+      .section-desc code {
+        background: #1e2a24; padding: 2px 6px; border-radius: 3px;
+        font-size: 11px; color: #80ffdb;
+      }
+
+      /* Toggle switch */
+      .toggle { position: relative; display: inline-block; width: 48px; height: 26px; flex-shrink: 0; }
+      .toggle input { opacity: 0; width: 0; height: 0; }
+      .toggle-slider {
+        position: absolute; inset: 0; background: #1e2a24;
+        border-radius: 26px; transition: 0.3s; cursor: pointer;
+      }
+      .toggle-slider::before {
+        content: ''; position: absolute; width: 20px; height: 20px;
+        left: 3px; bottom: 3px; background: #6b8579;
+        border-radius: 50%; transition: 0.3s;
+      }
+      .toggle input:checked + .toggle-slider { background: #22c55e; }
+      .toggle input:checked + .toggle-slider::before { transform: translateX(22px); background: #fff; }
+
+      /* Buttons */
+      .btn {
+        background: #1e2a24; color: #80ffdb; border: 1px solid #80ffdb;
+        border-radius: 4px; padding: 8px 16px; font-family: inherit;
+        font-size: 13px; cursor: pointer; transition: all 0.2s; white-space: nowrap;
+      }
+      .btn:hover { background: #80ffdb; color: #0b0f0d; }
+      .btn-sm { padding: 6px 12px; font-size: 12px; }
+      .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+      /* Sync status box */
+      .sync-status-box {
+        background: #0b0f0d; border: 1px solid #1e2a24;
+        border-radius: 4px; padding: 12px; font-size: 13px;
+      }
+
+      /* Feedback flash */
+      .flash-ok { animation: flashGreen 0.6s; }
+      .flash-err { animation: flashRed 0.6s; }
+      @keyframes flashGreen {
+        0%, 100% { border-color: #1e2a24; }
+        50% { border-color: #22c55e; box-shadow: 0 0 8px rgba(34,197,94,0.3); }
+      }
+      @keyframes flashRed {
+        0%, 100% { border-color: #1e2a24; }
+        50% { border-color: #ef4444; box-shadow: 0 0 8px rgba(239,68,68,0.3); }
       }
     </style>
   </head>
   <body>
-    <h1>TrueID :: recent mappings</h1>
-    <div class="panel">
-      <table>
-        <thead>
-          <tr>
-            <th></th>
-            <th>IP</th>
-            <th>MAC</th>
-            <th>User</th>
-            <th>Last Seen</th>
-            <th>Source</th>
-            <th>Confidence</th>
-          </tr>
-        </thead>
-        <tbody id="recent-body">
-          <tr>
-            <td colspan="7" class="muted">Waiting for data...</td>
-          </tr>
-        </tbody>
-      </table>
-      <div class="status" id="status">Last update: never</div>
+
+    <!-- Tab navigation -->
+    <nav id="tabs" style="display:flex;gap:0;margin-bottom:20px;">
+      <button class="tab active" onclick="switchTab('mappings')">Mappings</button>
+      <button class="tab" onclick="switchTab('status')">Status</button>
+      <button class="tab" onclick="switchTab('sycope')">Sycope</button>
+    </nav>
+
+    <!-- ═══ TAB: Mappings ═══ -->
+    <div id="tab-mappings">
+      <h1>TrueID :: recent mappings</h1>
+      <div class="panel">
+        <table>
+          <thead>
+            <tr>
+              <th></th>
+              <th>IP</th>
+              <th>MAC</th>
+              <th>User</th>
+              <th>Last Seen</th>
+              <th>Source</th>
+              <th>Confidence</th>
+            </tr>
+          </thead>
+          <tbody id="recent-body">
+            <tr>
+              <td colspan="7" class="muted">Waiting for data...</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="status" id="status">Last update: never</div>
+      </div>
+    </div>
+
+    <!-- ═══ TAB: Status (placeholder) ═══ -->
+    <div id="tab-status" style="display:none;">
+      <h1>TrueID :: System Status</h1>
+      <div class="panel">
+        <p class="muted">Coming soon — adapter status, agent monitoring, and runtime config.</p>
+      </div>
+    </div>
+
+    <!-- ═══ TAB: Sycope ═══ -->
+    <div id="tab-sycope" style="display:none;">
+      <h1>TrueID :: Sycope Integration</h1>
+      <div class="panel">
+
+        <!-- Master switch -->
+        <div class="setting-row">
+          <div class="setting-label">
+            <span class="setting-title">Enable Sycope Sync</span>
+            <span class="setting-desc">Push identity data to Sycope for NetFlow enrichment</span>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="sycope-enabled" onchange="saveSycopeField('enabled', this.checked)">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="setting-divider"></div>
+
+        <!-- Connection -->
+        <h2 class="section-title">Connection</h2>
+
+        <div class="setting-row">
+          <div class="setting-label">
+            <span class="setting-title">Sycope Host</span>
+            <span class="setting-desc">URL of the Sycope appliance (e.g. https://192.168.1.14)</span>
+          </div>
+          <input type="text" id="sycope-host" class="setting-input" placeholder="https://sycope.example.com"
+            onchange="saveSycopeField('sycope_host', this.value)">
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-label">
+            <span class="setting-title">Username</span>
+            <span class="setting-desc">Sycope API user (needs Lookup + Index inject rights)</span>
+          </div>
+          <input type="text" id="sycope-login" class="setting-input" placeholder="trueid_sync"
+            autocomplete="username"
+            onchange="saveSycopeField('sycope_login', this.value)">
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-label">
+            <span class="setting-title">Password</span>
+            <span class="setting-desc" id="pass-status">Not set</span>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <input type="password" id="sycope-pass" class="setting-input" placeholder="••••••••"
+              autocomplete="new-password">
+            <button class="btn btn-sm" onclick="saveSycopePassword()">Save</button>
+          </div>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-label">
+            <span class="setting-title">Test Connection</span>
+            <span class="setting-desc">Verify credentials and network connectivity</span>
+          </div>
+          <button class="btn" id="test-btn" onclick="testSycopeConnection()">Test Connection</button>
+        </div>
+
+        <div id="test-result" style="display:none;margin:8px 0;padding:10px;border-radius:4px;font-size:13px;"></div>
+
+        <div class="setting-divider"></div>
+
+        <!-- Pattern A: Lookup Enrichment -->
+        <h2 class="section-title">Pattern A — Lookup Enrichment</h2>
+        <p class="section-desc">
+          Active IP-to-identity mappings pushed to a Sycope CSV Lookup.
+          Use in NQL: <code>src stream="netflow" | lookup "TrueID_Enrichment" on clientIp</code>
+        </p>
+
+        <div class="setting-row">
+          <div class="setting-label">
+            <span class="setting-title">Lookup Name</span>
+            <span class="setting-desc">CSV Lookup name in Sycope (must exist in Sycope first)</span>
+          </div>
+          <input type="text" id="sycope-lookup" class="setting-input" placeholder="TrueID_Enrichment"
+            onchange="saveSycopeField('lookup_name', this.value)">
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-label">
+            <span class="setting-title">Sync Interval</span>
+            <span class="setting-desc">How often to push data (seconds)</span>
+          </div>
+          <input type="number" id="sycope-interval" class="setting-input" style="width:100px;"
+            min="30" step="30" placeholder="300"
+            onchange="saveSycopeField('sync_interval_seconds', parseInt(this.value))">
+        </div>
+
+        <div class="setting-divider"></div>
+
+        <!-- Pattern B: Event Index -->
+        <h2 class="section-title">Pattern B — Event History</h2>
+        <p class="section-desc">
+          Auth/mapping change events injected into a Sycope Custom Index for forensic analysis.
+        </p>
+
+        <div class="setting-row">
+          <div class="setting-label">
+            <span class="setting-title">Enable Event Index</span>
+            <span class="setting-desc">Inject auth events to custom Sycope index</span>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" id="sycope-evt-idx" onchange="saveSycopeField('enable_event_index', this.checked)">
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-label">
+            <span class="setting-title">Index Name</span>
+            <span class="setting-desc">Custom Index name (created via install.py)</span>
+          </div>
+          <input type="text" id="sycope-idx-name" class="setting-input" placeholder="trueid_events"
+            onchange="saveSycopeField('index_name', this.value)">
+        </div>
+
+        <div class="setting-divider"></div>
+
+        <!-- Sync Status -->
+        <h2 class="section-title">Sync Status</h2>
+        <div id="sync-status" class="sync-status-box">Loading...</div>
+
+      </div>
     </div>
 
     <script>
+      /* ── Tab switching ─────────────────────────────── */
+
+      function switchTab(name) {
+        document.querySelectorAll('[id^="tab-"]').forEach(function (el) {
+          if (el.id.startsWith('tab-')) el.style.display = 'none';
+        });
+        var target = document.getElementById('tab-' + name);
+        if (target) target.style.display = 'block';
+
+        document.querySelectorAll('.tab').forEach(function (btn) {
+          btn.classList.remove('active');
+          if (btn.textContent.trim().toLowerCase() === name) btn.classList.add('active');
+        });
+
+        if (name === 'sycope') loadSycopeConfig();
+      }
+
+      /* ── Mappings tab (existing logic) ─────────────── */
+
       const body = document.getElementById("recent-body");
       const status = document.getElementById("status");
 
       function timeAgo(isoStr) {
         if (!isoStr || isoStr === "-") return "-";
-        const diff = Date.now() - new Date(isoStr).getTime();
+        var diff = Date.now() - new Date(isoStr).getTime();
         if (diff < 0) return "just now";
-        const sec = Math.floor(diff / 1000);
+        var sec = Math.floor(diff / 1000);
         if (sec < 60) return sec + "s ago";
-        const min = Math.floor(sec / 60);
+        var min = Math.floor(sec / 60);
         if (min < 60) return min + " min ago";
-        const hrs = Math.floor(min / 60);
+        var hrs = Math.floor(min / 60);
         if (hrs < 24) return hrs + "h ago";
         return Math.floor(hrs / 24) + "d ago";
       }
 
       function renderRows(items) {
         if (!Array.isArray(items) || items.length === 0) {
-          body.innerHTML =
-            '<tr><td colspan="7" class="muted">No data yet.</td></tr>';
+          body.innerHTML = '<tr><td colspan="7" class="muted">No data yet.</td></tr>';
           return;
         }
-
-        body.innerHTML = items
-          .map((item) => {
-            const active = item.is_active !== false;
-            const cls = active ? "" : "offline";
-            const dotCls = active ? "online" : "offline";
-            const ip = item.ip ?? "-";
-            const mac = item.mac ?? "-";
-            const vendor = item.vendor
-              ? `<span class="vendor">${item.vendor}</span>`
-              : "";
-            const user = Array.isArray(item.current_users)
-              ? item.current_users.join(", ")
-              : item.user ?? "-";
-            const lastSeen = timeAgo(item.last_seen);
-            const source = item.source ?? "-";
-            const confidence =
-              item.confidence_score ?? item.confidence ?? "-";
-            return `
-              <tr class="${cls}">
-                <td><span class="dot ${dotCls}"></span></td>
-                <td>${ip}</td>
-                <td>${mac}${vendor}</td>
-                <td>${user}</td>
-                <td>${lastSeen}</td>
-                <td>${source}</td>
-                <td>${confidence}</td>
-              </tr>
-            `;
-          })
-          .join("");
+        body.innerHTML = items.map(function (item) {
+          var active = item.is_active !== false;
+          var cls = active ? "" : "offline";
+          var dotCls = active ? "online" : "offline";
+          var ip = item.ip || "-";
+          var mac = item.mac || "-";
+          var vendor = item.vendor ? '<span class="vendor">' + item.vendor + '</span>' : "";
+          var user = Array.isArray(item.current_users) ? item.current_users.join(", ") : (item.user || "-");
+          var lastSeen = timeAgo(item.last_seen);
+          var source = item.source || "-";
+          var confidence = item.confidence_score != null ? item.confidence_score : (item.confidence || "-");
+          return '<tr class="' + cls + '">' +
+            '<td><span class="dot ' + dotCls + '"></span></td>' +
+            '<td>' + ip + '</td>' +
+            '<td>' + mac + vendor + '</td>' +
+            '<td>' + user + '</td>' +
+            '<td>' + lastSeen + '</td>' +
+            '<td>' + source + '</td>' +
+            '<td>' + confidence + '</td>' +
+            '</tr>';
+        }).join("");
       }
 
       async function refresh() {
         try {
-          const response = await fetch("/api/recent");
+          var response = await fetch("/api/recent");
           if (response.status === 503) {
-            body.innerHTML = `
-              <tr><td colspan="7">
-                <div style="max-width:520px;margin:40px auto;text-align:center;color:#c7f9cc">
-                  <h2 style="color:#f59e0b">Database not connected</h2>
-                  <p>The TrueID database is not available.</p>
-                  <ol style="text-align:left;margin:16px 0">
-                    <li>Check <code>.env</code> contains <code>DATABASE_URL=sqlite://net-identity.db?mode=rwc</code></li>
-                    <li>Run <code>cargo run -p trueid-engine</code> to create the database</li>
-                    <li>Restart this web server</li>
-                  </ol>
-                  <p class="muted">See README.md for full setup instructions.</p>
-                </div>
-              </td></tr>`;
+            body.innerHTML =
+              '<tr><td colspan="7">' +
+              '<div style="max-width:520px;margin:40px auto;text-align:center;color:#c7f9cc">' +
+              '<h2 style="color:#f59e0b">Database not connected</h2>' +
+              '<p>The TrueID database is not available.</p>' +
+              '<ol style="text-align:left;margin:16px 0">' +
+              '<li>Check <code>.env</code> contains <code>DATABASE_URL=sqlite://net-identity.db?mode=rwc</code></li>' +
+              '<li>Run <code>cargo run -p trueid-engine</code> to create the database</li>' +
+              '<li>Restart this web server</li>' +
+              '</ol>' +
+              '<p class="muted">See README.md for full setup instructions.</p>' +
+              '</div></td></tr>';
             status.textContent = "Database unavailable";
             return;
           }
-          if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-          }
-          const data = await response.json();
+          if (!response.ok) throw new Error("HTTP " + response.status);
+          var data = await response.json();
           renderRows(data);
-          status.textContent = `Last update: ${new Date().toLocaleTimeString()}`;
+          status.textContent = "Last update: " + new Date().toLocaleTimeString();
         } catch (err) {
-          status.textContent = `Last update failed: ${err}`;
+          status.textContent = "Last update failed: " + err;
         }
       }
 
       refresh();
       setInterval(refresh, 2000);
+
+      /* ── Sycope tab ────────────────────────────────── */
+
+      async function loadSycopeConfig() {
+        try {
+          var res = await fetch('/api/v1/admin/config/sycope');
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var cfg = await res.json();
+
+          document.getElementById('sycope-enabled').checked = cfg.enabled || false;
+          document.getElementById('sycope-host').value = cfg.sycope_host || '';
+          document.getElementById('sycope-login').value = cfg.sycope_login || '';
+          document.getElementById('sycope-lookup').value = cfg.lookup_name || 'TrueID_Enrichment';
+          document.getElementById('sycope-interval').value = cfg.sync_interval_seconds || 300;
+          document.getElementById('sycope-evt-idx').checked = cfg.enable_event_index || false;
+          document.getElementById('sycope-idx-name').value = cfg.index_name || 'trueid_events';
+
+          var passStatus = document.getElementById('pass-status');
+          if (cfg.sycope_pass_set) {
+            passStatus.textContent = 'Password saved';
+            passStatus.style.color = '#22c55e';
+          } else {
+            passStatus.textContent = 'Not set';
+            passStatus.style.color = '#ef4444';
+          }
+
+          renderSyncStatus(cfg.last_sync);
+        } catch (err) {
+          console.error('Failed to load Sycope config:', err);
+          document.getElementById('sync-status').innerHTML =
+            '<span style="color:#ef4444;">Failed to load config: ' + err.message + '</span>';
+        }
+      }
+
+      async function saveSycopeField(field, value) {
+        var payload = {};
+        payload[field] = value;
+        try {
+          var res = await fetch('/api/v1/admin/config/sycope', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          flashElement(event.target, true);
+        } catch (err) {
+          console.error('Save failed:', err);
+          flashElement(event.target, false);
+        }
+      }
+
+      function flashElement(el, ok) {
+        if (!el) return;
+        el.classList.remove('flash-ok', 'flash-err');
+        void el.offsetWidth;
+        el.classList.add(ok ? 'flash-ok' : 'flash-err');
+      }
+
+      async function saveSycopePassword() {
+        var input = document.getElementById('sycope-pass');
+        var val = input.value.trim();
+        if (!val) return;
+        try {
+          var res = await fetch('/api/v1/admin/config/sycope', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sycope_pass: val }),
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          input.value = '';
+          var passStatus = document.getElementById('pass-status');
+          passStatus.textContent = 'Password saved';
+          passStatus.style.color = '#22c55e';
+        } catch (err) {
+          console.error('Password save failed:', err);
+          alert('Failed to save password: ' + err.message);
+        }
+      }
+
+      async function testSycopeConnection() {
+        var btn = document.getElementById('test-btn');
+        btn.disabled = true;
+        btn.textContent = 'Testing...';
+        document.getElementById('test-result').style.display = 'none';
+
+        try {
+          var res = await fetch('/api/v1/admin/config/sycope');
+          var cfg = await res.json();
+
+          if (!cfg.sycope_host) { showTestResult(false, 'Sycope Host is not set.'); return; }
+          if (!cfg.sycope_login) { showTestResult(false, 'Username is not set.'); return; }
+          if (!cfg.sycope_pass_set) { showTestResult(false, 'Password is not set. Enter and save it above.'); return; }
+
+          showTestResult(true,
+            'Configuration complete. Host: ' + cfg.sycope_host +
+            ', User: ' + cfg.sycope_login +
+            '. Actual sync performed by trueid_sync.py connector.');
+        } catch (err) {
+          showTestResult(false, 'Test failed: ' + err.message);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Test Connection';
+        }
+      }
+
+      function showTestResult(ok, message) {
+        var el = document.getElementById('test-result');
+        el.style.display = 'block';
+        el.style.background = ok ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)';
+        el.style.border = '1px solid ' + (ok ? '#22c55e' : '#ef4444');
+        el.style.color = ok ? '#22c55e' : '#ef4444';
+        el.textContent = (ok ? 'OK: ' : 'Error: ') + message;
+      }
+
+      function renderSyncStatus(sync) {
+        var el = document.getElementById('sync-status');
+        if (!sync || !sync.status) {
+          el.innerHTML = '<span class="muted">No sync has been performed yet. ' +
+            'Configure the settings above and run the connector:<br>' +
+            '<code style="color:#80ffdb;">cd integrations/sycope && python3 trueid_sync.py</code></span>';
+          return;
+        }
+        var when = sync.last_run_at ? new Date(sync.last_run_at).toLocaleString() : 'unknown';
+        var ok = sync.status === 'ok';
+        var color = ok ? '#22c55e' : '#ef4444';
+        var html = '<div style="display:flex;gap:16px;align-items:baseline;">' +
+          '<span style="color:' + color + ';font-size:16px;">' + (ok ? '●' : '✗') + '</span>' +
+          '<div>' +
+          '<div>Last sync: <strong>' + when + '</strong></div>' +
+          '<div>Status: <span style="color:' + color + ';">' + sync.status + '</span></div>';
+        if (sync.records_synced !== undefined) {
+          html += '<div>Records synced: ' + sync.records_synced + '</div>';
+        }
+        if (sync.message) {
+          html += '<div style="color:#ef4444;margin-top:4px;">Message: ' + sync.message + '</div>';
+        }
+        html += '</div></div>';
+        el.innerHTML = html;
+      }
     </script>
   </body>
 </html>
