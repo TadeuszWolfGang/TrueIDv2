@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 anyhow = { workspace = true }
 axum = { workspace = true }
+chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 trueid-common = { path = "../../crates/common" }

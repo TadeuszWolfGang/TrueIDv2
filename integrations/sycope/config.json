@@ -1,0 +1,17 @@
+{
+  "log_level": "info",
+
+  "trueid_host": "http://localhost:3000",
+  "trueid_api_base": "/api/v1",
+  "trueid_api_key": "",
+
+  "sycope_host": "https://192.168.1.14",
+  "sycope_login": "trueid_sync",
+  "sycope_pass": "",
+  "api_base": "/npm/api/v1/",
+
+  "lookup_name": "TrueID_Enrichment",
+
+  "enable_event_index": true,
+  "index_name": "trueid_events"
+}

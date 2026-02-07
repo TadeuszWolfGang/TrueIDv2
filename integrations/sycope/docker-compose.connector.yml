@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  trueid-sycope-connector:
+    build:
+      context: ../../
+      dockerfile: integrations/sycope/Dockerfile
+    container_name: trueid-sycope-connector
+    restart: always
+    volumes:
+      - ./config.json:/app/trueid/config.json:ro
+      - connector-state:/app/trueid/state
+    environment:
+      - TZ=Europe/Warsaw
+    # Script runs once per invocation.
+    # Docker restart: always gives us the timer behaviour.
+
+volumes:
+  connector-state:
+    # Persists last_event_timestamp.txt across container restarts.

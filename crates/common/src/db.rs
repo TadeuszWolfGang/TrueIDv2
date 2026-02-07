@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use sqlx::{Row, SqlitePool};
 
-use crate::model::{DeviceMapping, IdentityEvent, SourceType};
+use crate::model::{DeviceMapping, IdentityEvent, SourceType, StoredEvent};
 
 /// SQLite-backed database access.
 pub struct Db {
@@ -175,6 +175,78 @@ impl Db {
         .execute(&self.pool)
         .await?;
         Ok(result.rows_affected())
+    }
+
+    /// Retrieves only active mappings (is_active = true).
+    ///
+    /// Parameters: none.
+    /// Returns: list of active `DeviceMapping` values or an error.
+    pub async fn get_active_mappings(&self) -> Result<Vec<DeviceMapping>> {
+        let rows = sqlx::query(
+            "SELECT ip, user, source, last_seen, confidence, mac, is_active, vendor
+             FROM mappings
+             WHERE is_active = true
+             ORDER BY last_seen DESC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut results = Vec::with_capacity(rows.len());
+        for row in rows {
+            let ip: String = row.try_get("ip")?;
+            let user: String = row.try_get("user")?;
+            let source: String = row.try_get("source")?;
+            let mac: Option<String> = row.try_get("mac")?;
+            let last_seen: DateTime<Utc> = row.try_get("last_seen")?;
+            let confidence: i64 = row.try_get("confidence")?;
+            let confidence_score =
+                u8::try_from(confidence).context("confidence value out of u8 range")?;
+            let is_active: bool = row.try_get("is_active")?;
+            let vendor: Option<String> = row.try_get("vendor")?;
+
+            results.push(DeviceMapping {
+                ip,
+                mac,
+                current_users: vec![user],
+                last_seen,
+                source: source_from_str(&source),
+                confidence_score,
+                is_active,
+                vendor,
+            });
+        }
+
+        Ok(results)
+    }
+
+    /// Retrieves events since a given timestamp.
+    ///
+    /// Parameters: `since` - UTC timestamp; returns events strictly after this time.
+    /// Returns: list of `StoredEvent` values or an error.
+    pub async fn get_events_since(&self, since: DateTime<Utc>) -> Result<Vec<StoredEvent>> {
+        let rows = sqlx::query(
+            "SELECT id, ip, user, source, timestamp, raw_data
+             FROM events
+             WHERE timestamp > ?
+             ORDER BY timestamp ASC",
+        )
+        .bind(since)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut results = Vec::with_capacity(rows.len());
+        for row in rows {
+            results.push(StoredEvent {
+                id: row.try_get("id")?,
+                ip: row.try_get("ip")?,
+                user: row.try_get("user")?,
+                source: row.try_get("source")?,
+                timestamp: row.try_get("timestamp")?,
+                raw_data: row.try_get("raw_data")?,
+            });
+        }
+
+        Ok(results)
     }
 
     /// Retrieves recent mappings ordered by last_seen.

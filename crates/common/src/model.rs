@@ -61,6 +61,23 @@ pub struct DeviceMapping {
     pub vendor: Option<String>,
 }
 
+/// Stored event row from the events table.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredEvent {
+    /// Auto-increment ID.
+    pub id: i64,
+    /// IP address associated with the event.
+    pub ip: String,
+    /// User identity.
+    pub user: String,
+    /// Source type as string.
+    pub source: String,
+    /// Event timestamp in UTC.
+    pub timestamp: DateTime<Utc>,
+    /// Raw source payload.
+    pub raw_data: String,
+}
+
 /// Default confidence score for events.
 ///
 /// Parameters: none.

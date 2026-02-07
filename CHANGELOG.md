@@ -7,6 +7,8 @@
 - **TLS listeners on engine:** Dual-protocol support — existing UDP (NXLog) preserved, new TCP+TLS listeners (AD:5615, DHCP:5617) activated when cert files are present.
 - **PKI tooling:** `scripts/gen-certs.sh` generates CA + server + agent certificates for mTLS.
 - **Unit tests:** 8 tests for XML event parsers (4768, 4624, DHCP 10) and syslog octet-counting framing.
+- **Sycope connector:** Python integration (`integrations/sycope/`) — CSV Lookup enrichment (Pattern A) and Custom Index event injection (Pattern B) following official SycopeSolutions/Integrations SDK patterns.
+- **Web API v1:** `GET /api/v1/mappings` (active only) and `GET /api/v1/events?since=<ts>` endpoints on `trueid-web`.
 
 ### Changed
 - **Architectural Overhaul:** Split monolithic `net-identity-server` into two separate applications:
