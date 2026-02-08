@@ -4,9 +4,15 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+aes-gcm = "0.10"
 anyhow = { workspace = true }
+argon2 = "0.5"
+async-trait = "0.1"
+base64 = "0.22"
 chrono = { workspace = true }
+rand = "0.8"
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = "0.10"
 sqlx = { workspace = true }
 tracing = { workspace = true }

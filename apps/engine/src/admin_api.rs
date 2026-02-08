@@ -4,9 +4,10 @@
 //! Only accessible from localhost (127.0.0.1) or within Docker network.
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Request, State},
     http::StatusCode,
-    response::IntoResponse,
+    middleware as axum_mw,
+    response::{IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
 };
@@ -28,6 +29,8 @@ pub struct EngineAdminState {
     pub adapter_stats: Arc<RwLock<Vec<AdapterStatus>>>,
     /// Runtime config values cached in env at startup.
     pub runtime_env: Arc<RuntimeEnv>,
+    /// Shared service token for web↔engine auth. None = unprotected (dev).
+    pub service_token: Option<String>,
 }
 
 /// Snapshot of engine environment at startup (read-only diagnostics).
@@ -48,6 +51,33 @@ pub struct RuntimeEnv {
     pub admin_http_bind: String,
 }
 
+/// Middleware that verifies X-Service-Token header against the configured secret.
+///
+/// If no service_token is configured (dev mode), all requests pass through.
+async fn service_token_guard(
+    State(state): State<EngineAdminState>,
+    req: Request,
+    next: axum_mw::Next,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    if let Some(ref expected) = state.service_token {
+        let provided = req
+            .headers()
+            .get("x-service-token")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        if provided != expected {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({
+                    "error": "Invalid service token",
+                    "code": "INVALID_SERVICE_TOKEN"
+                })),
+            ));
+        }
+    }
+    Ok(next.run(req).await)
+}
+
 /// Builds the admin API router with all E1-E12 handlers.
 pub fn admin_router(state: EngineAdminState) -> Router {
     Router::new()
@@ -60,6 +90,7 @@ pub fn admin_router(state: EngineAdminState) -> Router {
         .route("/engine/config/sycope", get(get_sycope_config).put(set_sycope_config))
         .route("/engine/mappings", post(create_manual_mapping))
         .route("/engine/mappings/{ip}", delete(delete_mapping))
+        .layer(axum_mw::from_fn_with_state(state.clone(), service_token_guard))
         .with_state(state)
 }
 

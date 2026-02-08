@@ -1,0 +1,352 @@
+//! Auth extractors and CSRF guard for TrueID web.
+//!
+//! `AuthUser` — Axum extractor: JWT cookie or X-API-Key header.
+//! `OptionalAuthUser` — same but returns `Option`.
+//! `csrf_guard` — rejects mutating cookie-auth requests without valid CSRF token.
+//! `require_*` role-check helpers.
+
+use async_trait::async_trait;
+use axum::{
+    extract::{FromRef, FromRequestParts, Request, State},
+    http::{header, request::Parts, Method, StatusCode},
+    middleware::Next,
+    response::Response,
+};
+use tracing::warn;
+
+use crate::auth::{self, validate_token, COOKIE_NAME, CSRF_COOKIE_NAME};
+use crate::error::{self, ApiError};
+use crate::AppState;
+use crate::RequestId;
+use trueid_common::model::UserRole;
+
+// ── AuthUser ───────────────────────────────────────────────
+
+/// Authenticated principal extracted from cookie JWT or API key header.
+#[derive(Debug, Clone)]
+pub struct AuthUser {
+    pub user_id: i64,
+    pub username: String,
+    pub role: UserRole,
+    /// "user" for cookie/JWT auth, "api_key" for API key auth.
+    pub principal_type: String,
+    pub request_id: String,
+}
+
+#[async_trait]
+impl<S> FromRequestParts<S> for AuthUser
+where
+    S: Send + Sync,
+    AppState: FromRef<S>,
+{
+    type Rejection = ApiError;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let app_state = AppState::from_ref(state);
+        let rid = parts
+            .extensions
+            .get::<RequestId>()
+            .map(|r| r.0.clone())
+            .unwrap_or_default();
+
+        // 1) Try X-API-Key header.
+        if let Some(api_key_value) = parts.headers.get("x-api-key") {
+            if let Ok(raw_key) = api_key_value.to_str() {
+                if let Some(ref db) = app_state.db {
+                    match db.validate_api_key(raw_key).await {
+                        Ok(Some(record)) => {
+                            // Rate limit per API key prefix.
+                            if !app_state.api_key_limiter.check(&record.key_prefix) {
+                                return Err(ApiError::new(
+                                    StatusCode::TOO_MANY_REQUESTS,
+                                    error::RATE_LIMITED,
+                                    "API key rate limit exceeded. Try again later.",
+                                )
+                                .with_request_id(&rid));
+                            }
+                            return Ok(AuthUser {
+                                user_id: record.created_by,
+                                username: format!("apikey:{}", record.key_prefix),
+                                role: record.role,
+                                principal_type: "api_key".to_string(),
+                                request_id: rid,
+                            });
+                        }
+                        Ok(None) => {
+                            return Err(ApiError::new(
+                                StatusCode::UNAUTHORIZED,
+                                error::AUTH_REQUIRED,
+                                "Invalid or expired API key",
+                            )
+                            .with_request_id(&rid));
+                        }
+                        Err(e) => {
+                            warn!(error = %e, "API key validation error");
+                            return Err(ApiError::new(
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                error::INTERNAL_ERROR,
+                                "Internal error during API key validation",
+                            )
+                            .with_request_id(&rid));
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2) Try JWT from cookie.
+        let cookie_header = parts
+            .headers
+            .get(header::COOKIE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+
+        let token = extract_cookie(cookie_header, COOKIE_NAME);
+        let Some(token) = token else {
+            return Err(ApiError::new(
+                StatusCode::UNAUTHORIZED,
+                error::AUTH_REQUIRED,
+                "Authentication required",
+            )
+            .with_request_id(&rid));
+        };
+        let token = token.to_string();
+
+        // Validate JWT.
+        let claims = match validate_token(&app_state.jwt_config, &token) {
+            Ok(c) => c,
+            Err(_) => {
+                return Err(ApiError::new(
+                    StatusCode::UNAUTHORIZED,
+                    error::AUTH_REQUIRED,
+                    "Invalid or expired token",
+                )
+                .with_request_id(&rid));
+            }
+        };
+
+        let user_id: i64 = claims.sub.parse().unwrap_or(0);
+
+        // Verify user still exists and token_version matches.
+        let db = app_state.db.as_ref().ok_or_else(|| {
+            ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                error::SERVICE_UNAVAILABLE,
+                "Database unavailable",
+            )
+            .with_request_id(&rid)
+        })?;
+
+        let user = db.get_user_by_id(user_id).await.ok().flatten();
+        let Some(user) = user else {
+            return Err(ApiError::new(
+                StatusCode::UNAUTHORIZED,
+                error::AUTH_REQUIRED,
+                "User no longer exists",
+            )
+            .with_request_id(&rid));
+        };
+
+        // Check token_version.
+        if user.token_version != claims.token_version {
+            return Err(ApiError::new(
+                StatusCode::UNAUTHORIZED,
+                error::AUTH_REQUIRED,
+                "Token invalidated — please log in again",
+            )
+            .with_request_id(&rid));
+        }
+
+        // Check account locked.
+        if db.is_account_locked(&user) {
+            return Err(ApiError::new(
+                StatusCode::LOCKED,
+                error::ACCOUNT_LOCKED,
+                "Account is locked",
+            )
+            .with_request_id(&rid));
+        }
+
+        Ok(AuthUser {
+            user_id: user.id,
+            username: user.username.clone(),
+            role: user.role,
+            principal_type: "user".to_string(),
+            request_id: rid,
+        })
+    }
+}
+
+// ── OptionalAuthUser ───────────────────────────────────────
+
+/// Like `AuthUser` but returns `None` instead of 401 for unauthenticated requests.
+pub struct OptionalAuthUser(pub Option<AuthUser>);
+
+#[async_trait]
+impl<S> FromRequestParts<S> for OptionalAuthUser
+where
+    S: Send + Sync,
+    AppState: FromRef<S>,
+{
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        match AuthUser::from_request_parts(parts, state).await {
+            Ok(user) => Ok(Self(Some(user))),
+            Err(_) => Ok(Self(None)),
+        }
+    }
+}
+
+// ── CSRF guard ─────────────────────────────────────────────
+
+/// Middleware that validates CSRF token for mutating requests with cookie auth.
+///
+/// Compares X-CSRF-Token header against trueid_csrf_token cookie.
+/// Skips validation for GET/HEAD/OPTIONS and for API-key auth.
+pub async fn csrf_guard(req: Request, next: Next) -> Result<Response, ApiError> {
+    let method = req.method().clone();
+
+    // Safe methods: skip.
+    if method == Method::GET || method == Method::HEAD || method == Method::OPTIONS {
+        return Ok(next.run(req).await);
+    }
+
+    let rid = req
+        .extensions()
+        .get::<RequestId>()
+        .map(|r| r.0.clone())
+        .unwrap_or_default();
+
+    let cookie_header = req
+        .headers()
+        .get(header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+
+    // Only enforce CSRF if there is a cookie-based auth token present.
+    // API key requests (no auth cookie) bypass CSRF.
+    let has_auth_cookie = extract_cookie(&cookie_header, auth::COOKIE_NAME).is_some();
+    if !has_auth_cookie {
+        return Ok(next.run(req).await);
+    }
+
+    // Check if request uses API key header (skip CSRF for API keys).
+    if req.headers().contains_key("x-api-key") {
+        return Ok(next.run(req).await);
+    }
+
+    let csrf_cookie = extract_cookie(&cookie_header, CSRF_COOKIE_NAME)
+        .unwrap_or("")
+        .to_string();
+    let csrf_header = req
+        .headers()
+        .get("x-csrf-token")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+
+    if csrf_cookie.is_empty() || csrf_header.is_empty() || csrf_cookie != csrf_header {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            error::CSRF_FAILED,
+            "CSRF token missing or invalid",
+        )
+        .with_request_id(&rid));
+    }
+
+    Ok(next.run(req).await)
+}
+
+// ── Role helpers ───────────────────────────────────────────
+
+/// Checks if user has one of the allowed roles.
+///
+/// Parameters: `user`, `allowed` — slice of permitted roles.
+/// Returns: `Ok(())` or `ApiError::FORBIDDEN`.
+pub fn require_role(user: &AuthUser, allowed: &[UserRole]) -> Result<(), ApiError> {
+    if allowed.contains(&user.role) {
+        Ok(())
+    } else {
+        Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            error::FORBIDDEN,
+            "Insufficient permissions",
+        )
+        .with_request_id(&user.request_id))
+    }
+}
+
+/// Requires Admin role.
+pub fn require_admin(user: &AuthUser) -> Result<(), ApiError> {
+    require_role(user, &[UserRole::Admin])
+}
+
+/// Requires Admin or Operator role.
+pub fn require_operator(user: &AuthUser) -> Result<(), ApiError> {
+    require_role(user, &[UserRole::Admin, UserRole::Operator])
+}
+
+/// Requires any authenticated role (Admin, Operator, or Viewer).
+pub fn require_viewer(user: &AuthUser) -> Result<(), ApiError> {
+    require_role(user, &[UserRole::Admin, UserRole::Operator, UserRole::Viewer])
+}
+
+// ── Router-level role middleware layers ─────────────────────
+
+/// Middleware layer: requires any authenticated user (Viewer+).
+///
+/// Apply on a Router group to enforce auth on all routes in the group.
+pub async fn require_viewer_layer(
+    State(state): State<AppState>,
+    req: Request,
+    next: Next,
+) -> Result<Response, ApiError> {
+    let (mut parts, body) = req.into_parts();
+    let auth = AuthUser::from_request_parts(&mut parts, &state).await?;
+    require_viewer(&auth)?;
+    Ok(next.run(Request::from_parts(parts, body)).await)
+}
+
+/// Middleware layer: requires Admin or Operator role.
+pub async fn require_operator_layer(
+    State(state): State<AppState>,
+    req: Request,
+    next: Next,
+) -> Result<Response, ApiError> {
+    let (mut parts, body) = req.into_parts();
+    let auth = AuthUser::from_request_parts(&mut parts, &state).await?;
+    require_operator(&auth)?;
+    Ok(next.run(Request::from_parts(parts, body)).await)
+}
+
+/// Middleware layer: requires Admin role.
+pub async fn require_admin_layer(
+    State(state): State<AppState>,
+    req: Request,
+    next: Next,
+) -> Result<Response, ApiError> {
+    let (mut parts, body) = req.into_parts();
+    let auth = AuthUser::from_request_parts(&mut parts, &state).await?;
+    require_admin(&auth)?;
+    Ok(next.run(Request::from_parts(parts, body)).await)
+}
+
+// ── Cookie parsing helper ──────────────────────────────────
+
+/// Extracts a named cookie value from a Cookie header string.
+///
+/// Parameters: `cookie_header` — raw Cookie header, `name` — cookie name.
+/// Returns: `Some(&str)` with the cookie value, or `None`.
+fn extract_cookie<'a>(cookie_header: &'a str, name: &str) -> Option<&'a str> {
+    for part in cookie_header.split(';') {
+        let trimmed = part.trim();
+        if let Some(val) = trimmed.strip_prefix(name) {
+            if let Some(val) = val.strip_prefix('=') {
+                return Some(val);
+            }
+        }
+    }
+    None
+}

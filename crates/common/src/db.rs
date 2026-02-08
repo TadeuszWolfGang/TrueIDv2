@@ -1,6 +1,9 @@
 //! Data access layer for TrueID (SQLite via sqlx).
 
+use aes_gcm::aead::{Aead, OsRng};
+use aes_gcm::{AeadCore, Aes256Gcm, Key, KeyInit, Nonce};
 use anyhow::{Context, Result};
+use base64::Engine as _;
 use chrono::{DateTime, Utc};
 use sqlx::{Row, SqlitePool};
 
@@ -8,18 +11,25 @@ use std::collections::HashMap;
 
 use crate::model::{AgentInfo, DeviceMapping, IdentityEvent, SourceType, StoredEvent, SyncStatus};
 
+/// Config keys whose values are encrypted at rest when an encryption key is available.
+const SENSITIVE_CONFIG_KEYS: &[&str] = &["sycope_pass", "sycope_login"];
+
 /// SQLite-backed database access.
 pub struct Db {
     pool: SqlitePool,
+    pepper: Option<String>,
+    encryption_key: Option<[u8; 32]>,
 }
 
 impl Db {
     /// Creates a new database wrapper from an existing pool.
     ///
-    /// Parameters: `pool` - SQLite connection pool.
+    /// Parameters: `pool` - SQLite connection pool,
+    /// `pepper` - optional Argon2 pepper for password hashing,
+    /// `encryption_key` - optional AES-256 key for config encryption.
     /// Returns: `Db` instance.
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    pub fn new(pool: SqlitePool, pepper: Option<String>, encryption_key: Option<[u8; 32]>) -> Self {
+        Self { pool, pepper, encryption_key }
     }
 
     /// Returns a reference to the underlying connection pool.
@@ -27,6 +37,11 @@ impl Db {
     /// Useful for running custom queries not covered by Db methods.
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
+    }
+
+    /// Returns the optional Argon2 pepper for password hashing.
+    pub fn pepper(&self) -> Option<&str> {
+        self.pepper.as_deref()
     }
 
     /// Gracefully closes the database connection pool.
@@ -266,7 +281,16 @@ impl Db {
             .bind(key)
             .fetch_optional(&self.pool)
             .await?;
-        Ok(row.map(|r| r.try_get("value")).transpose()?)
+        let raw: Option<String> = row.map(|r| r.try_get("value")).transpose()?;
+        match raw {
+            Some(v) if v.starts_with("enc:") => {
+                let enc_key = self.encryption_key.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("CONFIG_ENCRYPTION_KEY required to decrypt config value for '{key}'")
+                })?;
+                Ok(Some(decrypt_value(enc_key, &v)?))
+            }
+            other => Ok(other),
+        }
     }
 
     /// Reads a config value as i64, returning `default` if missing.
@@ -281,12 +305,21 @@ impl Db {
 
     /// Writes a config key-value pair (upsert).
     pub async fn set_config(&self, key: &str, value: &str) -> Result<()> {
+        let stored = if SENSITIVE_CONFIG_KEYS.contains(&key) {
+            if let Some(ref enc_key) = self.encryption_key {
+                encrypt_value(enc_key, value)?
+            } else {
+                value.to_string()
+            }
+        } else {
+            value.to_string()
+        };
         sqlx::query(
             "INSERT INTO config (key, value, updated_at) VALUES (?, ?, datetime('now'))
              ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
         )
         .bind(key)
-        .bind(value)
+        .bind(&stored)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -489,12 +522,128 @@ impl Db {
 
 /// Connects to the database, runs migrations, and returns a ready `Db` instance.
 ///
+/// Reads `ARGON2_PEPPER` env var for password hashing pepper.
 /// Parameters: `db_url` - SQLite connection string (e.g. "sqlite://trueid.db").
 /// Returns: initialized `Db` or an error.
+/// Encrypts a plaintext value using AES-256-GCM.
+///
+/// Parameters: `key` - 32-byte encryption key, `plaintext` - value to encrypt.
+/// Returns: "enc:" + base64(nonce ‖ ciphertext+tag).
+fn encrypt_value(key: &[u8; 32], plaintext: &str) -> Result<String> {
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
+    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    let ciphertext = cipher
+        .encrypt(&nonce, plaintext.as_bytes())
+        .map_err(|e| anyhow::anyhow!("AES-GCM encrypt failed: {e}"))?;
+    let mut blob = nonce.to_vec();
+    blob.extend_from_slice(&ciphertext);
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&blob);
+    Ok(format!("enc:{encoded}"))
+}
+
+/// Decrypts a stored "enc:..." value using AES-256-GCM.
+///
+/// Parameters: `key` - 32-byte encryption key, `stored` - "enc:" prefixed value.
+/// Returns: decrypted plaintext string.
+fn decrypt_value(key: &[u8; 32], stored: &str) -> Result<String> {
+    let encoded = stored
+        .strip_prefix("enc:")
+        .ok_or_else(|| anyhow::anyhow!("not an encrypted value"))?;
+    let blob = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .context("base64 decode failed")?;
+    if blob.len() < 12 {
+        anyhow::bail!("encrypted blob too short");
+    }
+    let (nonce_bytes, ciphertext) = blob.split_at(12);
+    let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
+    let nonce = Nonce::from_slice(nonce_bytes);
+    let plaintext = cipher
+        .decrypt(nonce, ciphertext)
+        .map_err(|e| anyhow::anyhow!("AES-GCM decrypt failed: {e}"))?;
+    String::from_utf8(plaintext).context("decrypted value is not valid UTF-8")
+}
+
+/// Parses CONFIG_ENCRYPTION_KEY env var (64 hex chars → 32 bytes).
+///
+/// Returns: `Some([u8; 32])` if set and valid, `None` otherwise.
+fn parse_encryption_key() -> Option<[u8; 32]> {
+    let hex = std::env::var("CONFIG_ENCRYPTION_KEY").ok()?;
+    let hex = hex.trim();
+    if hex.is_empty() {
+        return None;
+    }
+    if hex.len() != 64 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        tracing::warn!("CONFIG_ENCRYPTION_KEY is set but not 64 hex chars — ignoring");
+        return None;
+    }
+    let mut key = [0u8; 32];
+    for (i, chunk) in hex.as_bytes().chunks(2).enumerate() {
+        let hi = hex_nibble(chunk[0]);
+        let lo = hex_nibble(chunk[1]);
+        key[i] = (hi << 4) | lo;
+    }
+    Some(key)
+}
+
+/// Converts an ASCII hex char to its 4-bit value.
+fn hex_nibble(b: u8) -> u8 {
+    match b {
+        b'0'..=b'9' => b - b'0',
+        b'a'..=b'f' => b - b'a' + 10,
+        b'A'..=b'F' => b - b'A' + 10,
+        _ => 0,
+    }
+}
+
+/// Auto-encrypts plaintext sensitive config values on startup.
+///
+/// Parameters: `pool` - database pool, `key` - encryption key.
+/// Scans SENSITIVE_CONFIG_KEYS for values not prefixed with "enc:".
+async fn auto_encrypt_sensitive_config(pool: &SqlitePool, key: &[u8; 32]) -> Result<()> {
+    let mut count = 0u32;
+    for cfg_key in SENSITIVE_CONFIG_KEYS {
+        let row = sqlx::query("SELECT value FROM config WHERE key = ?")
+            .bind(cfg_key)
+            .fetch_optional(pool)
+            .await?;
+        if let Some(row) = row {
+            let value: String = row.try_get("value")?;
+            if !value.is_empty() && !value.starts_with("enc:") {
+                let encrypted = encrypt_value(key, &value)?;
+                sqlx::query("UPDATE config SET value = ?, updated_at = datetime('now') WHERE key = ?")
+                    .bind(&encrypted)
+                    .bind(cfg_key)
+                    .execute(pool)
+                    .await?;
+                count += 1;
+            }
+        }
+    }
+    if count > 0 {
+        tracing::info!(count, "Auto-encrypted plaintext sensitive config values");
+    }
+    Ok(())
+}
+
+/// Initialises the database: connects, runs migrations, reads secrets from env.
+///
+/// Parameters: `db_url` - SQLite connection string (e.g. "sqlite://trueid.db").
+/// Returns: initialized `Db` or an error.
+/// Reads `ARGON2_PEPPER` and `CONFIG_ENCRYPTION_KEY` env vars.
 pub async fn init_db(db_url: &str) -> Result<Db> {
     let pool = SqlitePool::connect(db_url).await?;
     sqlx::migrate!("./migrations").run(&pool).await?;
-    Ok(Db::new(pool))
+    let pepper = std::env::var("ARGON2_PEPPER").ok().filter(|s| !s.is_empty());
+    let encryption_key = parse_encryption_key();
+
+    if let Some(ref key) = encryption_key {
+        if let Err(e) = auto_encrypt_sensitive_config(&pool, key).await {
+            tracing::warn!(error = %e, "Failed to auto-encrypt sensitive config values");
+        }
+    }
+
+    Ok(Db::new(pool, pepper, encryption_key))
 }
 
 /// Converts `SourceType` to a stable string for persistence.

@@ -133,11 +133,18 @@
   </head>
   <body>
 
+    <!-- User bar -->
+    <div id="user-bar" style="display:none;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <span id="user-info" style="color:#6b8579;font-size:13px;"></span>
+      <button class="btn btn-sm" id="logout-btn" onclick="doLogout()">Logout</button>
+    </div>
+
     <!-- Tab navigation -->
     <nav id="tabs" style="display:flex;gap:0;margin-bottom:20px;">
       <button class="tab active" onclick="switchTab('mappings')">Mappings</button>
       <button class="tab" onclick="switchTab('status')">Status</button>
-      <button class="tab" onclick="switchTab('sycope')">Sycope</button>
+      <button class="tab" id="tab-btn-sycope" onclick="switchTab('sycope')">Sycope</button>
+      <button class="tab" id="tab-btn-audit" onclick="switchTab('audit')" style="display:none;">Audit Log</button>
     </nav>
 
     <!-- ═══ TAB: Mappings ═══ -->
@@ -302,7 +309,129 @@
       </div>
     </div>
 
+    <!-- ═══ TAB: Audit Log ═══ -->
+    <div id="tab-audit" style="display:none;">
+      <h1>TrueID :: Audit Log</h1>
+      <div class="panel">
+        <!-- Stats summary -->
+        <div id="audit-stats" style="display:flex;gap:24px;margin-bottom:16px;font-size:13px;color:#6b8579;">
+        </div>
+        <!-- Filters -->
+        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">
+          <input type="text" id="audit-filter-action" class="setting-input" style="width:160px;"
+            placeholder="Filter by action">
+          <input type="text" id="audit-filter-user" class="setting-input" style="width:160px;"
+            placeholder="Filter by username">
+          <button class="btn btn-sm" onclick="loadAuditLogs(1)">Apply</button>
+        </div>
+        <!-- Table -->
+        <table>
+          <thead>
+            <tr>
+              <th>Timestamp</th>
+              <th>User</th>
+              <th>Type</th>
+              <th>Action</th>
+              <th>Target</th>
+              <th>IP</th>
+              <th>Request ID</th>
+            </tr>
+          </thead>
+          <tbody id="audit-body">
+            <tr><td colspan="7" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+        <!-- Pagination -->
+        <div id="audit-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:#6b8579;">
+        </div>
+      </div>
+    </div>
+
     <script>
+      /* ── Auth: current user and helpers ─────────────── */
+
+      var currentUser = null;
+
+      function getCsrfToken() {
+        var match = document.cookie.match(/trueid_csrf_token=([^;]+)/);
+        return match ? match[1] : '';
+      }
+
+      /** Returns headers for mutating (POST/PUT/DELETE) fetch calls. */
+      function mutHeaders() {
+        return {
+          'Content-Type': 'application/json',
+          'X-CSRF-Token': getCsrfToken()
+        };
+      }
+
+      /** Check auth on page load; redirect to login if not authenticated. */
+      async function initAuth() {
+        try {
+          var resp = await fetch('/api/auth/me', { credentials: 'include' });
+          if (resp.status === 401) {
+            window.location = '/login.html';
+            return;
+          }
+          if (!resp.ok) {
+            window.location = '/login.html';
+            return;
+          }
+          currentUser = await resp.json();
+
+          // Show user bar
+          document.getElementById('user-info').textContent =
+            'Logged in as ' + currentUser.username + ' (' + currentUser.role + ')';
+          document.getElementById('user-bar').style.display = 'flex';
+
+          // Role-based UI visibility
+          applyRoleVisibility(currentUser.role);
+        } catch (e) {
+          window.location = '/login.html';
+        }
+      }
+
+      function applyRoleVisibility(role) {
+        if (role !== 'Admin') {
+          document.getElementById('tab-btn-sycope').style.display = 'none';
+          document.getElementById('tab-btn-audit').style.display = 'none';
+        } else {
+          document.getElementById('tab-btn-audit').style.display = '';
+        }
+      }
+
+      async function doLogout() {
+        try {
+          await fetch('/api/auth/logout', {
+            method: 'POST',
+            headers: mutHeaders(),
+            credentials: 'include'
+          });
+        } catch (e) { /* ignore */ }
+        window.location = '/login.html';
+      }
+
+      /* ── Token refresh (every 10 min) ───────────────── */
+
+      var refreshing = false;
+      async function refreshToken() {
+        if (refreshing || document.visibilityState === 'hidden') return;
+        refreshing = true;
+        try {
+          var resp = await fetch('/api/auth/refresh', {
+            method: 'POST',
+            credentials: 'include'
+          });
+          if (!resp.ok) window.location = '/login.html';
+        } finally {
+          refreshing = false;
+        }
+      }
+      setInterval(refreshToken, 10 * 60 * 1000);
+
+      // Run auth check immediately
+      initAuth();
+
       /* ── Tab switching ─────────────────────────────── */
 
       function switchTab(name) {
@@ -318,6 +447,15 @@
         });
 
         if (name === 'sycope') loadSycopeConfig();
+        if (name === 'audit') {
+          loadAuditStats();
+          loadAuditLogs(auditCurrentPage);
+          // Auto-refresh every 30s while on audit tab.
+          if (auditRefreshTimer) clearInterval(auditRefreshTimer);
+          auditRefreshTimer = setInterval(function() { loadAuditLogs(auditCurrentPage); }, 30000);
+        } else {
+          if (auditRefreshTimer) { clearInterval(auditRefreshTimer); auditRefreshTimer = null; }
+        }
       }
 
       /* ── Mappings tab (existing logic) ─────────────── */
@@ -368,7 +506,7 @@
 
       async function refresh() {
         try {
-          var response = await fetch("/api/recent");
+          var response = await fetch("/api/recent", { credentials: 'include' });
           if (response.status === 503) {
             body.innerHTML =
               '<tr><td colspan="7">' +
@@ -401,7 +539,7 @@
 
       async function loadSycopeConfig() {
         try {
-          var res = await fetch('/api/v1/admin/config/sycope');
+          var res = await fetch('/api/v1/admin/config/sycope', { credentials: 'include' });
           if (!res.ok) throw new Error('HTTP ' + res.status);
           var cfg = await res.json();
 
@@ -436,7 +574,8 @@
         try {
           var res = await fetch('/api/v1/admin/config/sycope', {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            headers: mutHeaders(),
+            credentials: 'include',
             body: JSON.stringify(payload),
           });
           if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -461,7 +600,8 @@
         try {
           var res = await fetch('/api/v1/admin/config/sycope', {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            headers: mutHeaders(),
+            credentials: 'include',
             body: JSON.stringify({ sycope_pass: val }),
           });
           if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -482,7 +622,7 @@
         document.getElementById('test-result').style.display = 'none';
 
         try {
-          var res = await fetch('/api/v1/admin/config/sycope');
+          var res = await fetch('/api/v1/admin/config/sycope', { credentials: 'include' });
           var cfg = await res.json();
 
           if (!cfg.sycope_host) { showTestResult(false, 'Sycope Host is not set.'); return; }
@@ -508,6 +648,72 @@
         el.style.border = '1px solid ' + (ok ? '#22c55e' : '#ef4444');
         el.style.color = ok ? '#22c55e' : '#ef4444';
         el.textContent = (ok ? 'OK: ' : 'Error: ') + message;
+      }
+
+      /* ── Audit Log tab ─────────────────────────────── */
+
+      var auditCurrentPage = 1;
+      var auditRefreshTimer = null;
+
+      async function loadAuditLogs(page) {
+        auditCurrentPage = page || 1;
+        var action = document.getElementById('audit-filter-action').value.trim();
+        var user = document.getElementById('audit-filter-user').value.trim();
+        var params = new URLSearchParams({ page: auditCurrentPage, per_page: 50 });
+        if (action) params.set('action', action);
+        if (user) params.set('username', user);
+
+        try {
+          var res = await fetch('/api/v1/audit-logs?' + params.toString(), { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var data = await res.json();
+          renderAuditTable(data.entries);
+          renderAuditPaging(data.page, data.per_page, data.total);
+        } catch (err) {
+          document.getElementById('audit-body').innerHTML =
+            '<tr><td colspan="7" style="color:#ef4444;">Failed: ' + err.message + '</td></tr>';
+        }
+      }
+
+      async function loadAuditStats() {
+        try {
+          var res = await fetch('/api/v1/audit-logs/stats', { credentials: 'include' });
+          if (!res.ok) return;
+          var s = await res.json();
+          document.getElementById('audit-stats').innerHTML =
+            '<span>Total: <strong>' + s.total + '</strong></span>' +
+            '<span>Last 24h: <strong>' + s.last_24h + '</strong></span>' +
+            '<span>Last 7d: <strong>' + s.last_7d + '</strong></span>';
+        } catch (e) { /* ignore */ }
+      }
+
+      function renderAuditTable(entries) {
+        var body = document.getElementById('audit-body');
+        if (!entries || entries.length === 0) {
+          body.innerHTML = '<tr><td colspan="7" class="muted">No audit entries.</td></tr>';
+          return;
+        }
+        body.innerHTML = entries.map(function(e) {
+          var ts = e.timestamp ? new Date(e.timestamp).toLocaleString() : '-';
+          return '<tr>' +
+            '<td>' + ts + '</td>' +
+            '<td>' + (e.username || '-') + '</td>' +
+            '<td>' + (e.principal_type || '-') + '</td>' +
+            '<td>' + (e.action || '-') + '</td>' +
+            '<td>' + (e.target || '-') + '</td>' +
+            '<td>' + (e.ip_address || '-') + '</td>' +
+            '<td style="font-size:11px;color:#6b8579;">' + (e.request_id || '-') + '</td>' +
+            '</tr>';
+        }).join('');
+      }
+
+      function renderAuditPaging(page, perPage, total) {
+        var totalPages = Math.ceil(total / perPage) || 1;
+        var el = document.getElementById('audit-paging');
+        var html = 'Page ' + page + ' of ' + totalPages + ' (' + total + ' entries) &nbsp;';
+        if (page > 1) html += '<button class="btn btn-sm" onclick="loadAuditLogs(' + (page - 1) + ')">← Prev</button> ';
+        if (page < totalPages) html += '<button class="btn btn-sm" onclick="loadAuditLogs(' + (page + 1) + ')">Next →</button>';
+        el.innerHTML = html;
       }
 
       function renderSyncStatus(sync) {

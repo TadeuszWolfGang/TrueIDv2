@@ -7,7 +7,9 @@ services:
       - "1813:1813/udp"
       - "5514:5514/udp"
       - "5516:5516/udp"
-      # 8080 NOT exposed — internal only (docker network)
+      # SECURITY: engine admin API (:8080) must NEVER be exposed outside Docker network.
+      # It is accessible only via trueid-web proxy which adds authentication.
+      # ports: do NOT add 8080 mapping here
     volumes:
       - ./data:/app/data
     environment:
@@ -16,6 +18,7 @@ services:
       AD_SYSLOG_BIND: "0.0.0.0:5514"
       DHCP_SYSLOG_BIND: "0.0.0.0:5516"
       ADMIN_HTTP_BIND: "0.0.0.0:8080"
+      ENGINE_SERVICE_TOKEN: "${ENGINE_SERVICE_TOKEN:-}"
       RUST_LOG: info
     restart: unless-stopped
 
@@ -33,6 +36,13 @@ services:
       HTTP_BIND: "0.0.0.0:3000"
       ASSETS_DIR: "/app/assets"
       ENGINE_API_URL: "http://engine:8080"
+      ENGINE_SERVICE_TOKEN: "${ENGINE_SERVICE_TOKEN:-}"
+      JWT_SECRET: "${JWT_SECRET:-}"
+      CONFIG_ENCRYPTION_KEY: "${CONFIG_ENCRYPTION_KEY:-}"
+      ARGON2_PEPPER: "${ARGON2_PEPPER:-}"
+      TRUEID_ADMIN_USER: "${TRUEID_ADMIN_USER:-admin}"
+      TRUEID_ADMIN_PASS: "${TRUEID_ADMIN_PASS:-}"
+      TRUEID_DEV_MODE: "${TRUEID_DEV_MODE:-false}"
       RUST_LOG: info
     depends_on:
       - engine

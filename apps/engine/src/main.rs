@@ -346,11 +346,17 @@ async fn main() -> Result<()> {
     });
 
     // Admin HTTP API (:8080).
+    let service_token = std::env::var("ENGINE_SERVICE_TOKEN").ok().filter(|s| !s.is_empty());
+    if service_token.is_none() {
+        warn!("ENGINE_SERVICE_TOKEN not set — admin API is unprotected.");
+    }
+
     let admin_state = EngineAdminState {
         db: db.clone(),
         vendors: vendors.clone(),
         adapter_stats: adapter_stats.clone(),
         runtime_env,
+        service_token,
     };
     let admin_router: Router = admin_api::admin_router(admin_state);
     info!(%admin_addr, "Starting admin HTTP API");

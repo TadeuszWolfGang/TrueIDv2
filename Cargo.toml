@@ -9,6 +9,7 @@ members = [
   "crates/agent",
   "apps/engine",
   "apps/web",
+  "tests",
 ]
 resolver = "2"
 

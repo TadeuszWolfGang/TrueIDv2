@@ -1,0 +1,23 @@
+[package]
+name = "trueid-integration-tests"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Integration tests only — no lib, just [[test]] binaries.
+
+[[test]]
+name = "auth_integration"
+path = "auth_integration.rs"
+
+[[test]]
+name = "rbac_matrix"
+path = "rbac_matrix.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+reqwest = { version = "0.12", features = ["json", "cookies"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+trueid-common = { path = "../crates/common" }

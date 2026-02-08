@@ -1,6 +1,8 @@
 //! Shared types, database access, and helpers for TrueID.
 
+pub mod auth_provider;
 pub mod db;
+pub mod db_auth;
 pub mod model;
 
 use anyhow::Result;

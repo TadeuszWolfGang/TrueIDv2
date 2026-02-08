@@ -1244,3 +1244,69 @@ This format is produced by the **TrueID Agent** (`trueid-agent`), which is a lig
 4. **Corporate policy mandates NXLog?** → Use NXLog ([Section 4](#4-active-directory--nxlog-ce) / [Section 9](#9-dhcp--windows-dhcp-server--nxlog)) — works over plain UDP/TCP.
 
 Each data source can be enabled independently — you don't need all three. Start with whichever source is most available in your environment, verify it on the dashboard, then add more.
+
+---
+
+## API Key Authentication for Connectors
+
+External connectors (Sycope sync, custom scripts, SIEM integrations) can authenticate
+to the TrueID API using API keys instead of username/password.
+
+### Creating an API key
+
+1. Log in as Admin to the TrueID dashboard.
+2. An Admin can create API keys via `POST /api/v1/api-keys`:
+
+```bash
+curl -s -X POST https://trueid.example.com/api/v1/api-keys \
+  -H "X-API-Key: <existing-admin-key>" \
+  -H "Content-Type: application/json" \
+  -d '{"description": "Sycope sync connector", "role": "Viewer"}'
+```
+
+The response includes the raw key (shown **only once**):
+```json
+{
+  "id": 1,
+  "key": "trueid_abc123...full-key...",
+  "key_prefix": "abc123",
+  "description": "Sycope sync connector",
+  "role": "Viewer"
+}
+```
+
+**Save the `key` value immediately** — it cannot be retrieved later.
+
+### Using an API key
+
+Include the key in the `X-API-Key` header on every request:
+
+```bash
+# Read mappings
+curl -s https://trueid.example.com/api/v1/mappings \
+  -H "X-API-Key: trueid_abc123...full-key..."
+
+# Read events
+curl -s https://trueid.example.com/api/v1/events \
+  -H "X-API-Key: trueid_abc123...full-key..."
+```
+
+### Role assignment
+
+- **Viewer** — read-only access (mappings, events, stats). Best for monitoring connectors.
+- **Operator** — read + write mappings. For connectors that push data.
+- **Admin** — full access including user management. Use sparingly.
+
+### Rate limiting
+
+API keys are rate-limited to 100 requests per 60 seconds per key.
+If exceeded, requests return `429 Too Many Requests`.
+
+### Revoking a key
+
+```bash
+curl -s -X DELETE https://trueid.example.com/api/v1/api-keys/1 \
+  -H "X-API-Key: <admin-key>"
+```
+
+Revoked keys are immediately invalidated.

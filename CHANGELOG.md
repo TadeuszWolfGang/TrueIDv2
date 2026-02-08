@@ -3,6 +3,46 @@
 ## Unreleased
 
 ### Added
+- **RBAC & Authentication system** (17-step plan fully implemented):
+  - Database migration `0009_add_auth_tables.sql`: `users`, `sessions`, `api_keys`, `audit_log` tables with indexes and triggers.
+  - Domain models: `UserRole` (Admin/Operator/Viewer), `User`, `UserPublic`, `Session`, `ApiKeyRecord`, `AuditEntry`.
+  - DB layer (`db_auth.rs`): full CRUD for users, sessions, API keys, audit log with Argon2id password hashing, SHA-256 token hashing, account lockout (5 attempts → 30 min lock).
+  - JWT auth (`auth.rs`): HS256 tokens in HttpOnly/Secure/SameSite=Strict cookies, CSRF double-submit cookie, refresh token rotation with replay detection.
+  - Unified error format (`error.rs`): `ApiError` with status, code, message, request_id.
+  - Auth middleware (`middleware.rs`): `AuthUser`/`OptionalAuthUser` extractors (cookie JWT + X-API-Key), CSRF guard, role-based route layers (Viewer/Operator/Admin).
+  - Auth endpoints (`routes_auth.rs`): login, logout, logout-all, refresh, /me, change-password, session listing/revocation.
+  - User management (`routes_users.rs`): Admin-only CRUD — create, list, get, change role, reset password, unlock, delete (with last-admin protection).
+  - API key management (`routes_api_keys.rs`): Admin-only create/list/revoke, raw key shown only at creation.
+  - Engine service token (`admin_api.rs`): `X-Service-Token` middleware on engine admin API, web proxy sends token automatically.
+  - Config encryption (`db.rs`): AES-256-GCM encryption for sensitive config values (`sycope_pass`, `sycope_login`), auto-migration of plaintext on startup.
+  - Login page (`login.html`): matching dashboard style, force-password-change flow.
+  - Dashboard auth integration (`index.html`): auth check → redirect, CSRF in fetch, token refresh every 10 min, role-based tab visibility, user bar + logout.
+  - Security headers middleware: CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy.
+  - Rate limiting (`rate_limit.rs`): DashMap-based sliding window — login (10/60s per IP), API keys (100/60s per prefix).
+  - AuthProvider trait (`auth_provider.rs`): `LocalAuthProvider`, `LdapAuthProvider` stub, `AuthProviderChain` — login/change-password routed by `auth_source`.
+  - Audit log endpoints (`routes_audit.rs`): paginated list with filters (action, username, since, until), stats (total, 24h, 7d, top actions). Append-only by design.
+  - Audit Log tab in dashboard: Admin-only, filterable, paginated, auto-refresh 30s.
+  - Native TLS support: optional `TLS_CERT`/`TLS_KEY` env vars → HTTPS via axum-server + rustls.
+  - Production startup validation: fail-fast on missing `JWT_SECRET`, `ENGINE_SERVICE_TOKEN`, `CONFIG_ENCRYPTION_KEY` (bypass with `TRUEID_DEV_MODE=true`).
+  - Admin bootstrap: auto-create admin user from `TRUEID_ADMIN_USER`/`TRUEID_ADMIN_PASS` on first run with `force_password_change=true`.
+  - Background tasks: session cleanup (hourly), rate limiter cleanup (5 min).
+  - Integration tests (`tests/`): auth flows (12 tests), RBAC matrix (role × endpoint), API key auth, CSRF protection.
+  - Smoke test script (`scripts/smoke-test.sh`): 11 curl-based checks.
+  - `docker-compose.tls.yml`: Traefik + Let's Encrypt example overlay.
+- **Documentation:** Security section in README (TLS, env vars, roles, secret generation), API key auth section in INTEGRATION_GUIDE.md.
+
+### Changed
+- `docker-compose.yml`: added auth-related env vars (`ENGINE_SERVICE_TOKEN`, `JWT_SECRET`, `CONFIG_ENCRYPTION_KEY`, `ARGON2_PEPPER`, `TRUEID_ADMIN_*`, `TRUEID_DEV_MODE`).
+- Router refactored into role-grouped layers: public, viewer, operator, admin routes.
+- `Db` struct extended with `pepper` and `encryption_key` fields.
+- `Makefile`: added `test-integration` and `smoke-test` targets.
+
+### Dependencies
+- `crates/common`: +aes-gcm, argon2, async-trait, base64, rand, sha2.
+- `apps/web`: +async-trait, axum-server (tls-rustls), cookie, dashmap, jsonwebtoken, rand, uuid.
+- `apps/engine`: (no new external deps, uses axum middleware from existing dep).
+
+### Previous
 - **net-identity-agent:** New Rust-based Windows Event Log agent (`crates/agent/`) with TCP+TLS transport (mTLS), ring buffer, exponential-backoff reconnect, heartbeat, and `--dry-run` mode.
 - **TLS listeners on engine:** Dual-protocol support — existing UDP (NXLog) preserved, new TCP+TLS listeners (AD:5615, DHCP:5617) activated when cert files are present.
 - **PKI tooling:** `scripts/gen-certs.sh` generates CA + server + agent certificates for mTLS.

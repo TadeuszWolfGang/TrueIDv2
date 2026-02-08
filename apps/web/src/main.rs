@@ -3,12 +3,22 @@
 //! Read-only queries go directly to SQLite.
 //! Write/admin operations are proxied to engine :8080.
 
+mod auth;
+mod error;
+pub mod middleware;
+pub mod rate_limit;
+mod routes_api_keys;
+mod routes_audit;
+mod routes_auth;
+mod routes_users;
+
 use anyhow::Result;
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, Query, Request, State},
     http::StatusCode,
-    response::IntoResponse,
-    routing::{delete, get},
+    middleware as axum_mw,
+    response::{IntoResponse, Response},
+    routing::{delete, get, post, put},
     Json, Router,
 };
 use sqlx::Row;
@@ -16,22 +26,112 @@ use chrono::{TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tower_http::services::ServeDir;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 use trueid_common::db::Db;
-use trueid_common::model::DeviceMapping;
+use trueid_common::model::{DeviceMapping, UserRole};
 use trueid_common::{env_or_default, parse_socket_addr};
+
+use crate::auth::JwtConfig;
 
 const DEFAULT_DB_URL: &str = "sqlite://net-identity.db?mode=rwc";
 const DEFAULT_HTTP_ADDR: &str = "0.0.0.0:3000";
 const DEFAULT_ASSETS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets");
 const DEFAULT_ENGINE_URL: &str = "http://127.0.0.1:8080";
 
+/// Per-request ID stored in extensions.
+#[derive(Clone, Debug)]
+pub struct RequestId(pub String);
+
 #[derive(Clone)]
-struct AppState {
-    db: Option<Arc<Db>>,
-    engine_url: String,
-    http_client: reqwest::Client,
+pub struct AppState {
+    pub db: Option<Arc<Db>>,
+    pub engine_url: String,
+    pub http_client: reqwest::Client,
+    pub jwt_config: JwtConfig,
+    pub engine_service_token: Option<String>,
+    pub login_limiter: Arc<rate_limit::RateLimiter>,
+    pub api_key_limiter: Arc<rate_limit::RateLimiter>,
+    pub auth_chain: Option<Arc<trueid_common::auth_provider::AuthProviderChain>>,
+}
+
+/// Middleware that generates a UUID v4 request_id for each request,
+/// stores it in extensions, and adds X-Request-Id response header.
+async fn request_id_layer(
+    mut req: Request,
+    next: axum_mw::Next,
+) -> Response {
+    let rid = uuid::Uuid::new_v4().to_string();
+    req.extensions_mut().insert(RequestId(rid.clone()));
+    let mut resp = next.run(req).await;
+    resp.headers_mut().insert(
+        "x-request-id",
+        axum::http::HeaderValue::from_str(&rid).unwrap_or_else(|_| {
+            axum::http::HeaderValue::from_static("unknown")
+        }),
+    );
+    resp
+}
+
+/// Middleware that rate-limits login attempts by client IP.
+///
+/// Extracts client IP from X-Forwarded-For header or peer address.
+/// Returns 429 Too Many Requests with Retry-After header when limit exceeded.
+async fn login_rate_limit(
+    State(state): State<AppState>,
+    req: Request,
+    next: axum_mw::Next,
+) -> Response {
+    let ip = req
+        .headers()
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(',').next())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    if !state.login_limiter.check(&ip) {
+        let body = serde_json::json!({
+            "error": "Too many login attempts. Try again later.",
+            "code": "RATE_LIMITED"
+        });
+        let mut resp = (StatusCode::TOO_MANY_REQUESTS, Json(body)).into_response();
+        resp.headers_mut().insert(
+            "retry-after",
+            axum::http::HeaderValue::from_static("60"),
+        );
+        return resp;
+    }
+    next.run(req).await
+}
+
+/// Middleware that adds security headers to every response.
+///
+/// Sets CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy,
+/// and Permissions-Policy on all outgoing responses.
+async fn security_headers_layer(
+    req: Request,
+    next: axum_mw::Next,
+) -> Response {
+    let mut resp = next.run(req).await;
+    let h = resp.headers_mut();
+    // TODO: migrate to nonce-based CSP when dashboard moves to external JS files
+    h.insert(
+        "content-security-policy",
+        axum::http::HeaderValue::from_static(
+            "default-src 'self'; script-src 'self' 'unsafe-inline'; \
+             style-src 'self' 'unsafe-inline'; img-src 'self' data:; \
+             connect-src 'self'; frame-ancestors 'none'"
+        ),
+    );
+    h.insert("x-frame-options", axum::http::HeaderValue::from_static("DENY"));
+    h.insert("x-content-type-options", axum::http::HeaderValue::from_static("nosniff"));
+    h.insert("referrer-policy", axum::http::HeaderValue::from_static("no-referrer"));
+    h.insert(
+        "permissions-policy",
+        axum::http::HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
+    );
+    resp
 }
 
 /// Extracts the DB handle from state or returns a 503 JSON response.
@@ -59,6 +159,9 @@ async fn proxy_to_engine(
 ) -> Result<impl IntoResponse, StatusCode> {
     let url = format!("{}{}", state.engine_url, path);
     let mut req = state.http_client.request(method, &url);
+    if let Some(ref token) = state.engine_service_token {
+        req = req.header("X-Service-Token", token);
+    }
     if let Some(b) = body {
         req = req.json(&b);
     }
@@ -402,6 +505,32 @@ async fn main() -> Result<()> {
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt().with_env_filter(env_filter).init();
 
+    // ── Production startup validation ──────────────────────
+    let dev_mode = std::env::var("TRUEID_DEV_MODE")
+        .map(|v| v == "true")
+        .unwrap_or(false);
+
+    if dev_mode {
+        warn!("DEV MODE ENABLED — relaxed security. Do NOT use in production.");
+    } else {
+        let jwt = std::env::var("JWT_SECRET").unwrap_or_default();
+        if jwt.len() < 32 {
+            error!("FATAL: JWT_SECRET must be set and at least 32 chars in production. Set TRUEID_DEV_MODE=true to bypass.");
+            std::process::exit(1);
+        }
+        let est = std::env::var("ENGINE_SERVICE_TOKEN").unwrap_or_default();
+        if est.len() < 32 {
+            error!("FATAL: ENGINE_SERVICE_TOKEN must be set and at least 32 chars in production. Set TRUEID_DEV_MODE=true to bypass.");
+            std::process::exit(1);
+        }
+        let cek = std::env::var("CONFIG_ENCRYPTION_KEY").unwrap_or_default();
+        if cek.len() != 64 || !cek.chars().all(|c| c.is_ascii_hexdigit()) {
+            error!("FATAL: CONFIG_ENCRYPTION_KEY must be 64 hex chars (32 bytes) in production. Set TRUEID_DEV_MODE=true to bypass.");
+            std::process::exit(1);
+        }
+        info!("Production mode: all required secrets verified.");
+    }
+
     let db_url = match std::env::var("DATABASE_URL") {
         Ok(v) => v,
         Err(_) => {
@@ -419,10 +548,48 @@ async fn main() -> Result<()> {
     let db = match trueid_common::db::init_db(&db_url).await {
         Ok(d) => {
             info!("Database connected successfully");
+
+            // ── Admin bootstrap ──────────────────────────────
+            match d.count_users().await {
+                Ok(0) => {
+                    let admin_user = std::env::var("TRUEID_ADMIN_USER").unwrap_or_default();
+                    let admin_pass = std::env::var("TRUEID_ADMIN_PASS").unwrap_or_default();
+                    if !admin_user.is_empty() && !admin_pass.is_empty() {
+                        if admin_pass.len() < 12 {
+                            error!("FATAL: TRUEID_ADMIN_PASS must be at least 12 characters.");
+                            std::process::exit(1);
+                        }
+                        match d.create_user(&admin_user, &admin_pass, UserRole::Admin).await {
+                            Ok(user) => {
+                                let _ = d.set_force_password_change(user.id, true).await;
+                                let _ = d.write_audit_log(
+                                    Some(user.id), &admin_user, "system",
+                                    "bootstrap_admin_created", None, None, None, None,
+                                ).await;
+                                info!(
+                                    "Bootstrap: Created initial admin user '{}'. Password change required on first login.",
+                                    admin_user
+                                );
+                            }
+                            Err(e) => {
+                                error!("Failed to create bootstrap admin: {e:#}");
+                            }
+                        }
+                    } else {
+                        warn!(
+                            "No users in database and TRUEID_ADMIN_USER/TRUEID_ADMIN_PASS not set. \
+                             Authentication will be non-functional until an admin is bootstrapped."
+                        );
+                    }
+                }
+                Ok(_) => { /* normal startup, users already exist */ }
+                Err(e) => warn!("Could not count users during bootstrap: {e:#}"),
+            }
+
             Some(Arc::new(d))
         }
         Err(e) => {
-            tracing::error!(
+            error!(
                 "Database connection failed: {e:#}\n\
                  -> Check DATABASE_URL in .env\n\
                  -> Run 'cargo run -p trueid-engine' first to create tables\n\
@@ -432,37 +599,158 @@ async fn main() -> Result<()> {
         }
     };
 
+    // ── Background: session cleanup every hour ─────────────
+    if let Some(ref db_ref) = db {
+        let cleanup_db = Arc::clone(db_ref);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+            loop {
+                interval.tick().await;
+                match cleanup_db.cleanup_expired_sessions().await {
+                    Ok(n) if n > 0 => info!(deleted = n, "Cleaned up expired sessions"),
+                    Ok(_) => {}
+                    Err(e) => warn!(error = %e, "Session cleanup failed"),
+                }
+            }
+        });
+    }
+
+    let jwt_config = JwtConfig::from_env(dev_mode);
+
+    let engine_service_token = std::env::var("ENGINE_SERVICE_TOKEN").ok().filter(|s| !s.is_empty());
+    let login_limiter = Arc::new(rate_limit::RateLimiter::new(10, 60));
+    let api_key_limiter = Arc::new(rate_limit::RateLimiter::new(100, 60));
+
+    let auth_chain = db.as_ref().map(|d| {
+        Arc::new(trueid_common::auth_provider::AuthProviderChain::default_chain(
+            Arc::clone(d),
+        ))
+    });
+
     let state = AppState {
         db,
         engine_url,
         http_client: reqwest::Client::new(),
+        jwt_config,
+        engine_service_token,
+        login_limiter: login_limiter.clone(),
+        api_key_limiter: api_key_limiter.clone(),
+        auth_chain,
     };
 
-    let app = Router::new()
+    // ── Background: rate limiter cleanup every 5 min ─────
+    {
+        let ll = login_limiter;
+        let al = api_key_limiter;
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+            loop {
+                interval.tick().await;
+                ll.cleanup();
+                al.cleanup();
+            }
+        });
+    }
+
+    // ── Public routes — no auth required ───────────────────
+    let login_route = Router::new()
+        .route("/api/auth/login", post(routes_auth::login))
+        .layer(axum_mw::from_fn_with_state(state.clone(), login_rate_limit));
+
+    let public_routes = Router::new()
         .route("/health", get(health))
-        // Legacy
-        .route("/api/recent", get(recent))
-        // V1 read-only (direct SQLite)
-        .route("/api/v1/mappings", get(api_v1_mappings).post(proxy_post_mapping))
-        .route("/api/v1/mappings/{ip}", delete(proxy_delete_mapping))
+        .route("/api/auth/refresh", post(routes_auth::refresh))
+        .merge(login_route);
+
+    // ── Viewer+ routes — any authenticated user ──────────
+    let viewer_routes = Router::new()
+        .route("/api/v1/mappings", get(api_v1_mappings))
         .route("/api/v1/events", get(api_v1_events))
         .route("/api/v1/stats", get(api_v1_stats))
         .route("/lookup/{ip}", get(lookup))
-        // Admin proxies
+        .route("/api/recent", get(recent))
         .route("/api/v1/admin/adapters", get(proxy_admin_adapters))
         .route("/api/v1/admin/agents", get(proxy_admin_agents))
         .route("/api/v1/admin/runtime-config", get(proxy_admin_runtime_config))
+        .route("/api/auth/me", get(routes_auth::me))
+        .route("/api/auth/sessions", get(routes_auth::list_sessions))
+        .route("/api/auth/logout", post(routes_auth::logout))
+        .route("/api/auth/logout-all", post(routes_auth::logout_all))
+        .route("/api/auth/change-password", post(routes_auth::change_password))
+        .layer(axum_mw::from_fn_with_state(
+            state.clone(),
+            middleware::require_viewer_layer,
+        ));
+
+    // ── Operator+ routes — Admin or Operator ─────────────
+    let operator_routes = Router::new()
+        .route("/api/v1/mappings", post(proxy_post_mapping))
+        .route("/api/v1/mappings/{ip}", delete(proxy_delete_mapping))
+        .route("/api/auth/sessions/{id}", delete(routes_auth::revoke_session))
+        .layer(axum_mw::from_fn_with_state(
+            state.clone(),
+            middleware::require_operator_layer,
+        ));
+
+    // ── Admin routes — Admin only ────────────────────────
+    let admin_routes = Router::new()
         .route("/api/v1/admin/config/ttl", get(proxy_get_ttl).put(proxy_put_ttl))
         .route("/api/v1/admin/config/source-priority", get(proxy_get_source_priority).put(proxy_put_source_priority))
         .route("/api/v1/admin/config/sycope", get(proxy_get_sycope).put(proxy_put_sycope))
+        // User management
+        .route("/api/v1/users", get(routes_users::list_users).post(routes_users::create_user))
+        .route("/api/v1/users/{id}", get(routes_users::get_user).delete(routes_users::delete_user))
+        .route("/api/v1/users/{id}/role", put(routes_users::change_role))
+        .route("/api/v1/users/{id}/reset-password", post(routes_users::reset_password))
+        .route("/api/v1/users/{id}/unlock", post(routes_users::unlock_account))
+        // API key management
+        .route("/api/v1/api-keys", get(routes_api_keys::list_keys).post(routes_api_keys::create_key))
+        .route("/api/v1/api-keys/{id}", delete(routes_api_keys::revoke_key))
+        // Audit logs (read-only, append-only — no DELETE/UPDATE by design)
+        .route("/api/v1/audit-logs", get(routes_audit::list_audit_logs))
+        .route("/api/v1/audit-logs/stats", get(routes_audit::audit_stats))
+        .layer(axum_mw::from_fn_with_state(
+            state.clone(),
+            middleware::require_admin_layer,
+        ));
+
+    // ── Merge all routers ────────────────────────────────
+    let app = Router::new()
+        .merge(public_routes)
+        .merge(viewer_routes)
+        .merge(operator_routes)
+        .merge(admin_routes)
+        .layer(axum_mw::from_fn(middleware::csrf_guard))
+        .layer(axum_mw::from_fn(request_id_layer))
+        .layer(axum_mw::from_fn(security_headers_layer))
         .with_state(state)
         .fallback_service(ServeDir::new(env_or_default("ASSETS_DIR", DEFAULT_ASSETS_DIR)));
 
-    info!(%http_addr, "Starting HTTP server");
-    let listener = tokio::net::TcpListener::bind(http_addr).await?;
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async { tokio::signal::ctrl_c().await.ok(); })
-        .await?;
+    // ── TLS or plain TCP ──────────────────────────────────
+    let tls_cert = std::env::var("TLS_CERT").ok().filter(|s| !s.is_empty());
+    let tls_key = std::env::var("TLS_KEY").ok().filter(|s| !s.is_empty());
+
+    match (tls_cert, tls_key) {
+        (Some(cert_path), Some(key_path)) => {
+            info!(%http_addr, cert = %cert_path, "Starting HTTPS server (native TLS)");
+            let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(&cert_path, &key_path)
+                .await
+                .map_err(|e| anyhow::anyhow!("TLS config error: {e}"))?;
+            axum_server::bind_rustls(http_addr, tls_config)
+                .serve(app.into_make_service())
+                .await?;
+        }
+        _ => {
+            if !dev_mode {
+                warn!("TLS_CERT/TLS_KEY not set — serving plain HTTP. Use a reverse proxy with TLS in production.");
+            }
+            info!(%http_addr, "Starting HTTP server");
+            let listener = tokio::net::TcpListener::bind(http_addr).await?;
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async { tokio::signal::ctrl_c().await.ok(); })
+                .await?;
+        }
+    }
 
     info!("Web server stopped");
     Ok(())

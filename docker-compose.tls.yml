@@ -1,0 +1,42 @@
+# docker-compose.tls.yml — TLS override example using Traefik reverse proxy.
+#
+# Usage:
+#   docker-compose -f docker-compose.yml -f docker-compose.tls.yml up -d
+#
+# Prerequisites:
+#   - DNS record pointing to this host
+#   - Port 80 + 443 open (Traefik handles Let's Encrypt ACME challenge)
+#   - Create .env with all required secrets (see README.md)
+
+services:
+  traefik:
+    image: traefik:v3.2
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.le.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.le.acme.email=${ACME_EMAIL:-admin@example.com}"
+      - "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - letsencrypt:/letsencrypt
+    restart: unless-stopped
+
+  web:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.trueid.rule=Host(`${TRUEID_HOST:-trueid.example.com}`)"
+      - "traefik.http.routers.trueid.entrypoints=websecure"
+      - "traefik.http.routers.trueid.tls.certresolver=le"
+      - "traefik.http.services.trueid.loadbalancer.server.port=3000"
+    # Override: don't expose port 3000 directly when behind Traefik
+    ports: []
+
+volumes:
+  letsencrypt:

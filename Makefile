@@ -33,6 +33,13 @@ check: ## Health check: .env, DB, server status
 	@nc -z 127.0.0.1 3000 2>/dev/null && echo "Web server running on port 3000" || echo "Web server not running — run: make web"
 	@nc -z 127.0.0.1 8080 2>/dev/null && echo "Engine admin API running on port 8080" || echo "Engine not running — run: make engine"
 
+test-integration: ## Run integration tests (requires running instance)
+	@echo "Running integration tests against $${TRUEID_TEST_URL:-http://127.0.0.1:3000}..."
+	cargo test -p trueid-integration-tests -- --test-threads=1
+
+smoke-test: ## Run smoke test with curl (requires running instance)
+	@./scripts/smoke-test.sh $${TRUEID_TEST_URL:-http://127.0.0.1:3000}
+
 clean: ## Remove database and temp files
 	rm -f net-identity.db net-identity.db-shm net-identity.db-wal
 	@echo "Database removed. Run 'make setup' to recreate."

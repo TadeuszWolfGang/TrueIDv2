@@ -133,3 +133,128 @@ pub fn source_from_str(value: &str) -> SourceType {
 fn default_confidence_score() -> u8 {
     100
 }
+
+// ── Auth models ────────────────────────────────────────────
+
+/// Role-based access control level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub enum UserRole {
+    Admin,
+    Operator,
+    Viewer,
+}
+
+impl std::fmt::Display for UserRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Admin => write!(f, "Admin"),
+            Self::Operator => write!(f, "Operator"),
+            Self::Viewer => write!(f, "Viewer"),
+        }
+    }
+}
+
+impl std::str::FromStr for UserRole {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Admin" => Ok(Self::Admin),
+            "Operator" => Ok(Self::Operator),
+            "Viewer" => Ok(Self::Viewer),
+            other => Err(anyhow::anyhow!("unknown role: {other}")),
+        }
+    }
+}
+
+/// Internal user record. Never serialize directly (password_hash must not leak).
+#[derive(Debug, Clone)]
+pub struct User {
+    pub id: i64,
+    pub username: String,
+    pub password_hash: String,
+    pub role: UserRole,
+    pub auth_source: String,
+    pub external_id: Option<String>,
+    pub token_version: i64,
+    pub force_password_change: bool,
+    pub failed_attempts: i64,
+    pub locked_until: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// Safe projection of `User` without sensitive fields.
+#[derive(Debug, Clone, Serialize)]
+pub struct UserPublic {
+    pub id: i64,
+    pub username: String,
+    pub role: UserRole,
+    pub auth_source: String,
+    pub force_password_change: bool,
+    pub locked_until: Option<DateTime<Utc>>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl From<User> for UserPublic {
+    fn from(u: User) -> Self {
+        Self {
+            id: u.id,
+            username: u.username,
+            role: u.role,
+            auth_source: u.auth_source,
+            force_password_change: u.force_password_change,
+            locked_until: u.locked_until,
+            created_at: u.created_at,
+            updated_at: u.updated_at,
+        }
+    }
+}
+
+/// Refresh-token session record.
+#[derive(Debug, Clone, Serialize)]
+pub struct Session {
+    pub id: i64,
+    pub user_id: i64,
+    #[serde(skip_serializing)]
+    pub refresh_token_hash: String,
+    pub user_agent: Option<String>,
+    pub ip_address: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub last_used_at: DateTime<Utc>,
+    pub revoked_at: Option<DateTime<Utc>>,
+}
+
+/// API key record. `key_hash` is never serialized.
+#[derive(Debug, Clone, Serialize)]
+pub struct ApiKeyRecord {
+    pub id: i64,
+    #[serde(skip_serializing)]
+    pub key_hash: String,
+    pub key_prefix: String,
+    pub description: String,
+    pub role: UserRole,
+    pub created_by: i64,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub last_used_at: Option<DateTime<Utc>>,
+    pub is_active: bool,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Append-only audit log entry.
+#[derive(Debug, Clone, Serialize)]
+pub struct AuditEntry {
+    pub id: i64,
+    pub timestamp: DateTime<Utc>,
+    pub user_id: Option<i64>,
+    pub username: String,
+    pub principal_type: String,
+    pub action: String,
+    pub target: Option<String>,
+    pub details: Option<String>,
+    pub ip_address: Option<String>,
+    pub request_id: Option<String>,
+}

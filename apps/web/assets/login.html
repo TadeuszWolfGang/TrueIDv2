@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TrueID — Login</title>
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        background: #0b0f0d;
+        color: #c7f9cc;
+        font-family: "SFMono-Regular", ui-monospace, Menlo, Monaco, Consolas,
+          "Liberation Mono", "Courier New", monospace;
+        margin: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+      }
+      .login-box {
+        border: 1px solid #1e2a24;
+        border-radius: 8px;
+        background: #0f1512;
+        padding: 32px;
+        width: 340px;
+        box-shadow: 0 0 18px rgba(0, 255, 128, 0.08);
+      }
+      h1 {
+        margin: 0 0 24px;
+        font-size: 20px;
+        color: #80ffdb;
+        text-align: center;
+        letter-spacing: 0.02em;
+      }
+      label {
+        display: block;
+        font-size: 13px;
+        color: #6b8579;
+        margin-bottom: 4px;
+      }
+      input[type="text"],
+      input[type="password"] {
+        width: 100%;
+        box-sizing: border-box;
+        background: #0b0f0d;
+        border: 1px solid #1e2a24;
+        border-radius: 4px;
+        color: #c7f9cc;
+        padding: 10px 12px;
+        font-family: inherit;
+        font-size: 14px;
+        margin-bottom: 16px;
+        transition: border-color 0.2s;
+      }
+      input:focus { outline: none; border-color: #80ffdb; }
+      .btn {
+        width: 100%;
+        background: #1e2a24;
+        color: #80ffdb;
+        border: 1px solid #80ffdb;
+        border-radius: 4px;
+        padding: 10px 16px;
+        font-family: inherit;
+        font-size: 14px;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+      .btn:hover { background: #80ffdb; color: #0b0f0d; }
+      .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+      .error-msg {
+        display: none;
+        background: rgba(239, 68, 68, 0.1);
+        border: 1px solid #ef4444;
+        border-radius: 4px;
+        color: #ef4444;
+        padding: 10px;
+        margin-bottom: 16px;
+        font-size: 13px;
+        text-align: center;
+      }
+      .change-pw-section {
+        display: none;
+        margin-top: 16px;
+        padding-top: 16px;
+        border-top: 1px solid #1e2a24;
+      }
+      .change-pw-section h2 {
+        font-size: 15px;
+        color: #f59e0b;
+        margin: 0 0 8px;
+      }
+      .change-pw-section p {
+        font-size: 12px;
+        color: #6b8579;
+        margin: 0 0 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="login-box">
+      <h1>TrueID</h1>
+
+      <div id="error-msg" class="error-msg"></div>
+
+      <!-- Login form -->
+      <form id="login-form" autocomplete="on">
+        <label for="username">Username</label>
+        <input type="text" id="username" name="username" autocomplete="username" required autofocus />
+
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" autocomplete="current-password" required />
+
+        <button type="submit" class="btn" id="login-btn">Log in</button>
+      </form>
+
+      <!-- Force password change (shown after login if needed) -->
+      <div id="change-pw" class="change-pw-section">
+        <h2>Password change required</h2>
+        <p>Your account requires a new password before continuing.</p>
+
+        <label for="new-password">New password</label>
+        <input type="password" id="new-password" autocomplete="new-password" />
+
+        <label for="confirm-password">Confirm password</label>
+        <input type="password" id="confirm-password" autocomplete="new-password" />
+
+        <button type="button" class="btn" id="change-pw-btn" onclick="changePassword()">
+          Change password
+        </button>
+      </div>
+    </div>
+
+    <script>
+      var currentUser = null;
+
+      function showError(msg) {
+        var el = document.getElementById('error-msg');
+        el.textContent = msg;
+        el.style.display = 'block';
+      }
+
+      function hideError() {
+        document.getElementById('error-msg').style.display = 'none';
+      }
+
+      function getCsrfToken() {
+        var match = document.cookie.match(/trueid_csrf_token=([^;]+)/);
+        return match ? match[1] : '';
+      }
+
+      document.getElementById('login-form').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        hideError();
+
+        var btn = document.getElementById('login-btn');
+        btn.disabled = true;
+        btn.textContent = 'Logging in...';
+
+        try {
+          var resp = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({
+              username: document.getElementById('username').value,
+              password: document.getElementById('password').value
+            })
+          });
+
+          if (resp.status === 401) {
+            showError('Invalid username or password.');
+            return;
+          }
+          if (resp.status === 423) {
+            var data = await resp.json();
+            var msg = 'Account locked.';
+            if (data.locked_until) {
+              var until = new Date(data.locked_until);
+              var mins = Math.ceil((until - Date.now()) / 60000);
+              if (mins > 0) msg += ' Try again in ' + mins + ' minute(s).';
+            }
+            showError(msg);
+            return;
+          }
+          if (!resp.ok) {
+            var errData = await resp.json().catch(function() { return {}; });
+            showError(errData.error || 'Login failed (HTTP ' + resp.status + ')');
+            return;
+          }
+
+          var user = await resp.json();
+          currentUser = user;
+
+          if (user.force_password_change) {
+            document.getElementById('login-form').style.display = 'none';
+            document.getElementById('change-pw').style.display = 'block';
+            return;
+          }
+
+          window.location = '/';
+        } catch (err) {
+          showError('Network error: ' + err.message);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Log in';
+        }
+      });
+
+      async function changePassword() {
+        hideError();
+        var newPw = document.getElementById('new-password').value;
+        var confirmPw = document.getElementById('confirm-password').value;
+
+        if (newPw.length < 12) {
+          showError('Password must be at least 12 characters.');
+          return;
+        }
+        if (newPw !== confirmPw) {
+          showError('Passwords do not match.');
+          return;
+        }
+
+        var btn = document.getElementById('change-pw-btn');
+        btn.disabled = true;
+
+        try {
+          var resp = await fetch('/api/auth/change-password', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRF-Token': getCsrfToken()
+            },
+            credentials: 'include',
+            body: JSON.stringify({
+              current_password: document.getElementById('password').value,
+              new_password: newPw
+            })
+          });
+
+          if (!resp.ok) {
+            var errData = await resp.json().catch(function() { return {}; });
+            showError(errData.error || 'Password change failed.');
+            return;
+          }
+
+          window.location = '/';
+        } catch (err) {
+          showError('Network error: ' + err.message);
+        } finally {
+          btn.disabled = false;
+        }
+      }
+    </script>
+  </body>
+</html>
