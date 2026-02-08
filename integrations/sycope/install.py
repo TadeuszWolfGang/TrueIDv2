@@ -22,7 +22,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "config.json")
 
 EVENT_INDEX_FIELDS = [
-    {"name": "timestamp", "type": "TIMESTAMP"},
+    {"name": "timestamp", "type": "LONG"},
     {"name": "event_type", "type": "STRING"},
     {"name": "ip", "type": "IP"},
     {"name": "mac", "type": "STRING"},

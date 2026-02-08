@@ -297,6 +297,17 @@ def sync_events(sycope: SycopeApi, trueid: TrueIdApi, cfg: dict) -> None:
     rows = []
     max_ts = last_ts
 
+    def _clean_ip(raw) -> str:
+        """Sanitize IP for Sycope IP-type field."""
+        if raw is None:
+            return ""
+        ip_str = str(raw).strip()
+        if not ip_str or ip_str in ("-", "::1") or ip_str.startswith("-:"):
+            return ""
+        if ip_str.startswith("::ffff:"):
+            ip_str = ip_str[7:]  # strip IPv4-mapped prefix
+        return ip_str
+
     for event in events:
         ts_raw = event.get("timestamp", "")
 
@@ -305,7 +316,23 @@ def sync_events(sycope: SycopeApi, trueid: TrueIdApi, cfg: dict) -> None:
             from datetime import datetime
 
             if isinstance(ts_raw, str):
-                dt = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+                # Truncate nanoseconds to microseconds (fromisoformat max 6 digits).
+                s = ts_raw.replace("Z", "+00:00")
+                if "." in s:
+                    head, rest = s.split(".", 1)
+                    # rest = "123456789+00:00" — split off timezone
+                    frac = ""
+                    tz = ""
+                    for i, ch in enumerate(rest):
+                        if ch in ("+", "-"):
+                            frac = rest[:i]
+                            tz = rest[i:]
+                            break
+                    else:
+                        frac = rest
+                    frac = frac[:6]  # keep only microseconds
+                    s = f"{head}.{frac}{tz}"
+                dt = datetime.fromisoformat(s)
                 ts_ms = int(dt.timestamp() * 1000)
                 ts_epoch = int(dt.timestamp())
             elif isinstance(ts_raw, (int, float)):
@@ -314,14 +341,15 @@ def sync_events(sycope: SycopeApi, trueid: TrueIdApi, cfg: dict) -> None:
             else:
                 ts_ms = 0
                 ts_epoch = 0
-        except (ValueError, TypeError):
+        except (ValueError, TypeError) as exc:
+            logger.debug(f"Failed to parse timestamp '{ts_raw}': {exc}")
             ts_ms = 0
             ts_epoch = 0
 
         row = [
             ts_ms,
             str(event.get("source", "")),
-            str(event.get("ip", "")),
+            _clean_ip(event.get("ip")),
             "",  # mac (not in events table)
             str(event.get("user", "")),
             "",  # hostname
@@ -332,6 +360,10 @@ def sync_events(sycope: SycopeApi, trueid: TrueIdApi, cfg: dict) -> None:
 
         if ts_epoch > max_ts:
             max_ts = ts_epoch
+
+    unique_ips = set(row[2] for row in rows)
+    empty_count = sum(1 for row in rows if not row[2])
+    logger.debug(f"Batch IP summary: {len(unique_ips)} unique, {empty_count} empty/filtered")
 
     logging.info(f"Injecting {len(rows)} events into index '{index_name}'")
 
