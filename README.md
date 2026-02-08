@@ -100,5 +100,5 @@ All defaults work out of the box — no changes needed for local development.
 ## Integration
 
 See [INTEGRATION_GUIDE.md](INTEGRATION_GUIDE.md) for step-by-step configuration
-of Active Directory (NXLog), RADIUS (FreeRADIUS / NPS) and DHCP (rsyslog)
-to forward data to TrueID.
+of all supported data sources: TrueID Agent (Windows, TLS), NXLog CE,
+FreeRADIUS, Microsoft NPS, ISC DHCP + rsyslog, Kea DHCP, and Windows DHCP Server.
