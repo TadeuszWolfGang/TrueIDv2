@@ -8,7 +8,6 @@ anyhow = { workspace = true }
 async-trait = "0.1"
 axum = { workspace = true }
 chrono = { workspace = true }
-cookie = "0.18"
 dashmap = "5"
 jsonwebtoken = "9"
 rand = "0.8"

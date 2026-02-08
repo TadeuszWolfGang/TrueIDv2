@@ -420,6 +420,7 @@
         try {
           var resp = await fetch('/api/auth/refresh', {
             method: 'POST',
+            headers: { 'X-CSRF-Token': getCsrfToken() },
             credentials: 'include'
           });
           if (!resp.ok) window.location = '/login.html';

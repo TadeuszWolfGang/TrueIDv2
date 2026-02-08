@@ -72,14 +72,20 @@ STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
     -d '{"username":"admin","password":"wrongpassword"}')
 check "Login with wrong password" "401" "$STATUS"
 
+# Extract CSRF token from cookie jar for mutating requests
+CSRF=$(grep trueid_csrf_token "$COOKIES" 2>/dev/null | awk '{print $NF}')
+
 # 9. Token refresh
 STATUS=$(curl -s -o /dev/null -w "%{http_code}" -b "$COOKIES" -c "$COOKIES" \
-    -X POST "$BASE/api/auth/refresh")
+    -X POST -H "X-CSRF-Token: $CSRF" "$BASE/api/auth/refresh")
 check "Token refresh" "200" "$STATUS"
+
+# Re-extract CSRF after refresh (may have rotated)
+CSRF=$(grep trueid_csrf_token "$COOKIES" 2>/dev/null | awk '{print $NF}')
 
 # 10. Logout
 STATUS=$(curl -s -o /dev/null -w "%{http_code}" -b "$COOKIES" -c "$COOKIES" \
-    -X POST "$BASE/api/auth/logout")
+    -X POST -H "X-CSRF-Token: $CSRF" "$BASE/api/auth/logout")
 check "Logout" "200" "$STATUS"
 
 # 11. /me after logout → 401

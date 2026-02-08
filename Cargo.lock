@@ -3172,7 +3172,6 @@ dependencies = [
  "axum",
  "axum-server",
  "chrono",
- "cookie",
  "dashmap",
  "dotenvy",
  "jsonwebtoken",

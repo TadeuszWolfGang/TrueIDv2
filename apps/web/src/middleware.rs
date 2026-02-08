@@ -14,7 +14,7 @@ use axum::{
 };
 use tracing::warn;
 
-use crate::auth::{self, validate_token, COOKIE_NAME, CSRF_COOKIE_NAME};
+use crate::auth::{self, extract_cookie, validate_token, COOKIE_NAME, CSRF_COOKIE_NAME};
 use crate::error::{self, ApiError};
 use crate::AppState;
 use crate::RequestId;
@@ -333,20 +333,4 @@ pub async fn require_admin_layer(
     Ok(next.run(Request::from_parts(parts, body)).await)
 }
 
-// ── Cookie parsing helper ──────────────────────────────────
-
-/// Extracts a named cookie value from a Cookie header string.
-///
-/// Parameters: `cookie_header` — raw Cookie header, `name` — cookie name.
-/// Returns: `Some(&str)` with the cookie value, or `None`.
-fn extract_cookie<'a>(cookie_header: &'a str, name: &str) -> Option<&'a str> {
-    for part in cookie_header.split(';') {
-        let trimmed = part.trim();
-        if let Some(val) = trimmed.strip_prefix(name) {
-            if let Some(val) = val.strip_prefix('=') {
-                return Some(val);
-            }
-        }
-    }
-    None
-}
+// extract_cookie is imported from crate::auth

@@ -677,6 +677,7 @@ async fn main() -> Result<()> {
         .route("/api/auth/logout", post(routes_auth::logout))
         .route("/api/auth/logout-all", post(routes_auth::logout_all))
         .route("/api/auth/change-password", post(routes_auth::change_password))
+        .route("/api/auth/sessions/{id}", delete(routes_auth::revoke_session))
         .layer(axum_mw::from_fn_with_state(
             state.clone(),
             middleware::require_viewer_layer,
@@ -686,7 +687,6 @@ async fn main() -> Result<()> {
     let operator_routes = Router::new()
         .route("/api/v1/mappings", post(proxy_post_mapping))
         .route("/api/v1/mappings/{ip}", delete(proxy_delete_mapping))
-        .route("/api/auth/sessions/{id}", delete(routes_auth::revoke_session))
         .layer(axum_mw::from_fn_with_state(
             state.clone(),
             middleware::require_operator_layer,

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Fixed
+- **CSRF on token refresh** — dashboard refresh timer (10 min) now sends `X-CSRF-Token` header, preventing 403 and forced logout.
+- **CSRF in smoke-test.sh** — refresh and logout curl calls now extract CSRF token from cookie jar and send header.
+- **request_id in login/refresh** — handlers read `RequestId` from Axum extensions (not request headers), fixing empty `request_id` in audit logs and error responses.
+- **Session revoke accessible to Viewer** — `DELETE /api/auth/sessions/{id}` moved from `operator_routes` to `viewer_routes` so all logged-in users can manage their own sessions.
+- **locked_until in 423 response** — login now returns `locked_until` (ISO 8601) in the JSON body so the frontend can display a countdown.
+- **Deduplicated `extract_cookie`** — single `pub fn` in `auth.rs`, removed duplicates from `middleware.rs` and `routes_auth.rs`.
+- **Removed unused `cookie` crate** dependency from `apps/web/Cargo.toml`.
+
 ### Added
 - **RBAC & Authentication system** (17-step plan fully implemented):
   - Database migration `0009_add_auth_tables.sql`: `users`, `sessions`, `api_keys`, `audit_log` tables with indexes and triggers.

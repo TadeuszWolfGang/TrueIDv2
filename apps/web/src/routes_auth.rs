@@ -4,15 +4,16 @@ use axum::{
     extract::{Path, State},
     http::{header, StatusCode},
     response::IntoResponse,
-    Json,
+    Extension, Json,
 };
+use crate::RequestId;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use crate::auth::{
     build_auth_cookie, build_clear_cookie, build_csrf_cookie, create_access_token,
-    generate_csrf_token, generate_refresh_token, COOKIE_NAME, CSRF_COOKIE_NAME,
-    REFRESH_COOKIE_NAME, REFRESH_TOKEN_TTL,
+    extract_cookie, generate_csrf_token, generate_refresh_token, COOKIE_NAME,
+    CSRF_COOKIE_NAME, REFRESH_COOKIE_NAME, REFRESH_TOKEN_TTL,
 };
 use crate::error::{self, ApiError};
 use crate::middleware::AuthUser;
@@ -74,18 +75,7 @@ fn client_ip(headers: &axum::http::HeaderMap) -> Option<String> {
         })
 }
 
-/// Extracts a named cookie from the Cookie header.
-fn extract_cookie<'a>(cookie_header: &'a str, name: &str) -> Option<&'a str> {
-    for part in cookie_header.split(';') {
-        let trimmed = part.trim();
-        if let Some(val) = trimmed.strip_prefix(name) {
-            if let Some(val) = val.strip_prefix('=') {
-                return Some(val);
-            }
-        }
-    }
-    None
-}
+// extract_cookie is imported from crate::auth
 
 /// Builds the three Set-Cookie headers for login/refresh.
 fn auth_cookies(
@@ -133,14 +123,11 @@ fn clear_cookies(dev_mode: bool) -> Vec<(header::HeaderName, String)> {
 /// Authenticates a user with username/password. Sets JWT + refresh + CSRF cookies.
 pub async fn login(
     State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
     headers: axum::http::HeaderMap,
     Json(body): Json<LoginRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let rid = headers
-        .get("x-request-id")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string();
+    let rid = request_id.0;
     let ip = client_ip(&headers);
     let ua = headers
         .get(header::USER_AGENT)
@@ -168,16 +155,18 @@ pub async fn login(
                 "Invalid credentials",
             ).with_request_id(&rid));
         }
-        AuthResult::AccountLocked { .. } => {
+        AuthResult::AccountLocked { until } => {
             let _ = db.write_audit_log(
                 None, &body.username, "system", "login_failed_locked",
                 None, None, ip.as_deref(), Some(&rid),
             ).await;
-            return Err(ApiError::new(
-                StatusCode::LOCKED,
-                error::ACCOUNT_LOCKED,
-                "Account is locked due to too many failed attempts",
-            ).with_request_id(&rid));
+            let body = serde_json::json!({
+                "error": "Account is locked due to too many failed attempts",
+                "code": error::ACCOUNT_LOCKED,
+                "request_id": &rid,
+                "locked_until": until.to_rfc3339(),
+            });
+            return Ok((StatusCode::LOCKED, Json(body)).into_response());
         }
         AuthResult::Error(msg) => {
             warn!(error = %msg, "Auth provider error");
@@ -303,10 +292,10 @@ pub async fn logout_all(
 /// Rotates the refresh token. Detects token reuse (replay attack).
 pub async fn refresh(
     State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
     headers: axum::http::HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
-    let rid = headers.get("x-request-id")
-        .and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    let rid = request_id.0;
 
     let db = state.db.as_ref().ok_or_else(|| {
         ApiError::new(StatusCode::SERVICE_UNAVAILABLE, error::SERVICE_UNAVAILABLE, "Database unavailable")

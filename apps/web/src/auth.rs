@@ -181,3 +181,19 @@ pub fn generate_random_hex(bytes: usize) -> String {
 pub fn generate_refresh_token() -> String {
     generate_random_hex(64)
 }
+
+/// Extracts a named cookie value from a raw Cookie header string.
+///
+/// Parameters: `cookie_header` — raw Cookie header, `name` — cookie name.
+/// Returns: cookie value if found.
+pub fn extract_cookie<'a>(cookie_header: &'a str, name: &str) -> Option<&'a str> {
+    for part in cookie_header.split(';') {
+        let trimmed = part.trim();
+        if let Some(val) = trimmed.strip_prefix(name) {
+            if let Some(val) = val.strip_prefix('=') {
+                return Some(val);
+            }
+        }
+    }
+    None
+}
