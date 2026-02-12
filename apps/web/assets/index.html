@@ -129,6 +129,31 @@
         0%, 100% { border-color: #1e2a24; }
         50% { border-color: #ef4444; box-shadow: 0 0 8px rgba(239,68,68,0.3); }
       }
+
+      /* Severity badges */
+      .badge {
+        display: inline-block; padding: 2px 8px; border-radius: 10px;
+        font-size: 11px; font-weight: 600; text-transform: uppercase;
+      }
+      .badge-critical { background: rgba(239,68,68,0.2); color: #ef4444; }
+      .badge-warning { background: rgba(245,158,11,0.2); color: #f59e0b; }
+      .badge-info { background: rgba(59,130,246,0.2); color: #3b82f6; }
+
+      /* Clickable IP */
+      .ip-link {
+        color: #80ffdb; cursor: pointer; text-decoration: none;
+        border-bottom: 1px dotted #80ffdb;
+      }
+      .ip-link:hover { color: #c7f9cc; }
+
+      /* Timeline panel animation */
+      .timeline-enter { animation: slideIn 0.2s ease-out; }
+      @keyframes slideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
+
+      /* Webhook status icons */
+      .wh-sent { color: #22c55e; }
+      .wh-failed { color: #ef4444; }
+      .wh-skip { color: #6b8579; }
     </style>
   </head>
   <body>
@@ -141,16 +166,40 @@
 
     <!-- Tab navigation -->
     <nav id="tabs" style="display:flex;gap:0;margin-bottom:20px;">
-      <button class="tab active" onclick="switchTab('mappings')">Mappings</button>
-      <button class="tab" onclick="switchTab('status')">Status</button>
+      <button class="tab active" id="tab-btn-mappings" onclick="switchTab('mappings')">Mappings</button>
+      <button class="tab" id="tab-btn-search" onclick="switchTab('search')">Search</button>
+      <button class="tab" id="tab-btn-conflicts" onclick="switchTab('conflicts')">Conflicts</button>
+      <button class="tab" id="tab-btn-alerts" onclick="switchTab('alerts')">Alerts</button>
+      <button class="tab" id="tab-btn-status" onclick="switchTab('status')">Status</button>
       <button class="tab" id="tab-btn-sycope" onclick="switchTab('sycope')">Sycope</button>
       <button class="tab" id="tab-btn-audit" onclick="switchTab('audit')" style="display:none;">Audit Log</button>
     </nav>
 
     <!-- ═══ TAB: Mappings ═══ -->
     <div id="tab-mappings">
-      <h1>TrueID :: recent mappings</h1>
+      <h1>TrueID :: Mappings</h1>
       <div class="panel">
+        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">
+          <input type="text" id="mappings-search" class="setting-input" style="width:300px;"
+            placeholder="Search IP, user, MAC, vendor..." onkeydown="if(event.key==='Enter')loadMappings(1)">
+          <select id="mappings-source" class="setting-input" style="width:140px;">
+            <option value="">All sources</option>
+            <option value="Radius">Radius</option>
+            <option value="AdLog">AdLog</option>
+            <option value="DhcpLease">DhcpLease</option>
+            <option value="Manual">Manual</option>
+          </select>
+          <select id="mappings-active" class="setting-input" style="width:120px;">
+            <option value="">All</option>
+            <option value="true" selected>Active</option>
+            <option value="false">Inactive</option>
+          </select>
+          <button class="btn btn-sm" onclick="loadMappings(1)">Search</button>
+          <button class="btn btn-sm" onclick="loadMappings(mappingsCurrentPage)">Refresh</button>
+          <button class="btn btn-sm" onclick="exportMappings('csv')">Export CSV</button>
+          <button class="btn btn-sm" onclick="exportMappings('json')">Export JSON</button>
+        </div>
+        <div id="mappings-stats" style="display:flex;gap:24px;margin-bottom:12px;font-size:13px;color:#6b8579;"></div>
         <table>
           <thead>
             <tr>
@@ -163,13 +212,177 @@
               <th>Confidence</th>
             </tr>
           </thead>
-          <tbody id="recent-body">
+          <tbody id="mappings-body">
             <tr>
               <td colspan="7" class="muted">Waiting for data...</td>
             </tr>
           </tbody>
         </table>
-        <div class="status" id="status">Last update: never</div>
+        <div id="mappings-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:#6b8579;"></div>
+        <div class="status" id="mappings-status">Last update: never</div>
+      </div>
+    </div>
+
+    <!-- ═══ TAB: Search ═══ -->
+    <div id="tab-search" style="display:none;">
+      <h1>TrueID :: Search</h1>
+      <div class="panel">
+        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">
+          <input type="text" id="search-q" class="setting-input" style="width:300px;"
+            placeholder="Free text search..." onkeydown="if(event.key==='Enter')doSearch(1)">
+          <input type="text" id="search-ip" class="setting-input" style="width:160px;" placeholder="IP">
+          <input type="text" id="search-user" class="setting-input" style="width:160px;" placeholder="User">
+          <input type="text" id="search-mac" class="setting-input" style="width:160px;" placeholder="MAC">
+          <select id="search-source" class="setting-input" style="width:140px;">
+            <option value="">All sources</option>
+            <option value="Radius">Radius</option>
+            <option value="AdLog">AdLog</option>
+            <option value="DhcpLease">DhcpLease</option>
+            <option value="Manual">Manual</option>
+          </select>
+          <select id="search-scope" class="setting-input" style="width:120px;">
+            <option value="all">All</option>
+            <option value="mappings">Mappings</option>
+            <option value="events">Events</option>
+          </select>
+          <button class="btn" onclick="doSearch(1)">Search</button>
+          <button class="btn btn-sm" onclick="exportEvents('csv')">Export Events CSV</button>
+          <button class="btn btn-sm" onclick="exportEvents('json')">Export Events JSON</button>
+        </div>
+
+        <div id="search-mappings-section" style="display:none;">
+          <h2 class="section-title">Mappings <span id="search-mappings-count" class="muted" style="font-weight:normal;font-size:13px;"></span></h2>
+          <table>
+            <thead><tr><th></th><th>IP</th><th>MAC</th><th>User</th><th>Last Seen</th><th>Source</th><th>Confidence</th></tr></thead>
+            <tbody id="search-mappings-body"></tbody>
+          </table>
+        </div>
+
+        <div id="search-events-section" style="display:none;margin-top:16px;">
+          <h2 class="section-title">Events <span id="search-events-count" class="muted" style="font-weight:normal;font-size:13px;"></span></h2>
+          <table>
+            <thead><tr><th>ID</th><th>IP</th><th>User</th><th>Source</th><th>Timestamp</th></tr></thead>
+            <tbody id="search-events-body"></tbody>
+          </table>
+        </div>
+
+        <div id="search-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:#6b8579;"></div>
+        <div id="search-meta" style="margin-top:8px;font-size:12px;color:#6b8579;"></div>
+      </div>
+    </div>
+
+    <!-- ═══ TAB: Conflicts ═══ -->
+    <div id="tab-conflicts" style="display:none;">
+      <h1>TrueID :: Conflicts</h1>
+      <div class="panel">
+        <div id="conflicts-stats" style="display:flex;gap:24px;margin-bottom:16px;font-size:13px;color:#6b8579;"></div>
+        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">
+          <select id="conflict-type" class="setting-input" style="width:160px;">
+            <option value="">All types</option>
+            <option value="ip_user_change">IP User Change</option>
+            <option value="mac_ip_conflict">MAC/IP Conflict</option>
+            <option value="duplicate_mac">Duplicate MAC</option>
+          </select>
+          <select id="conflict-severity" class="setting-input" style="width:120px;">
+            <option value="">All</option>
+            <option value="critical">Critical</option>
+            <option value="warning">Warning</option>
+            <option value="info">Info</option>
+          </select>
+          <select id="conflict-resolved" class="setting-input" style="width:130px;">
+            <option value="false" selected>Unresolved</option>
+            <option value="true">Resolved</option>
+            <option value="">All</option>
+          </select>
+          <button class="btn btn-sm" onclick="loadConflicts(1)">Apply</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Severity</th>
+              <th>Type</th>
+              <th>IP</th>
+              <th>User (old → new)</th>
+              <th>MAC</th>
+              <th>Source</th>
+              <th>Detected</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="conflicts-body">
+            <tr><td colspan="8" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+        <div id="conflicts-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:#6b8579;"></div>
+      </div>
+    </div>
+
+    <!-- ═══ TAB: Alerts ═══ -->
+    <div id="tab-alerts" style="display:none;">
+      <h1>TrueID :: Alerts</h1>
+      <div class="panel">
+        <div id="alerts-stats" style="display:flex;gap:24px;margin-bottom:16px;font-size:13px;color:#6b8579;"></div>
+
+        <div id="alerts-rules-section">
+          <h2 class="section-title">Alert Rules
+            <button class="btn btn-sm" style="margin-left:12px;" onclick="showAddRuleForm()">+ Add Rule</button>
+          </h2>
+          <div id="alert-rule-form" style="display:none;margin-bottom:16px;padding:12px;border:1px solid #1e2a24;border-radius:4px;">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+              <input type="text" id="rule-name" class="setting-input" style="width:200px;" placeholder="Rule name">
+              <select id="rule-type" class="setting-input" style="width:160px;">
+                <option value="new_mac">New MAC</option>
+                <option value="ip_conflict">IP Conflict</option>
+                <option value="user_change">User Change</option>
+                <option value="new_subnet">New Subnet</option>
+                <option value="source_down">Source Down</option>
+              </select>
+              <select id="rule-severity" class="setting-input" style="width:120px;">
+                <option value="info">Info</option>
+                <option value="warning" selected>Warning</option>
+                <option value="critical">Critical</option>
+              </select>
+              <input type="number" id="rule-cooldown" class="setting-input" style="width:140px;" placeholder="Cooldown (s)" value="300">
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+              <input type="text" id="rule-webhook" class="setting-input" style="width:400px;" placeholder="Webhook URL (optional)">
+            </div>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-sm" onclick="saveAlertRule()">Save</button>
+              <button class="btn btn-sm" onclick="hideRuleForm()">Cancel</button>
+            </div>
+          </div>
+          <table>
+            <thead><tr><th>Enabled</th><th>Name</th><th>Type</th><th>Severity</th><th>Webhook</th><th>Cooldown</th><th>Actions</th></tr></thead>
+            <tbody id="rules-body"></tbody>
+          </table>
+        </div>
+
+        <div class="setting-divider" style="margin:16px 0;"></div>
+
+        <h2 class="section-title">Alert History</h2>
+        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">
+          <select id="alert-hist-severity" class="setting-input" style="width:120px;">
+            <option value="">All</option>
+            <option value="critical">Critical</option>
+            <option value="warning">Warning</option>
+            <option value="info">Info</option>
+          </select>
+          <select id="alert-hist-type" class="setting-input" style="width:160px;">
+            <option value="">All types</option>
+            <option value="new_mac">New MAC</option>
+            <option value="ip_conflict">IP Conflict</option>
+            <option value="user_change">User Change</option>
+            <option value="new_subnet">New Subnet</option>
+            <option value="source_down">Source Down</option>
+          </select>
+          <button class="btn btn-sm" onclick="loadAlertHistory(1)">Apply</button>
+        </div>
+        <table>
+          <thead><tr><th>Severity</th><th>Rule</th><th>Type</th><th>IP</th><th>User</th><th>Webhook</th><th>Fired At</th></tr></thead>
+          <tbody id="alert-history-body"></tbody>
+        </table>
+        <div id="alert-history-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:#6b8579;"></div>
       </div>
     </div>
 
@@ -347,17 +560,35 @@
       </div>
     </div>
 
-    <script>
-      /* ── Auth: current user and helpers ─────────────── */
+    <!-- Timeline slide-in panel -->
+    <div id="timeline-panel" style="display:none;position:fixed;top:0;right:0;width:500px;height:100vh;background:#0f1512;border-left:2px solid #80ffdb;overflow-y:auto;padding:24px;z-index:100;box-shadow:-4px 0 24px rgba(0,0,0,0.5);">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+        <h2 style="margin:0;color:#80ffdb;font-size:16px;" id="timeline-title">Timeline</h2>
+        <button class="btn btn-sm" onclick="closeTimeline()">✕ Close</button>
+      </div>
+      <div id="timeline-content">Loading...</div>
+    </div>
 
+    <script>
       var currentUser = null;
+      var activeTab = 'mappings';
+      var tabLoaded = { mappings: false, search: false, conflicts: false, alerts: false, sycope: false, audit: false };
+      var tabRefreshTimers = { mappings: null, conflicts: null, alerts: null, audit: null };
+
+      var mappingsCurrentPage = 1;
+      var mappingsPerPage = 50;
+      var searchCurrentPage = 1;
+      var searchPerPage = 50;
+      var conflictsCurrentPage = 1;
+      var alertHistoryCurrentPage = 1;
+      var editingRuleId = null;
+      var auditCurrentPage = 1;
 
       function getCsrfToken() {
         var match = document.cookie.match(/trueid_csrf_token=([^;]+)/);
         return match ? match[1] : '';
       }
 
-      /** Returns headers for mutating (POST/PUT/DELETE) fetch calls. */
       function mutHeaders() {
         return {
           'Content-Type': 'application/json',
@@ -365,39 +596,73 @@
         };
       }
 
-      /** Check auth on page load; redirect to login if not authenticated. */
+      function escapeHtml(v) {
+        if (v === null || v === undefined) return '';
+        return String(v)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#039;');
+      }
+
+      function escJs(v) {
+        if (v === null || v === undefined) return '';
+        return String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      }
+
+      function timeAgo(isoStr) {
+        if (!isoStr || isoStr === '-') return '-';
+        var diff = Date.now() - new Date(isoStr).getTime();
+        if (diff < 0) return 'just now';
+        var sec = Math.floor(diff / 1000);
+        if (sec < 60) return sec + 's ago';
+        var min = Math.floor(sec / 60);
+        if (min < 60) return min + ' min ago';
+        var hrs = Math.floor(min / 60);
+        if (hrs < 24) return hrs + 'h ago';
+        return Math.floor(hrs / 24) + 'd ago';
+      }
+
+      function badgeClass(sev) {
+        if (sev === 'critical') return 'badge badge-critical';
+        if (sev === 'warning') return 'badge badge-warning';
+        return 'badge badge-info';
+      }
+
+      function webhookStatusView(status) {
+        if (status === 'sent') return '<span class="wh-sent">✓ sent</span>';
+        if (status === 'failed') return '<span class="wh-failed">✕ failed</span>';
+        return '<span class="wh-skip">- ' + escapeHtml(status || 'no_webhook') + '</span>';
+      }
+
       async function initAuth() {
         try {
           var resp = await fetch('/api/auth/me', { credentials: 'include' });
-          if (resp.status === 401) {
+          if (resp.status === 401 || !resp.ok) {
             window.location = '/login.html';
             return;
           }
-          if (!resp.ok) {
-            window.location = '/login.html';
-            return;
-          }
-          currentUser = await resp.json();
+          var meData = await resp.json();
+          currentUser = meData.user;
+          currentUser.force_password_change = meData.force_password_change;
+          currentUser.active_sessions_count = meData.active_sessions_count;
 
-          // Show user bar
           document.getElementById('user-info').textContent =
             'Logged in as ' + currentUser.username + ' (' + currentUser.role + ')';
           document.getElementById('user-bar').style.display = 'flex';
-
-          // Role-based UI visibility
           applyRoleVisibility(currentUser.role);
+          switchTab('mappings');
         } catch (e) {
           window.location = '/login.html';
         }
       }
 
       function applyRoleVisibility(role) {
-        if (role !== 'Admin') {
-          document.getElementById('tab-btn-sycope').style.display = 'none';
-          document.getElementById('tab-btn-audit').style.display = 'none';
-        } else {
-          document.getElementById('tab-btn-audit').style.display = '';
-        }
+        var isAdmin = role === 'Admin';
+        document.getElementById('tab-btn-sycope').style.display = isAdmin ? '' : 'none';
+        document.getElementById('tab-btn-audit').style.display = isAdmin ? '' : 'none';
+        document.getElementById('alerts-rules-section').style.display = isAdmin ? '' : 'none';
       }
 
       async function doLogout() {
@@ -407,11 +672,9 @@
             headers: mutHeaders(),
             credentials: 'include'
           });
-        } catch (e) { /* ignore */ }
+        } catch (e) {}
         window.location = '/login.html';
       }
-
-      /* ── Token refresh (every 10 min) ───────────────── */
 
       var refreshing = false;
       async function refreshToken() {
@@ -430,113 +693,665 @@
       }
       setInterval(refreshToken, 10 * 60 * 1000);
 
-      // Run auth check immediately
-      initAuth();
-
-      /* ── Tab switching ─────────────────────────────── */
+      function clearTabTimers() {
+        ['mappings', 'conflicts', 'alerts', 'audit'].forEach(function (k) {
+          if (tabRefreshTimers[k]) {
+            clearInterval(tabRefreshTimers[k]);
+            tabRefreshTimers[k] = null;
+          }
+        });
+      }
 
       function switchTab(name) {
-        document.querySelectorAll('[id^="tab-"]').forEach(function (el) {
-          if (el.id.startsWith('tab-')) el.style.display = 'none';
+        activeTab = name;
+        ['mappings', 'search', 'conflicts', 'alerts', 'status', 'sycope', 'audit'].forEach(function (n) {
+          var panel = document.getElementById('tab-' + n);
+          if (panel) panel.style.display = n === name ? 'block' : 'none';
         });
-        var target = document.getElementById('tab-' + name);
-        if (target) target.style.display = 'block';
-
-        document.querySelectorAll('.tab').forEach(function (btn) {
+        document.querySelectorAll('#tabs .tab').forEach(function (btn) {
           btn.classList.remove('active');
-          if (btn.textContent.trim().toLowerCase() === name) btn.classList.add('active');
         });
+        var activeBtn = document.getElementById('tab-btn-' + name);
+        if (activeBtn) activeBtn.classList.add('active');
 
-        if (name === 'sycope') loadSycopeConfig();
-        if (name === 'audit') {
+        if (name === 'mappings') {
+          if (!tabLoaded.mappings) {
+            tabLoaded.mappings = true;
+            loadMappingsStats();
+            loadMappings(1);
+          }
+          clearTabTimers();
+          tabRefreshTimers.mappings = setInterval(function () {
+            if (activeTab === 'mappings') loadMappings(mappingsCurrentPage);
+          }, 30000);
+        } else if (name === 'search') {
+          if (!tabLoaded.search) tabLoaded.search = true;
+          clearTabTimers();
+        } else if (name === 'conflicts') {
+          if (!tabLoaded.conflicts) {
+            tabLoaded.conflicts = true;
+            loadConflictsStats();
+            loadConflicts(1);
+          }
+          clearTabTimers();
+          tabRefreshTimers.conflicts = setInterval(function () {
+            if (activeTab === 'conflicts') {
+              loadConflictsStats();
+              loadConflicts(conflictsCurrentPage);
+            }
+          }, 30000);
+        } else if (name === 'alerts') {
+          if (!tabLoaded.alerts) {
+            tabLoaded.alerts = true;
+            loadAlertStats();
+            loadAlertHistory(1);
+            if (currentUser && currentUser.role === 'Admin') loadAlertRules();
+          }
+          clearTabTimers();
+          tabRefreshTimers.alerts = setInterval(function () {
+            if (activeTab === 'alerts') {
+              loadAlertStats();
+              loadAlertHistory(alertHistoryCurrentPage);
+              if (currentUser && currentUser.role === 'Admin') loadAlertRules();
+            }
+          }, 30000);
+        } else if (name === 'sycope') {
+          clearTabTimers();
+          loadSycopeConfig();
+        } else if (name === 'audit') {
+          clearTabTimers();
           loadAuditStats();
           loadAuditLogs(auditCurrentPage);
-          // Auto-refresh every 30s while on audit tab.
-          if (auditRefreshTimer) clearInterval(auditRefreshTimer);
-          auditRefreshTimer = setInterval(function() { loadAuditLogs(auditCurrentPage); }, 30000);
+          tabRefreshTimers.audit = setInterval(function () {
+            if (activeTab === 'audit') loadAuditLogs(auditCurrentPage);
+          }, 30000);
         } else {
-          if (auditRefreshTimer) { clearInterval(auditRefreshTimer); auditRefreshTimer = null; }
+          clearTabTimers();
         }
       }
 
-      /* ── Mappings tab (existing logic) ─────────────── */
-
-      const body = document.getElementById("recent-body");
-      const status = document.getElementById("status");
-
-      function timeAgo(isoStr) {
-        if (!isoStr || isoStr === "-") return "-";
-        var diff = Date.now() - new Date(isoStr).getTime();
-        if (diff < 0) return "just now";
-        var sec = Math.floor(diff / 1000);
-        if (sec < 60) return sec + "s ago";
-        var min = Math.floor(sec / 60);
-        if (min < 60) return min + " min ago";
-        var hrs = Math.floor(min / 60);
-        if (hrs < 24) return hrs + "h ago";
-        return Math.floor(hrs / 24) + "d ago";
+      function parseSearchToFilter(search) {
+        var out = {};
+        if (!search) return out;
+        if (/^\d{1,3}(\.\d{1,3}){3}$/.test(search)) {
+          out.ip = search;
+        } else if (/^[0-9a-fA-F:\-]{11,}$/.test(search)) {
+          out.mac = search;
+        } else {
+          out.user = search;
+        }
+        return out;
       }
 
-      function renderRows(items) {
-        if (!Array.isArray(items) || items.length === 0) {
-          body.innerHTML = '<tr><td colspan="7" class="muted">No data yet.</td></tr>';
+      async function loadMappingsStats() {
+        try {
+          var res = await fetch('/api/v1/stats', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var data = await res.json();
+          var total = data.total_mappings || data.total || 0;
+          var active = data.active_mappings || data.active || 0;
+          var inactive = data.inactive_mappings || Math.max(0, total - active);
+          var sources = '';
+          if (data.source_counts && typeof data.source_counts === 'object') {
+            sources = Object.keys(data.source_counts).map(function (k) {
+              return k + ': ' + data.source_counts[k];
+            }).join(', ');
+          }
+          document.getElementById('mappings-stats').innerHTML =
+            '<span>Total: <strong>' + total + '</strong></span>' +
+            '<span>Active: <strong>' + active + '</strong></span>' +
+            '<span>Inactive: <strong>' + inactive + '</strong></span>' +
+            '<span>Sources: <strong>' + escapeHtml(sources || 'n/a') + '</strong></span>';
+        } catch (e) {
+          document.getElementById('mappings-stats').innerHTML =
+            '<span class="muted">No stats available.</span>';
+        }
+      }
+
+      function renderMappingsTable(items) {
+        var body = document.getElementById('mappings-body');
+        if (!items || items.length === 0) {
+          body.innerHTML = '<tr><td colspan="7" class="muted">No mappings found.</td></tr>';
           return;
         }
         body.innerHTML = items.map(function (item) {
           var active = item.is_active !== false;
-          var cls = active ? "" : "offline";
-          var dotCls = active ? "online" : "offline";
-          var ip = item.ip || "-";
-          var mac = item.mac || "-";
-          var vendor = item.vendor ? '<span class="vendor">' + item.vendor + '</span>' : "";
-          var user = Array.isArray(item.current_users) ? item.current_users.join(", ") : (item.user || "-");
-          var lastSeen = timeAgo(item.last_seen);
-          var source = item.source || "-";
-          var confidence = item.confidence_score != null ? item.confidence_score : (item.confidence || "-");
+          var cls = active ? '' : 'offline';
+          var dotCls = active ? 'online' : 'offline';
+          var ip = item.ip || '-';
+          var mac = item.mac || '-';
+          var vendor = item.vendor ? '<span class="vendor">' + escapeHtml(item.vendor) + '</span>' : '';
+          var user = Array.isArray(item.current_users) ? item.current_users.join(', ') : '-';
+          var source = item.source || '-';
+          var confidence = item.confidence_score != null ? item.confidence_score : '-';
           return '<tr class="' + cls + '">' +
             '<td><span class="dot ' + dotCls + '"></span></td>' +
-            '<td>' + ip + '</td>' +
-            '<td>' + mac + vendor + '</td>' +
-            '<td>' + user + '</td>' +
-            '<td>' + lastSeen + '</td>' +
-            '<td>' + source + '</td>' +
-            '<td>' + confidence + '</td>' +
+            '<td><a href="#" class="ip-link" onclick="openTimeline(\'ip\', \'' + escJs(ip) + '\');return false;">' + escapeHtml(ip) + '</a></td>' +
+            '<td>' + escapeHtml(mac) + vendor + '</td>' +
+            '<td><a href="#" class="ip-link" onclick="openTimeline(\'user\', \'' + escJs(user) + '\');return false;">' + escapeHtml(user) + '</a></td>' +
+            '<td>' + escapeHtml(timeAgo(item.last_seen)) + '</td>' +
+            '<td>' + escapeHtml(source) + '</td>' +
+            '<td>' + escapeHtml(confidence) + '</td>' +
             '</tr>';
-        }).join("");
+        }).join('');
       }
 
-      async function refresh() {
+      function renderMappingsPaging(page, perPage, total) {
+        var totalPages = Math.ceil(total / perPage) || 1;
+        var el = document.getElementById('mappings-paging');
+        var html = 'Page ' + page + ' of ' + totalPages + ' (' + total + ' mappings) &nbsp;';
+        if (page > 1) html += '<button class="btn btn-sm" onclick="loadMappings(' + (page - 1) + ')">← Prev</button> ';
+        if (page < totalPages) html += '<button class="btn btn-sm" onclick="loadMappings(' + (page + 1) + ')">Next →</button>';
+        el.innerHTML = html;
+      }
+
+      async function loadMappings(page) {
+        mappingsCurrentPage = page || 1;
+        var status = document.getElementById('mappings-status');
+        var search = document.getElementById('mappings-search').value.trim();
+        var source = document.getElementById('mappings-source').value;
+        var active = document.getElementById('mappings-active').value;
+        var params = new URLSearchParams({
+          scope: 'mappings',
+          page: String(mappingsCurrentPage),
+          limit: String(mappingsPerPage),
+          sort: 'last_seen',
+          order: 'desc'
+        });
+        if (search) params.set('q', search);
+        if (source) params.set('source', source);
+        if (active !== '') params.set('active', active);
+
         try {
-          var response = await fetch("/api/recent", { credentials: 'include' });
-          if (response.status === 503) {
-            body.innerHTML =
-              '<tr><td colspan="7">' +
-              '<div style="max-width:520px;margin:40px auto;text-align:center;color:#c7f9cc">' +
-              '<h2 style="color:#f59e0b">Database not connected</h2>' +
-              '<p>The TrueID database is not available.</p>' +
-              '<ol style="text-align:left;margin:16px 0">' +
-              '<li>Check <code>.env</code> contains <code>DATABASE_URL=sqlite://net-identity.db?mode=rwc</code></li>' +
-              '<li>Run <code>cargo run -p trueid-engine</code> to create the database</li>' +
-              '<li>Restart this web server</li>' +
-              '</ol>' +
-              '<p class="muted">See README.md for full setup instructions.</p>' +
-              '</div></td></tr>';
-            status.textContent = "Database unavailable";
-            return;
-          }
-          if (!response.ok) throw new Error("HTTP " + response.status);
-          var data = await response.json();
-          renderRows(data);
-          status.textContent = "Last update: " + new Date().toLocaleTimeString();
+          var res = await fetch('/api/v2/search?' + params.toString(), { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var data = await res.json();
+          var section = data.mappings || { data: [], total: 0 };
+          renderMappingsTable(section.data || []);
+          renderMappingsPaging(data.page || mappingsCurrentPage, data.limit || mappingsPerPage, section.total || 0);
+          status.textContent = 'Last update: ' + new Date().toLocaleTimeString();
+          loadMappingsStats();
         } catch (err) {
-          status.textContent = "Last update failed: " + err;
+          document.getElementById('mappings-body').innerHTML =
+            '<tr><td colspan="7" style="color:#ef4444;">Failed: ' + escapeHtml(err.message) + '</td></tr>';
+          status.textContent = 'Last update failed';
         }
       }
 
-      refresh();
-      setInterval(refresh, 2000);
+      function exportMappings(format) {
+        var search = document.getElementById('mappings-search').value.trim();
+        var source = document.getElementById('mappings-source').value;
+        var active = document.getElementById('mappings-active').value;
+        var params = new URLSearchParams({ format: format });
+        var parsed = parseSearchToFilter(search);
+        if (parsed.ip) params.set('ip', parsed.ip);
+        if (parsed.user) params.set('user', parsed.user);
+        if (parsed.mac) params.set('mac', parsed.mac);
+        if (source) params.set('source', source);
+        if (active !== '') params.set('active', active);
+        window.location = '/api/v2/export/mappings?' + params.toString();
+      }
 
-      /* ── Sycope tab ────────────────────────────────── */
+      function exportEvents(format) {
+        var params = new URLSearchParams({ format: format });
+        var ip = document.getElementById('search-ip').value.trim();
+        var user = document.getElementById('search-user').value.trim();
+        var source = document.getElementById('search-source').value;
+        if (ip) params.set('ip', ip);
+        if (user) params.set('user', user);
+        if (source) params.set('source', source);
+        window.location = '/api/v2/export/events?' + params.toString();
+      }
+
+      function renderSearchPaging(page, perPage, total) {
+        var totalPages = Math.ceil(total / perPage) || 1;
+        var el = document.getElementById('search-paging');
+        var html = 'Page ' + page + ' of ' + totalPages + ' (' + total + ' results) &nbsp;';
+        if (page > 1) html += '<button class="btn btn-sm" onclick="doSearch(' + (page - 1) + ')">← Prev</button> ';
+        if (page < totalPages) html += '<button class="btn btn-sm" onclick="doSearch(' + (page + 1) + ')">Next →</button>';
+        el.innerHTML = html;
+      }
+
+      async function doSearch(page) {
+        searchCurrentPage = page || 1;
+        var params = new URLSearchParams({
+          page: String(searchCurrentPage),
+          limit: String(searchPerPage),
+          sort: 'timestamp',
+          order: 'desc'
+        });
+        var q = document.getElementById('search-q').value.trim();
+        var ip = document.getElementById('search-ip').value.trim();
+        var user = document.getElementById('search-user').value.trim();
+        var mac = document.getElementById('search-mac').value.trim();
+        var source = document.getElementById('search-source').value;
+        var scope = document.getElementById('search-scope').value;
+        if (q) params.set('q', q);
+        if (ip) params.set('ip', ip);
+        if (user) params.set('user', user);
+        if (mac) params.set('mac', mac);
+        if (source) params.set('source', source);
+        if (scope) params.set('scope', scope);
+
+        var mappingsSection = document.getElementById('search-mappings-section');
+        var eventsSection = document.getElementById('search-events-section');
+        var mappingsBody = document.getElementById('search-mappings-body');
+        var eventsBody = document.getElementById('search-events-body');
+
+        try {
+          var res = await fetch('/api/v2/search?' + params.toString(), { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var data = await res.json();
+          var mappings = data.mappings;
+          var events = data.events;
+          var mappingsTotal = mappings ? (mappings.total || 0) : 0;
+          var eventsTotal = events ? (events.total || 0) : 0;
+          var maxTotal = Math.max(mappingsTotal, eventsTotal);
+
+          if (mappings) {
+            mappingsSection.style.display = '';
+            document.getElementById('search-mappings-count').textContent = '(' + mappingsTotal + ')';
+            var list = mappings.data || [];
+            mappingsBody.innerHTML = list.length ? list.map(function (item) {
+              var ipVal = item.ip || '-';
+              var userVal = Array.isArray(item.current_users) ? item.current_users.join(', ') : '-';
+              return '<tr>' +
+                '<td><span class="dot ' + (item.is_active === false ? 'offline' : 'online') + '"></span></td>' +
+                '<td><a href="#" class="ip-link" onclick="openTimeline(\'ip\', \'' + escJs(ipVal) + '\');return false;">' + escapeHtml(ipVal) + '</a></td>' +
+                '<td>' + escapeHtml(item.mac || '-') + '</td>' +
+                '<td><a href="#" class="ip-link" onclick="openTimeline(\'user\', \'' + escJs(userVal) + '\');return false;">' + escapeHtml(userVal) + '</a></td>' +
+                '<td>' + escapeHtml(timeAgo(item.last_seen)) + '</td>' +
+                '<td>' + escapeHtml(item.source || '-') + '</td>' +
+                '<td>' + escapeHtml(item.confidence_score != null ? item.confidence_score : '-') + '</td>' +
+                '</tr>';
+            }).join('') : '<tr><td colspan="7" class="muted">No mappings found.</td></tr>';
+          } else {
+            mappingsSection.style.display = 'none';
+          }
+
+          if (events) {
+            eventsSection.style.display = '';
+            document.getElementById('search-events-count').textContent = '(' + eventsTotal + ')';
+            var elist = events.data || [];
+            eventsBody.innerHTML = elist.length ? elist.map(function (e) {
+              return '<tr>' +
+                '<td>' + escapeHtml(e.id || '-') + '</td>' +
+                '<td><a href="#" class="ip-link" onclick="openTimeline(\'ip\', \'' + escJs(e.ip || '') + '\');return false;">' + escapeHtml(e.ip || '-') + '</a></td>' +
+                '<td><a href="#" class="ip-link" onclick="openTimeline(\'user\', \'' + escJs(e.user || '') + '\');return false;">' + escapeHtml(e.user || '-') + '</a></td>' +
+                '<td>' + escapeHtml(e.source || '-') + '</td>' +
+                '<td>' + escapeHtml(new Date(e.timestamp).toLocaleString()) + '</td>' +
+                '</tr>';
+            }).join('') : '<tr><td colspan="5" class="muted">No events found.</td></tr>';
+          } else {
+            eventsSection.style.display = 'none';
+          }
+
+          renderSearchPaging(data.page || searchCurrentPage, data.limit || searchPerPage, maxTotal);
+          document.getElementById('search-meta').textContent =
+            'Found ' + mappingsTotal + ' mappings + ' + eventsTotal + ' events in ' + (data.query_time_ms || 0) + 'ms';
+        } catch (err) {
+          mappingsSection.style.display = '';
+          eventsSection.style.display = 'none';
+          mappingsBody.innerHTML = '<tr><td colspan="7" style="color:#ef4444;">Search failed: ' + escapeHtml(err.message) + '</td></tr>';
+          document.getElementById('search-meta').textContent = '';
+          document.getElementById('search-paging').innerHTML = '';
+        }
+      }
+
+      async function loadConflictsStats() {
+        try {
+          var res = await fetch('/api/v2/conflicts/stats', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var s = await res.json();
+          document.getElementById('conflicts-stats').innerHTML =
+            '<span>Unresolved: <strong>' + (s.total_unresolved || 0) + '</strong></span>' +
+            '<span>IP Changes: <strong>' + ((s.by_type && s.by_type.ip_user_change) || 0) + '</strong></span>' +
+            '<span>MAC Conflicts: <strong>' + ((s.by_type && s.by_type.mac_ip_conflict) || 0) + '</strong></span>' +
+            '<span>Duplicate MACs: <strong>' + ((s.by_type && s.by_type.duplicate_mac) || 0) + '</strong></span>';
+        } catch (e) {
+          document.getElementById('conflicts-stats').innerHTML = '<span class="muted">No data available.</span>';
+        }
+      }
+
+      function renderConflictsPaging(page, perPage, total) {
+        var totalPages = Math.ceil(total / perPage) || 1;
+        var el = document.getElementById('conflicts-paging');
+        var html = 'Page ' + page + ' of ' + totalPages + ' (' + total + ' conflicts) &nbsp;';
+        if (page > 1) html += '<button class="btn btn-sm" onclick="loadConflicts(' + (page - 1) + ')">← Prev</button> ';
+        if (page < totalPages) html += '<button class="btn btn-sm" onclick="loadConflicts(' + (page + 1) + ')">Next →</button>';
+        el.innerHTML = html;
+      }
+
+      async function loadConflicts(page) {
+        conflictsCurrentPage = page || 1;
+        var type = document.getElementById('conflict-type').value;
+        var severity = document.getElementById('conflict-severity').value;
+        var resolved = document.getElementById('conflict-resolved').value;
+        var params = new URLSearchParams({ page: String(conflictsCurrentPage), limit: '50' });
+        if (type) params.set('type', type);
+        if (severity) params.set('severity', severity);
+        if (resolved !== '') params.set('resolved', resolved);
+
+        try {
+          var res = await fetch('/api/v2/conflicts?' + params.toString(), { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var data = await res.json();
+          var rows = data.data || [];
+          var body = document.getElementById('conflicts-body');
+          if (!rows.length) {
+            body.innerHTML = '<tr><td colspan="8" class="muted">No data available.</td></tr>';
+          } else {
+            body.innerHTML = rows.map(function (c) {
+              var userPair = (c.user_old || '-') + ' → ' + (c.user_new || '-');
+              var canResolve = currentUser && currentUser.role !== 'Viewer' && !c.resolved_at;
+              var action = canResolve
+                ? '<button class="btn btn-sm" onclick="resolveConflict(' + c.id + ')">Resolve</button>'
+                : '<span class="muted">' + (c.resolved_at ? 'Resolved' : '-') + '</span>';
+              return '<tr>' +
+                '<td><span class="' + badgeClass(c.severity) + '">' + escapeHtml(c.severity) + '</span></td>' +
+                '<td>' + escapeHtml(c.conflict_type || '-') + '</td>' +
+                '<td>' + (c.ip ? '<a href="#" class="ip-link" onclick="openTimeline(\'ip\', \'' + escJs(c.ip) + '\');return false;">' + escapeHtml(c.ip) + '</a>' : '-') + '</td>' +
+                '<td>' + escapeHtml(userPair) + '</td>' +
+                '<td>' + escapeHtml(c.mac || '-') + '</td>' +
+                '<td>' + escapeHtml(c.source || '-') + '</td>' +
+                '<td>' + escapeHtml(new Date(c.detected_at).toLocaleString()) + '</td>' +
+                '<td>' + action + '</td>' +
+                '</tr>';
+            }).join('');
+          }
+          renderConflictsPaging(data.page || conflictsCurrentPage, data.limit || 50, data.total || 0);
+        } catch (err) {
+          document.getElementById('conflicts-body').innerHTML =
+            '<tr><td colspan="8" class="muted">No data available.</td></tr>';
+          document.getElementById('conflicts-paging').innerHTML = '';
+        }
+      }
+
+      async function resolveConflict(id) {
+        var note = window.prompt('Resolution note (optional):', '') || '';
+        try {
+          var res = await fetch('/api/v2/conflicts/' + encodeURIComponent(id) + '/resolve', {
+            method: 'POST',
+            headers: mutHeaders(),
+            credentials: 'include',
+            body: JSON.stringify({ note: note || null })
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          loadConflictsStats();
+          loadConflicts(conflictsCurrentPage);
+        } catch (err) {
+          alert('Resolve failed: ' + err.message);
+        }
+      }
+
+      async function loadAlertStats() {
+        try {
+          var res = await fetch('/api/v2/alerts/stats', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var s = await res.json();
+          var critical = (s.by_severity_24h && s.by_severity_24h.critical) || 0;
+          var warning = (s.by_severity_24h && s.by_severity_24h.warning) || 0;
+          var success = Math.round((s.webhook_success_rate_24h || 0) * 100);
+          document.getElementById('alerts-stats').innerHTML =
+            '<span>Rules: <strong>' + (s.total_rules || 0) + '</strong> (' + (s.enabled_rules || 0) + ' enabled)</span>' +
+            '<span>Fired 24h: <strong>' + (s.total_fired_24h || 0) + '</strong></span>' +
+            '<span>Critical: <strong>' + critical + '</strong></span>' +
+            '<span>Warning: <strong>' + warning + '</strong></span>' +
+            '<span>Webhook success: <strong>' + success + '%</strong></span>';
+        } catch (e) {
+          document.getElementById('alerts-stats').innerHTML = '<span class="muted">No data available.</span>';
+        }
+      }
+
+      function showAddRuleForm() {
+        editingRuleId = null;
+        document.getElementById('alert-rule-form').style.display = '';
+      }
+
+      function hideRuleForm() {
+        editingRuleId = null;
+        document.getElementById('alert-rule-form').style.display = 'none';
+      }
+
+      async function loadAlertRules() {
+        if (!currentUser || currentUser.role !== 'Admin') return;
+        try {
+          var res = await fetch('/api/v2/alerts/rules', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var data = await res.json();
+          var rules = data.rules || [];
+          var body = document.getElementById('rules-body');
+          if (!rules.length) {
+            body.innerHTML = '<tr><td colspan="7" class="muted">No rules configured.</td></tr>';
+            return;
+          }
+          body.innerHTML = rules.map(function (r) {
+            return '<tr>' +
+              '<td><label class="toggle"><input type="checkbox" ' + (r.enabled ? 'checked' : '') + ' onchange="toggleRuleEnabled(' + r.id + ', this.checked)"><span class="toggle-slider"></span></label></td>' +
+              '<td>' + escapeHtml(r.name) + '</td>' +
+              '<td>' + escapeHtml(r.rule_type) + '</td>' +
+              '<td><span class="' + badgeClass(r.severity) + '">' + escapeHtml(r.severity) + '</span></td>' +
+              '<td>' + (r.action_webhook_url ? '<span class="muted">configured</span>' : '<span class="muted">none</span>') + '</td>' +
+              '<td>' + escapeHtml(r.cooldown_seconds) + 's</td>' +
+              '<td><button class="btn btn-sm" onclick="deleteAlertRule(' + r.id + ')">Delete</button></td>' +
+              '</tr>';
+          }).join('');
+        } catch (err) {
+          document.getElementById('rules-body').innerHTML =
+            '<tr><td colspan="7" class="muted">No data available.</td></tr>';
+        }
+      }
+
+      async function saveAlertRule() {
+        var payload = {
+          name: document.getElementById('rule-name').value.trim(),
+          rule_type: document.getElementById('rule-type').value,
+          severity: document.getElementById('rule-severity').value,
+          conditions: null,
+          action_webhook_url: document.getElementById('rule-webhook').value.trim() || null,
+          action_webhook_headers: null,
+          action_log: true,
+          cooldown_seconds: parseInt(document.getElementById('rule-cooldown').value || '300', 10)
+        };
+        try {
+          var url = '/api/v2/alerts/rules';
+          var method = 'POST';
+          if (editingRuleId) {
+            url = '/api/v2/alerts/rules/' + encodeURIComponent(editingRuleId);
+            method = 'PUT';
+          }
+          var res = await fetch(url, {
+            method: method,
+            headers: mutHeaders(),
+            credentials: 'include',
+            body: JSON.stringify(payload)
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          hideRuleForm();
+          document.getElementById('rule-name').value = '';
+          document.getElementById('rule-webhook').value = '';
+          document.getElementById('rule-cooldown').value = '300';
+          loadAlertRules();
+          loadAlertStats();
+        } catch (err) {
+          alert('Save failed: ' + err.message);
+        }
+      }
+
+      async function toggleRuleEnabled(id, enabled) {
+        try {
+          var res = await fetch('/api/v2/alerts/rules/' + encodeURIComponent(id), {
+            method: 'PUT',
+            headers: mutHeaders(),
+            credentials: 'include',
+            body: JSON.stringify({ enabled: enabled })
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          loadAlertRules();
+          loadAlertStats();
+        } catch (err) {
+          alert('Update failed: ' + err.message);
+        }
+      }
+
+      async function deleteAlertRule(id) {
+        if (!confirm('Delete this rule?')) return;
+        try {
+          var res = await fetch('/api/v2/alerts/rules/' + encodeURIComponent(id), {
+            method: 'DELETE',
+            headers: mutHeaders(),
+            credentials: 'include'
+          });
+          if (!res.ok && res.status !== 204) throw new Error('HTTP ' + res.status);
+          loadAlertRules();
+          loadAlertStats();
+        } catch (err) {
+          alert('Delete failed: ' + err.message);
+        }
+      }
+
+      function renderAlertHistoryPaging(page, perPage, total) {
+        var totalPages = Math.ceil(total / perPage) || 1;
+        var el = document.getElementById('alert-history-paging');
+        var html = 'Page ' + page + ' of ' + totalPages + ' (' + total + ' alerts) &nbsp;';
+        if (page > 1) html += '<button class="btn btn-sm" onclick="loadAlertHistory(' + (page - 1) + ')">← Prev</button> ';
+        if (page < totalPages) html += '<button class="btn btn-sm" onclick="loadAlertHistory(' + (page + 1) + ')">Next →</button>';
+        el.innerHTML = html;
+      }
+
+      async function loadAlertHistory(page) {
+        alertHistoryCurrentPage = page || 1;
+        var sev = document.getElementById('alert-hist-severity').value;
+        var type = document.getElementById('alert-hist-type').value;
+        var params = new URLSearchParams({ page: String(alertHistoryCurrentPage), limit: '50' });
+        if (sev) params.set('severity', sev);
+        if (type) params.set('rule_type', type);
+
+        try {
+          var res = await fetch('/api/v2/alerts/history?' + params.toString(), { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var data = await res.json();
+          var rows = data.data || [];
+          var body = document.getElementById('alert-history-body');
+          if (!rows.length) {
+            body.innerHTML = '<tr><td colspan="7" class="muted">No data available.</td></tr>';
+          } else {
+            body.innerHTML = rows.map(function (r) {
+              return '<tr>' +
+                '<td><span class="' + badgeClass(r.severity) + '">' + escapeHtml(r.severity) + '</span></td>' +
+                '<td>' + escapeHtml(r.rule_name) + '</td>' +
+                '<td>' + escapeHtml(r.rule_type) + '</td>' +
+                '<td>' + (r.ip ? '<a href="#" class="ip-link" onclick="openTimeline(\'ip\', \'' + escJs(r.ip) + '\');return false;">' + escapeHtml(r.ip) + '</a>' : '-') + '</td>' +
+                '<td>' + escapeHtml(r.user_name || '-') + '</td>' +
+                '<td>' + webhookStatusView(r.webhook_status) + '</td>' +
+                '<td>' + escapeHtml(new Date(r.fired_at).toLocaleString()) + '</td>' +
+                '</tr>';
+            }).join('');
+          }
+          renderAlertHistoryPaging(data.page || alertHistoryCurrentPage, data.limit || 50, data.total || 0);
+        } catch (err) {
+          document.getElementById('alert-history-body').innerHTML =
+            '<tr><td colspan="7" class="muted">No data available.</td></tr>';
+          document.getElementById('alert-history-paging').innerHTML = '';
+        }
+      }
+
+      async function openTimeline(type, value) {
+        var panel = document.getElementById('timeline-panel');
+        var title = document.getElementById('timeline-title');
+        var content = document.getElementById('timeline-content');
+        panel.style.display = 'block';
+        panel.classList.remove('timeline-enter');
+        void panel.offsetWidth;
+        panel.classList.add('timeline-enter');
+        title.textContent = 'Timeline :: ' + type + ' :: ' + value;
+        content.innerHTML = '<span class="muted">Loading...</span>';
+        try {
+          var res = await fetch('/api/v2/timeline/' + encodeURIComponent(type) + '/' + encodeURIComponent(value), {
+            credentials: 'include'
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var data = await res.json();
+          if (type === 'ip') {
+            var mapping = data.current_mapping;
+            var html = '';
+            html += '<div class="panel" style="padding:12px;margin-bottom:12px;">';
+            html += '<div style="margin-bottom:8px;"><strong>Conflicts:</strong> <span class="' + badgeClass((data.conflicts_count || 0) > 0 ? 'warning' : 'info') + '">' + (data.conflicts_count || 0) + '</span></div>';
+            if (mapping) {
+              html += '<div><strong>User:</strong> <a href="#" class="ip-link" onclick="openTimeline(\'user\', \'' + escJs(mapping.user || '') + '\');return false;">' + escapeHtml(mapping.user || '-') + '</a></div>';
+              html += '<div><strong>MAC:</strong> ' + escapeHtml(mapping.mac || '-') + '</div>';
+              html += '<div><strong>Source:</strong> ' + escapeHtml(mapping.source || '-') + '</div>';
+              html += '<div><strong>Last Seen:</strong> ' + escapeHtml(new Date(mapping.last_seen).toLocaleString()) + '</div>';
+            } else {
+              html += '<div class="muted">No current mapping.</div>';
+            }
+            html += '</div>';
+
+            html += '<h3 class="section-title">User changes</h3>';
+            if (data.user_changes && data.user_changes.length) {
+              html += '<ul style="padding-left:16px;margin-top:6px;">' +
+                data.user_changes.map(function (c) {
+                  return '<li><a href="#" class="ip-link" onclick="openTimeline(\'user\', \'' + escJs(c.from_user) + '\');return false;">' + escapeHtml(c.from_user) +
+                    '</a> → <a href="#" class="ip-link" onclick="openTimeline(\'user\', \'' + escJs(c.to_user) + '\');return false;">' + escapeHtml(c.to_user) +
+                    '</a> <span class="muted">(' + escapeHtml(new Date(c.changed_at).toLocaleString()) + ', ' + escapeHtml(c.source || '-') + ')</span></li>';
+                }).join('') + '</ul>';
+            } else {
+              html += '<div class="muted">No user transitions.</div>';
+            }
+
+            html += '<h3 class="section-title">Recent events</h3>';
+            if (data.events && data.events.data && data.events.data.length) {
+              html += '<ul style="padding-left:16px;margin-top:6px;">' +
+                data.events.data.map(function (e) {
+                  return '<li><a href="#" class="ip-link" onclick="openTimeline(\'user\', \'' + escJs(e.user) + '\');return false;">' + escapeHtml(e.user) +
+                    '</a> <span class="muted">(' + escapeHtml(e.source || '-') + ', ' + escapeHtml(new Date(e.timestamp).toLocaleString()) + ')</span></li>';
+                }).join('') + '</ul>';
+            } else {
+              html += '<div class="muted">No events.</div>';
+            }
+            content.innerHTML = html;
+          } else if (type === 'user') {
+            var html2 = '<h3 class="section-title">Active mappings</h3>';
+            if (data.active_mappings && data.active_mappings.length) {
+              html2 += '<ul style="padding-left:16px;margin-top:6px;">' +
+                data.active_mappings.map(function (m) {
+                  return '<li><a href="#" class="ip-link" onclick="openTimeline(\'ip\', \'' + escJs(m.ip) + '\');return false;">' + escapeHtml(m.ip) + '</a> ' +
+                    '<span class="muted">(' + escapeHtml(m.source || '-') + ', ' + escapeHtml(timeAgo(m.last_seen)) + ')</span></li>';
+                }).join('') + '</ul>';
+            } else {
+              html2 += '<div class="muted">No active mappings.</div>';
+            }
+            html2 += '<h3 class="section-title">IP addresses used</h3>';
+            if (data.ip_addresses_used && data.ip_addresses_used.length) {
+              html2 += '<div style="display:flex;flex-wrap:wrap;gap:6px;">' +
+                data.ip_addresses_used.map(function (ip) {
+                  return '<a href="#" class="ip-link" onclick="openTimeline(\'ip\', \'' + escJs(ip) + '\');return false;">' + escapeHtml(ip) + '</a>';
+                }).join(' ') + '</div>';
+            } else {
+              html2 += '<div class="muted">No IP history.</div>';
+            }
+            html2 += '<h3 class="section-title">Recent events</h3>';
+            if (data.events && data.events.data && data.events.data.length) {
+              html2 += '<ul style="padding-left:16px;margin-top:6px;">' +
+                data.events.data.map(function (e) {
+                  return '<li><a href="#" class="ip-link" onclick="openTimeline(\'ip\', \'' + escJs(e.ip) + '\');return false;">' + escapeHtml(e.ip) +
+                    '</a> <span class="muted">(' + escapeHtml(e.source || '-') + ', ' + escapeHtml(new Date(e.timestamp).toLocaleString()) + ')</span></li>';
+                }).join('') + '</ul>';
+            } else {
+              html2 += '<div class="muted">No events.</div>';
+            }
+            content.innerHTML = html2;
+          } else {
+            content.innerHTML = '<pre style="white-space:pre-wrap;">' + escapeHtml(JSON.stringify(data, null, 2)) + '</pre>';
+          }
+        } catch (err) {
+          content.innerHTML = '<span style="color:#ef4444;">Failed to load timeline: ' + escapeHtml(err.message) + '</span>';
+        }
+      }
+
+      function closeTimeline() {
+        document.getElementById('timeline-panel').style.display = 'none';
+      }
 
       async function loadSycopeConfig() {
         try {
@@ -651,11 +1466,6 @@
         el.textContent = (ok ? 'OK: ' : 'Error: ') + message;
       }
 
-      /* ── Audit Log tab ─────────────────────────────── */
-
-      var auditCurrentPage = 1;
-      var auditRefreshTimer = null;
-
       async function loadAuditLogs(page) {
         auditCurrentPage = page || 1;
         var action = document.getElementById('audit-filter-action').value.trim();
@@ -685,7 +1495,7 @@
             '<span>Total: <strong>' + s.total + '</strong></span>' +
             '<span>Last 24h: <strong>' + s.last_24h + '</strong></span>' +
             '<span>Last 7d: <strong>' + s.last_7d + '</strong></span>';
-        } catch (e) { /* ignore */ }
+        } catch (e) {}
       }
 
       function renderAuditTable(entries) {
@@ -742,6 +1552,8 @@
         html += '</div></div>';
         el.innerHTML = html;
       }
+
+      initAuth();
     </script>
   </body>
 </html>

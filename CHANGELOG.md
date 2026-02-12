@@ -13,6 +13,11 @@
 - **Removed unused `cookie` crate** dependency from `apps/web/Cargo.toml`.
 
 ### Added
+- **Dashboard v1.5 refresh (frontend):**
+  - Reworked `index.html` tabs and navigation: Mappings, Search, Conflicts, Alerts, Status, Sycope, Audit.
+  - Upgraded Mappings tab to `/api/v2/search` with filters, paging, exports, and 30s refresh cadence.
+  - Added Search tab (unified v2 search), Conflicts tab (stats/filter/resolve), and Alerts tab (stats/history + admin rule CRUD UI).
+  - Added timeline slide-in panel with cross-navigation from clickable IP/user links.
 - **Alerts & webhooks (v2):**
   - Added migration `0012_add_alerts_tables.sql` with `alert_rules` and `alert_history`.
   - Added engine alert module (`apps/engine/src/alerts.rs`) with rule loading, event evaluation, cooldown checks, and async webhook delivery.
