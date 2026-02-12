@@ -41,7 +41,10 @@ impl RateLimiter {
         let now = Instant::now();
         let window = std::time::Duration::from_secs(self.window_secs);
 
-        let mut entry = self.limits.entry(key.to_string()).or_insert_with(|| (0, now));
+        let mut entry = self
+            .limits
+            .entry(key.to_string())
+            .or_insert_with(|| (0, now));
         let (count, start) = entry.value_mut();
 
         if now.duration_since(*start) >= window {
@@ -61,6 +64,7 @@ impl RateLimiter {
     pub fn cleanup(&self) {
         let cutoff = std::time::Duration::from_secs(self.window_secs * 2);
         let now = Instant::now();
-        self.limits.retain(|_, (_, start)| now.duration_since(*start) < cutoff);
+        self.limits
+            .retain(|_, (_, start)| now.duration_since(*start) < cutoff);
     }
 }

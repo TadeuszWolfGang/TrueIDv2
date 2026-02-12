@@ -38,12 +38,20 @@ pub async fn list_keys(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
     let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(StatusCode::SERVICE_UNAVAILABLE, error::SERVICE_UNAVAILABLE, "Database unavailable")
+        ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error::SERVICE_UNAVAILABLE,
+            "Database unavailable",
+        )
     })?;
 
     let keys = db.list_api_keys().await.map_err(|e| {
         warn!(error = %e, "Failed to list API keys");
-        ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, error::INTERNAL_ERROR, "Failed to list API keys")
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error::INTERNAL_ERROR,
+            "Failed to list API keys",
+        )
     })?;
 
     Ok(Json(keys))
@@ -59,25 +67,36 @@ pub async fn create_key(
 ) -> Result<impl IntoResponse, ApiError> {
     if body.description.is_empty() || body.description.len() > 200 {
         return Err(ApiError::new(
-            StatusCode::BAD_REQUEST, error::INVALID_INPUT,
+            StatusCode::BAD_REQUEST,
+            error::INVALID_INPUT,
             "Description must be 1-200 characters",
-        ).with_request_id(&auth.request_id));
+        )
+        .with_request_id(&auth.request_id));
     }
 
     let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(StatusCode::SERVICE_UNAVAILABLE, error::SERVICE_UNAVAILABLE, "Database unavailable")
+        ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error::SERVICE_UNAVAILABLE,
+            "Database unavailable",
+        )
     })?;
 
-    let expires_at = body.expires_in_days.map(|days| {
-        chrono::Utc::now() + chrono::Duration::days(days)
-    });
+    let expires_at = body
+        .expires_in_days
+        .map(|days| chrono::Utc::now() + chrono::Duration::days(days));
 
-    let (raw_key, record) = db.create_api_key(
-        &body.description, body.role, auth.user_id, expires_at,
-    ).await.map_err(|e| {
-        warn!(error = %e, "Failed to create API key");
-        ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, error::INTERNAL_ERROR, "Failed to create API key")
-    })?;
+    let (raw_key, record) = db
+        .create_api_key(&body.description, body.role, auth.user_id, expires_at)
+        .await
+        .map_err(|e| {
+            warn!(error = %e, "Failed to create API key");
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error::INTERNAL_ERROR,
+                "Failed to create API key",
+            )
+        })?;
 
     let _ = db.write_audit_log(
         Some(auth.user_id), &auth.username, &auth.principal_type,
@@ -105,25 +124,41 @@ pub async fn revoke_key(
     Path(id): Path<i64>,
 ) -> Result<impl IntoResponse, ApiError> {
     let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(StatusCode::SERVICE_UNAVAILABLE, error::SERVICE_UNAVAILABLE, "Database unavailable")
+        ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error::SERVICE_UNAVAILABLE,
+            "Database unavailable",
+        )
     })?;
 
     let revoked = db.revoke_api_key(id).await.map_err(|e| {
         warn!(error = %e, "Failed to revoke API key");
-        ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, error::INTERNAL_ERROR, "Failed to revoke API key")
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error::INTERNAL_ERROR,
+            "Failed to revoke API key",
+        )
     })?;
 
     if !revoked {
-        return Err(ApiError::new(
-            StatusCode::NOT_FOUND, error::NOT_FOUND, "API key not found",
-        ).with_request_id(&auth.request_id));
+        return Err(
+            ApiError::new(StatusCode::NOT_FOUND, error::NOT_FOUND, "API key not found")
+                .with_request_id(&auth.request_id),
+        );
     }
 
-    let _ = db.write_audit_log(
-        Some(auth.user_id), &auth.username, &auth.principal_type,
-        "api_key_revoked", Some(&format!("api_key:{id}")),
-        None, None, Some(&auth.request_id),
-    ).await;
+    let _ = db
+        .write_audit_log(
+            Some(auth.user_id),
+            &auth.username,
+            &auth.principal_type,
+            "api_key_revoked",
+            Some(&format!("api_key:{id}")),
+            None,
+            None,
+            Some(&auth.request_id),
+        )
+        .await;
 
     Ok(StatusCode::OK)
 }

@@ -128,9 +128,7 @@ pub fn validate_token(config: &JwtConfig, token: &str) -> Result<Claims> {
 /// Returns: Set-Cookie header value string.
 pub fn build_auth_cookie(name: &str, token: &str, max_age_secs: i64, dev_mode: bool) -> String {
     let secure = if dev_mode { "" } else { "; Secure" };
-    format!(
-        "{name}={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={max_age_secs}{secure}"
-    )
+    format!("{name}={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={max_age_secs}{secure}")
 }
 
 /// Builds a Set-Cookie header that clears a cookie (Max-Age=0).
@@ -139,9 +137,7 @@ pub fn build_auth_cookie(name: &str, token: &str, max_age_secs: i64, dev_mode: b
 /// Returns: Set-Cookie header value string.
 pub fn build_clear_cookie(name: &str, dev_mode: bool) -> String {
     let secure = if dev_mode { "" } else { "; Secure" };
-    format!(
-        "{name}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0{secure}"
-    )
+    format!("{name}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0{secure}")
 }
 
 /// Builds a CSRF cookie (NOT HttpOnly — JS needs to read it).

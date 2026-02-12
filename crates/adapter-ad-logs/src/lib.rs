@@ -2,13 +2,13 @@
 
 use anyhow::{anyhow, Result};
 use chrono::Utc;
-use trueid_common::model::{IdentityEvent, SourceType};
 use serde_json::Value;
 use std::net::{IpAddr, SocketAddr};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::mpsc::Sender;
 use tracing::warn;
+use trueid_common::model::{IdentityEvent, SourceType};
 
 const MAX_PACKET_SIZE: usize = 8192;
 
@@ -127,7 +127,21 @@ fn parse_event(message: &[u8]) -> Result<Option<IdentityEvent>> {
     let trimmed = text.trim();
 
     if trimmed.starts_with('{') {
-        return parse_json_event(trimmed).map(|opt| opt.map(|(ip, user, raw)| IdentityEvent {
+        return parse_json_event(trimmed).map(|opt| {
+            opt.map(|(ip, user, raw)| IdentityEvent {
+                source: SourceType::AdLog,
+                ip,
+                user,
+                timestamp: Utc::now(),
+                raw_data: raw,
+                mac: None,
+                confidence_score: 90,
+            })
+        });
+    }
+
+    parse_text_event(trimmed).map(|opt| {
+        opt.map(|(ip, user, raw)| IdentityEvent {
             source: SourceType::AdLog,
             ip,
             user,
@@ -135,18 +149,8 @@ fn parse_event(message: &[u8]) -> Result<Option<IdentityEvent>> {
             raw_data: raw,
             mac: None,
             confidence_score: 90,
-        }));
-    }
-
-    parse_text_event(trimmed).map(|opt| opt.map(|(ip, user, raw)| IdentityEvent {
-        source: SourceType::AdLog,
-        ip,
-        user,
-        timestamp: Utc::now(),
-        raw_data: raw,
-        mac: None,
-        confidence_score: 90,
-    }))
+        })
+    })
 }
 
 /// Parses JSON syslog payload for AD log fields.
@@ -186,7 +190,8 @@ fn parse_text_event(payload: &str) -> Result<Option<(IpAddr, String, String)>> {
         return Ok(None);
     }
 
-    let ip = extract_text_value(payload, "IpAddress").ok_or_else(|| anyhow!("Missing IpAddress"))?;
+    let ip =
+        extract_text_value(payload, "IpAddress").ok_or_else(|| anyhow!("Missing IpAddress"))?;
     let user = extract_text_value(payload, "TargetUserName")
         .ok_or_else(|| anyhow!("Missing TargetUserName"))?;
     let ip_addr = ip.parse::<IpAddr>()?;
@@ -223,7 +228,9 @@ fn lookup_json_string(value: &Value, key: &str) -> Option<String> {
 /// Parameters: `value` - JSON document, `outer` - parent field, `inner` - child field.
 /// Returns: field value as string if present.
 fn lookup_json_nested_string(value: &Value, outer: &str, inner: &str) -> Option<String> {
-    value.get(outer).and_then(|obj| lookup_json_string(obj, inner))
+    value
+        .get(outer)
+        .and_then(|obj| lookup_json_string(obj, inner))
 }
 
 /// Extracts an integer field from JSON.
@@ -254,9 +261,9 @@ fn extract_text_value(payload: &str, key: &str) -> Option<String> {
     let mut start = 0;
     while let Some(found) = payload[start..].find(key) {
         let idx = start + found + key.len();
-        let mut chars = payload[idx..].chars();
+        let chars = payload[idx..].chars();
         let mut offset = 0;
-        while let Some(ch) = chars.next() {
+        for ch in chars {
             offset += ch.len_utf8();
             if ch == '=' || ch == ':' {
                 break;

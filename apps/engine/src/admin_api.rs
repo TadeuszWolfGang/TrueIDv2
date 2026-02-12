@@ -86,11 +86,20 @@ pub fn admin_router(state: EngineAdminState) -> Router {
         .route("/engine/status/agents", get(agents_list))
         .route("/engine/status/runtime-config", get(runtime_config))
         .route("/engine/config/ttl", get(get_ttl).put(set_ttl))
-        .route("/engine/config/source-priority", get(get_source_priority).put(set_source_priority))
-        .route("/engine/config/sycope", get(get_sycope_config).put(set_sycope_config))
+        .route(
+            "/engine/config/source-priority",
+            get(get_source_priority).put(set_source_priority),
+        )
+        .route(
+            "/engine/config/sycope",
+            get(get_sycope_config).put(set_sycope_config),
+        )
         .route("/engine/mappings", post(create_manual_mapping))
         .route("/engine/mappings/{ip}", delete(delete_mapping))
-        .layer(axum_mw::from_fn_with_state(state.clone(), service_token_guard))
+        .layer(axum_mw::from_fn_with_state(
+            state.clone(),
+            service_token_guard,
+        ))
         .with_state(state)
 }
 
@@ -179,7 +188,10 @@ struct TtlConfig {
 async fn get_ttl(State(s): State<EngineAdminState>) -> impl IntoResponse {
     let ttl = s.db.get_config_i64("stale_ttl_minutes", 5).await;
     let interval = s.db.get_config_i64("janitor_interval_secs", 60).await;
-    Json(TtlConfig { stale_ttl_minutes: ttl, janitor_interval_secs: interval })
+    Json(TtlConfig {
+        stale_ttl_minutes: ttl,
+        janitor_interval_secs: interval,
+    })
 }
 
 async fn set_ttl(
@@ -187,14 +199,31 @@ async fn set_ttl(
     Json(body): Json<TtlConfig>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     if !(1..=1440).contains(&body.stale_ttl_minutes) {
-        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "stale_ttl_minutes must be 1..1440"}))));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "stale_ttl_minutes must be 1..1440"})),
+        ));
     }
     if !(10..=3600).contains(&body.janitor_interval_secs) {
-        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "janitor_interval_secs must be 10..3600"}))));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "janitor_interval_secs must be 10..3600"})),
+        ));
     }
-    let _ = s.db.set_config("stale_ttl_minutes", &body.stale_ttl_minutes.to_string()).await;
-    let _ = s.db.set_config("janitor_interval_secs", &body.janitor_interval_secs.to_string()).await;
-    info!(ttl = body.stale_ttl_minutes, interval = body.janitor_interval_secs, "TTL config updated");
+    let _ =
+        s.db.set_config("stale_ttl_minutes", &body.stale_ttl_minutes.to_string())
+            .await;
+    let _ =
+        s.db.set_config(
+            "janitor_interval_secs",
+            &body.janitor_interval_secs.to_string(),
+        )
+        .await;
+    info!(
+        ttl = body.stale_ttl_minutes,
+        interval = body.janitor_interval_secs,
+        "TTL config updated"
+    );
     Ok(Json(body))
 }
 
@@ -227,7 +256,10 @@ async fn get_source_priority(State(s): State<EngineAdminState>) -> impl IntoResp
         SourcePriorityEntry {
             name: "DhcpLease".into(),
             priority: s.db.get_config_i64("source_priority_dhcplease", 1).await,
-            default_confidence: s.db.get_config_i64("default_confidence_dhcplease", 60).await,
+            default_confidence: s
+                .db
+                .get_config_i64("default_confidence_dhcplease", 60)
+                .await,
         },
         SourcePriorityEntry {
             name: "Manual".into(),
@@ -243,16 +275,24 @@ async fn set_source_priority(
     Json(body): Json<SourcePriorityResponse>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     if body.sources.len() != 4 {
-        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "exactly 4 sources required"}))));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "exactly 4 sources required"})),
+        ));
     }
     for src in &body.sources {
         if !(0..=10).contains(&src.priority) || !(0..=100).contains(&src.default_confidence) {
-            return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": format!("invalid values for {}", src.name)}))));
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"error": format!("invalid values for {}", src.name)})),
+            ));
         }
         let key_p = format!("source_priority_{}", src.name.to_lowercase());
         let key_c = format!("default_confidence_{}", src.name.to_lowercase());
         let _ = s.db.set_config(&key_p, &src.priority.to_string()).await;
-        let _ = s.db.set_config(&key_c, &src.default_confidence.to_string()).await;
+        let _ =
+            s.db.set_config(&key_c, &src.default_confidence.to_string())
+                .await;
     }
     info!("Source priority config updated");
     Ok(Json(body))
@@ -272,14 +312,23 @@ async fn create_manual_mapping(
     State(s): State<EngineAdminState>,
     Json(body): Json<CreateMappingRequest>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
-    let ip: IpAddr = body.ip.parse().map_err(|_|
-        (StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "invalid IP address"})))
-    )?;
+    let ip: IpAddr = body.ip.parse().map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "invalid IP address"})),
+        )
+    })?;
     if body.user.trim().is_empty() {
-        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "user must not be empty"}))));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": "user must not be empty"})),
+        ));
     }
     let confidence = body.confidence_score.unwrap_or(100);
-    let vendor = body.mac.as_deref().and_then(|m| crate::resolve_vendor(m, &s.vendors));
+    let vendor = body
+        .mac
+        .as_deref()
+        .and_then(|m| crate::resolve_vendor(m, &s.vendors));
     let event = IdentityEvent {
         source: SourceType::Manual,
         ip,
@@ -289,9 +338,14 @@ async fn create_manual_mapping(
         mac: body.mac.clone(),
         confidence_score: confidence,
     };
-    s.db.upsert_mapping(event, vendor.as_deref()).await.map_err(|_|
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"error": "database write failed"})))
-    )?;
+    s.db.upsert_mapping(event, vendor.as_deref())
+        .await
+        .map_err(|_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "database write failed"})),
+            )
+        })?;
     info!(ip = %ip, user = %body.user, "Manual mapping created");
     let mapping = s.db.get_mapping(&ip.to_string()).await.ok().flatten();
     Ok((StatusCode::CREATED, Json(mapping)))
@@ -317,14 +371,52 @@ async fn delete_mapping(
 
 async fn get_sycope_config(State(s): State<EngineAdminState>) -> impl IntoResponse {
     let db = &s.db;
-    let enabled = db.get_config("sycope_enabled").await.ok().flatten().unwrap_or_default() == "true";
-    let host = db.get_config("sycope_host").await.ok().flatten().unwrap_or_default();
-    let login = db.get_config("sycope_login").await.ok().flatten().unwrap_or_default();
-    let pass_set = db.get_config("sycope_pass").await.ok().flatten().map(|p| !p.is_empty()).unwrap_or(false);
-    let lookup = db.get_config("sycope_lookup_name").await.ok().flatten().unwrap_or_else(|| "TrueID_Enrichment".into());
+    let enabled = db
+        .get_config("sycope_enabled")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default()
+        == "true";
+    let host = db
+        .get_config("sycope_host")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let login = db
+        .get_config("sycope_login")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    let pass_set = db
+        .get_config("sycope_pass")
+        .await
+        .ok()
+        .flatten()
+        .map(|p| !p.is_empty())
+        .unwrap_or(false);
+    let lookup = db
+        .get_config("sycope_lookup_name")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "TrueID_Enrichment".into());
     let interval = db.get_config_i64("sycope_sync_interval_seconds", 300).await;
-    let evt_idx = db.get_config("sycope_enable_event_index").await.ok().flatten().unwrap_or_default() == "true";
-    let idx_name = db.get_config("sycope_index_name").await.ok().flatten().unwrap_or_else(|| "trueid_events".into());
+    let evt_idx = db
+        .get_config("sycope_enable_event_index")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default()
+        == "true";
+    let idx_name = db
+        .get_config("sycope_index_name")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "trueid_events".into());
     let sync = db.get_sync_status("sycope").await.ok().flatten();
 
     Json(serde_json::json!({
@@ -357,14 +449,36 @@ async fn set_sycope_config(
     Json(body): Json<SycopeConfigRequest>,
 ) -> impl IntoResponse {
     let db = &s.db;
-    if let Some(v) = body.enabled { let _ = db.set_config("sycope_enabled", &v.to_string()).await; }
-    if let Some(ref v) = body.sycope_host { let _ = db.set_config("sycope_host", v).await; }
-    if let Some(ref v) = body.sycope_login { let _ = db.set_config("sycope_login", v).await; }
-    if let Some(ref v) = body.sycope_pass { if !v.is_empty() { let _ = db.set_config("sycope_pass", v).await; } }
-    if let Some(ref v) = body.lookup_name { let _ = db.set_config("sycope_lookup_name", v).await; }
-    if let Some(v) = body.sync_interval_seconds { let _ = db.set_config("sycope_sync_interval_seconds", &v.to_string()).await; }
-    if let Some(v) = body.enable_event_index { let _ = db.set_config("sycope_enable_event_index", &v.to_string()).await; }
-    if let Some(ref v) = body.index_name { let _ = db.set_config("sycope_index_name", v).await; }
+    if let Some(v) = body.enabled {
+        let _ = db.set_config("sycope_enabled", &v.to_string()).await;
+    }
+    if let Some(ref v) = body.sycope_host {
+        let _ = db.set_config("sycope_host", v).await;
+    }
+    if let Some(ref v) = body.sycope_login {
+        let _ = db.set_config("sycope_login", v).await;
+    }
+    if let Some(ref v) = body.sycope_pass {
+        if !v.is_empty() {
+            let _ = db.set_config("sycope_pass", v).await;
+        }
+    }
+    if let Some(ref v) = body.lookup_name {
+        let _ = db.set_config("sycope_lookup_name", v).await;
+    }
+    if let Some(v) = body.sync_interval_seconds {
+        let _ = db
+            .set_config("sycope_sync_interval_seconds", &v.to_string())
+            .await;
+    }
+    if let Some(v) = body.enable_event_index {
+        let _ = db
+            .set_config("sycope_enable_event_index", &v.to_string())
+            .await;
+    }
+    if let Some(ref v) = body.index_name {
+        let _ = db.set_config("sycope_index_name", v).await;
+    }
     info!("Sycope config updated");
     get_sycope_config(State(s)).await
 }

@@ -14,7 +14,7 @@ mod transport;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use config::{AgentMode, resolve_hostname};
+use config::{resolve_hostname, AgentMode};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -145,7 +145,12 @@ async fn run_agent(config_path: &PathBuf, dry_run: bool) -> Result<()> {
                     match ad_events::parse_ad_xml(&xml) {
                         Ok(ev) => {
                             let payload = syslog::format_ad_event(
-                                &hn, &ev.user, &ev.ip, &ev.port, ev.event_id, &ev.status,
+                                &hn,
+                                &ev.user,
+                                &ev.ip,
+                                &ev.port,
+                                ev.event_id,
+                                &ev.status,
                             );
                             let frame = syslog::frame_octet_counting(&payload);
                             let _ = sender.send(frame).await;
@@ -167,7 +172,11 @@ async fn run_agent(config_path: &PathBuf, dry_run: bool) -> Result<()> {
                     match dhcp_events::parse_dhcp_xml(&xml) {
                         Ok(ev) => {
                             let payload = syslog::format_dhcp_event(
-                                &hn, &ev.ip, &ev.mac, &ev.hostname, ev.lease_duration,
+                                &hn,
+                                &ev.ip,
+                                &ev.mac,
+                                &ev.hostname,
+                                ev.lease_duration,
                             );
                             let frame = syslog::frame_octet_counting(&payload);
                             let _ = sender.send(frame).await;
@@ -202,16 +211,25 @@ async fn run_agent(config_path: &PathBuf, dry_run: bool) -> Result<()> {
 /// Parameters: `cfg` - agent config, `hostname` - resolved hostname.
 /// Returns: `Ok(())` after Ctrl+C.
 async fn run_dry(_cfg: config::AgentConfig, hostname: &str) -> Result<()> {
-    let sample_ad = syslog::format_ad_event(
-        hostname, "jan.kowalski", "10.0.1.50", "52431", 4768, "0x0",
-    );
+    let sample_ad =
+        syslog::format_ad_event(hostname, "jan.kowalski", "10.0.1.50", "52431", 4768, "0x0");
     let sample_dhcp = syslog::format_dhcp_event(
-        hostname, "10.0.1.50", "AA:BB:CC:DD:EE:FF", "WORKSTATION01", 86400,
+        hostname,
+        "10.0.1.50",
+        "AA:BB:CC:DD:EE:FF",
+        "WORKSTATION01",
+        86400,
     );
     info!("Sample AD syslog:   {}", sample_ad);
     info!("Sample DHCP syslog: {}", sample_dhcp);
-    info!("Framed AD:   {:?}", String::from_utf8_lossy(&syslog::frame_octet_counting(&sample_ad)));
-    info!("Framed DHCP: {:?}", String::from_utf8_lossy(&syslog::frame_octet_counting(&sample_dhcp)));
+    info!(
+        "Framed AD:   {:?}",
+        String::from_utf8_lossy(&syslog::frame_octet_counting(&sample_ad))
+    );
+    info!(
+        "Framed DHCP: {:?}",
+        String::from_utf8_lossy(&syslog::frame_octet_counting(&sample_dhcp))
+    );
 
     info!("Dry-run complete. Press Ctrl+C to exit.");
     tokio::signal::ctrl_c().await?;

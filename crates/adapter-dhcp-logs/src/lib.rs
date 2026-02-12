@@ -2,13 +2,13 @@
 
 use anyhow::{anyhow, Result};
 use chrono::Utc;
-use trueid_common::model::{IdentityEvent, SourceType};
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::net::{IpAddr, SocketAddr};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::Sender;
 use tracing::warn;
+use trueid_common::model::{IdentityEvent, SourceType};
 
 const MAX_PACKET_SIZE: usize = 4096;
 const DEFAULT_CONFIDENCE: u8 = 60;
@@ -93,7 +93,9 @@ fn parse_event(message: &[u8]) -> Result<Option<IdentityEvent>> {
 
     let ip = ip_text.parse::<IpAddr>()?;
     let mac = normalize_mac(mac_text);
-    let hostname = captures.name("hostname").map(|value| value.as_str().to_string());
+    let hostname = captures
+        .name("hostname")
+        .map(|value| value.as_str().to_string());
     let user = hostname.unwrap_or_else(|| mac.clone());
 
     Ok(Some(IdentityEvent {

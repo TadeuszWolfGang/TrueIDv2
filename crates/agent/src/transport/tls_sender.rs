@@ -28,6 +28,16 @@ impl SenderStats {
     }
 }
 
+impl Default for SenderStats {
+    /// Creates default zeroed counters.
+    ///
+    /// Parameters: none.
+    /// Returns: `SenderStats` initialized with zero values.
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Runs the sender loop: reads framed messages from `rx`, sends over TLS,
 /// buffers on failure, reconnects with exponential backoff.
 ///
@@ -86,7 +96,9 @@ pub async fn run_sender(
             if let Err(err) = s.write_all(&data).await {
                 warn!(error = %err, "TLS write failed, buffering");
                 buffer.push(data);
-                stats.events_dropped.store(buffer.dropped(), Ordering::Relaxed);
+                stats
+                    .events_dropped
+                    .store(buffer.dropped(), Ordering::Relaxed);
                 stream = None; // Force reconnect on next iteration.
             } else {
                 stats.events_sent.fetch_add(1, Ordering::Relaxed);

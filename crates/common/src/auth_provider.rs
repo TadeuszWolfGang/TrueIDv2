@@ -5,8 +5,8 @@
 //! `LdapAuthProvider` is a stub for future LDAP/AD integration.
 //! `AuthProviderChain` routes authentication to the correct provider by auth_source.
 
-use async_trait::async_trait;
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 
@@ -111,11 +111,14 @@ impl AuthProvider for LocalAuthProvider {
     }
 
     async fn change_password(&self, user_id: i64, current: &str, new_pass: &str) -> Result<()> {
-        let user = self.db.get_user_by_id(user_id).await?
+        let user = self
+            .db
+            .get_user_by_id(user_id)
+            .await?
             .ok_or_else(|| anyhow::anyhow!("User not found"))?;
 
-        let valid = verify_password(current, &user.password_hash, self.db.pepper())
-            .unwrap_or(false);
+        let valid =
+            verify_password(current, &user.password_hash, self.db.pepper()).unwrap_or(false);
         if !valid {
             anyhow::bail!("Current password is incorrect");
         }
@@ -210,7 +213,10 @@ impl AuthProviderChain {
         for provider in &self.providers {
             if provider.handles_source() == auth_source {
                 if !provider.supports_password_change() {
-                    anyhow::bail!("Password changes are not supported for '{}' accounts", auth_source);
+                    anyhow::bail!(
+                        "Password changes are not supported for '{}' accounts",
+                        auth_source
+                    );
                 }
                 return provider.change_password(user_id, current, new_pass).await;
             }

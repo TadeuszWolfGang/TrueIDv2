@@ -163,7 +163,9 @@ async fn test_session_listing() {
         .expect("Sessions request failed");
     assert_eq!(resp.status(), 200);
     let body: Value = resp.json().await.unwrap();
-    let sessions = body["sessions"].as_array().expect("sessions should be array");
+    let sessions = body["sessions"]
+        .as_array()
+        .expect("sessions should be array");
     assert!(sessions.len() >= 2, "Should have at least 2 sessions");
 }
 

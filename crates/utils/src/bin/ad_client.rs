@@ -21,8 +21,7 @@ fn build_payload() -> Vec<u8> {
 /// Parameters: none.
 /// Returns: `Ok(())` on success or an error.
 fn main() -> Result<()> {
-    let addr = env::var("AD_SYSLOG_SEND")
-        .unwrap_or_else(|_| DEFAULT_SYSLOG_ADDR.to_string());
+    let addr = env::var("AD_SYSLOG_SEND").unwrap_or_else(|_| DEFAULT_SYSLOG_ADDR.to_string());
     let server_addr: SocketAddr = addr.parse().context("parse syslog addr")?;
     let payload = build_payload();
     let socket = UdpSocket::bind("0.0.0.0:0").context("bind udp socket")?;

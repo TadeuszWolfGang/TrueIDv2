@@ -22,6 +22,10 @@ pub fn env_or_default(key: &str, default_value: &str) -> String {
 /// Parameters: `value` - value to parse, `default_value` - fallback string.
 /// Returns: parsed `SocketAddr` or an error.
 pub fn parse_socket_addr(value: &str, default_value: &str) -> Result<SocketAddr> {
-    let resolved = if value.is_empty() { default_value } else { value };
+    let resolved = if value.is_empty() {
+        default_value
+    } else {
+        value
+    };
     Ok(resolved.parse()?)
 }

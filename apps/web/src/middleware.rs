@@ -290,7 +290,10 @@ pub fn require_operator(user: &AuthUser) -> Result<(), ApiError> {
 
 /// Requires any authenticated role (Admin, Operator, or Viewer).
 pub fn require_viewer(user: &AuthUser) -> Result<(), ApiError> {
-    require_role(user, &[UserRole::Admin, UserRole::Operator, UserRole::Viewer])
+    require_role(
+        user,
+        &[UserRole::Admin, UserRole::Operator, UserRole::Viewer],
+    )
 }
 
 // ── Router-level role middleware layers ─────────────────────

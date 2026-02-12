@@ -48,9 +48,8 @@ pub fn parse_dhcp_xml(xml: &str) -> Result<DhcpEvent> {
                     "Data" if in_event_data => {
                         for attr in e.attributes().flatten() {
                             if attr.key.as_ref() == b"Name" {
-                                current_data_name = Some(
-                                    String::from_utf8_lossy(&attr.value).to_string(),
-                                );
+                                current_data_name =
+                                    Some(String::from_utf8_lossy(&attr.value).to_string());
                             }
                         }
                     }

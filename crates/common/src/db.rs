@@ -29,7 +29,11 @@ impl Db {
     /// `encryption_key` - optional AES-256 key for config encryption.
     /// Returns: `Db` instance.
     pub fn new(pool: SqlitePool, pepper: Option<String>, encryption_key: Option<[u8; 32]>) -> Self {
-        Self { pool, pepper, encryption_key }
+        Self {
+            pool,
+            pepper,
+            encryption_key,
+        }
     }
 
     /// Returns a reference to the underlying connection pool.
@@ -285,7 +289,9 @@ impl Db {
         match raw {
             Some(v) if v.starts_with("enc:") => {
                 let enc_key = self.encryption_key.as_ref().ok_or_else(|| {
-                    anyhow::anyhow!("CONFIG_ENCRYPTION_KEY required to decrypt config value for '{key}'")
+                    anyhow::anyhow!(
+                        "CONFIG_ENCRYPTION_KEY required to decrypt config value for '{key}'"
+                    )
                 })?;
                 Ok(Some(decrypt_value(enc_key, &v)?))
             }
@@ -329,7 +335,12 @@ impl Db {
 
     /// Upserts an agent heartbeat record.
     pub async fn upsert_agent(
-        &self, hostname: &str, uptime: i64, sent: i64, dropped: i64, transport: &str,
+        &self,
+        hostname: &str,
+        uptime: i64,
+        sent: i64,
+        dropped: i64,
+        transport: &str,
     ) -> Result<()> {
         sqlx::query(
             "INSERT INTO agents (hostname, last_heartbeat, uptime_secs, events_sent, events_dropped, transport, updated_at)
@@ -357,7 +368,11 @@ impl Db {
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
             let hb: DateTime<Utc> = r.try_get("last_heartbeat")?;
-            let status = if (now - hb).num_minutes() < 3 { "online" } else { "offline" };
+            let status = if (now - hb).num_minutes() < 3 {
+                "online"
+            } else {
+                "offline"
+            };
             out.push(AgentInfo {
                 hostname: r.try_get("hostname")?,
                 last_heartbeat: hb,
@@ -394,7 +409,11 @@ impl Db {
 
     /// Upserts sync status for an integration.
     pub async fn set_sync_status(
-        &self, integration: &str, status: &str, message: Option<&str>, records: i64,
+        &self,
+        integration: &str,
+        status: &str,
+        message: Option<&str>,
+        records: i64,
     ) -> Result<()> {
         sqlx::query(
             "INSERT INTO sync_status (integration, last_run_at, status, message, records_synced)
@@ -403,7 +422,10 @@ impl Db {
                 last_run_at = datetime('now'), status = excluded.status,
                 message = excluded.message, records_synced = excluded.records_synced",
         )
-        .bind(integration).bind(status).bind(message).bind(records)
+        .bind(integration)
+        .bind(status)
+        .bind(message)
+        .bind(records)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -425,14 +447,16 @@ impl Db {
     /// Counts all events.
     pub async fn count_events(&self) -> Result<i64> {
         let row = sqlx::query("SELECT COUNT(*) as c FROM events")
-            .fetch_one(&self.pool).await?;
+            .fetch_one(&self.pool)
+            .await?;
         Ok(row.try_get("c")?)
     }
 
     /// Counts events grouped by source.
     pub async fn count_events_by_source(&self) -> Result<HashMap<String, i64>> {
         let rows = sqlx::query("SELECT source, COUNT(*) as c FROM events GROUP BY source")
-            .fetch_all(&self.pool).await?;
+            .fetch_all(&self.pool)
+            .await?;
         let mut map = HashMap::new();
         for r in rows {
             map.insert(r.try_get("source")?, r.try_get("c")?);
@@ -443,14 +467,17 @@ impl Db {
     /// Returns the timestamp of the most recent event.
     pub async fn get_last_event_timestamp(&self) -> Result<Option<DateTime<Utc>>> {
         let row = sqlx::query("SELECT MAX(timestamp) as t FROM events")
-            .fetch_one(&self.pool).await?;
+            .fetch_one(&self.pool)
+            .await?;
         Ok(row.try_get("t")?)
     }
 
     /// Deletes a mapping by IP. Returns true if a row was deleted.
     pub async fn delete_mapping(&self, ip: &str) -> Result<bool> {
         let res = sqlx::query("DELETE FROM mappings WHERE ip = ?")
-            .bind(ip).execute(&self.pool).await?;
+            .bind(ip)
+            .execute(&self.pool)
+            .await?;
         Ok(res.rows_affected() > 0)
     }
 
@@ -460,8 +487,10 @@ impl Db {
             "SELECT id, ip, user, source, timestamp, raw_data
              FROM events WHERE ip = ? ORDER BY timestamp DESC LIMIT ?",
         )
-        .bind(ip).bind(limit)
-        .fetch_all(&self.pool).await?;
+        .bind(ip)
+        .bind(limit)
+        .fetch_all(&self.pool)
+        .await?;
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
             out.push(StoredEvent {
@@ -611,11 +640,13 @@ async fn auto_encrypt_sensitive_config(pool: &SqlitePool, key: &[u8; 32]) -> Res
             let value: String = row.try_get("value")?;
             if !value.is_empty() && !value.starts_with("enc:") {
                 let encrypted = encrypt_value(key, &value)?;
-                sqlx::query("UPDATE config SET value = ?, updated_at = datetime('now') WHERE key = ?")
-                    .bind(&encrypted)
-                    .bind(cfg_key)
-                    .execute(pool)
-                    .await?;
+                sqlx::query(
+                    "UPDATE config SET value = ?, updated_at = datetime('now') WHERE key = ?",
+                )
+                .bind(&encrypted)
+                .bind(cfg_key)
+                .execute(pool)
+                .await?;
                 count += 1;
             }
         }
@@ -634,7 +665,9 @@ async fn auto_encrypt_sensitive_config(pool: &SqlitePool, key: &[u8; 32]) -> Res
 pub async fn init_db(db_url: &str) -> Result<Db> {
     let pool = SqlitePool::connect(db_url).await?;
     sqlx::migrate!("./migrations").run(&pool).await?;
-    let pepper = std::env::var("ARGON2_PEPPER").ok().filter(|s| !s.is_empty());
+    let pepper = std::env::var("ARGON2_PEPPER")
+        .ok()
+        .filter(|s| !s.is_empty());
     let encryption_key = parse_encryption_key();
 
     if let Some(ref key) = encryption_key {

@@ -281,9 +281,7 @@ impl Db {
     /// Parameters: `user` — user record.
     /// Returns: `true` if locked_until is in the future.
     pub fn is_account_locked(&self, user: &User) -> bool {
-        user.locked_until
-            .map(|t| t > Utc::now())
-            .unwrap_or(false)
+        user.locked_until.map(|t| t > Utc::now()).unwrap_or(false)
     }
 
     /// Counts total user rows.
@@ -500,11 +498,9 @@ impl Db {
     ///
     /// Returns: number of deleted rows.
     pub async fn cleanup_expired_sessions(&self) -> Result<u64> {
-        let res = sqlx::query(
-            "DELETE FROM sessions WHERE expires_at < datetime('now', '-7 days')",
-        )
-        .execute(self.pool())
-        .await?;
+        let res = sqlx::query("DELETE FROM sessions WHERE expires_at < datetime('now', '-7 days')")
+            .execute(self.pool())
+            .await?;
         Ok(res.rows_affected())
     }
 }
@@ -755,22 +751,40 @@ impl Db {
                     target, details, ip_address, request_id
              FROM audit_log WHERE 1=1",
         );
-        if action.is_some()   { sql.push_str(" AND action = ?"); }
-        if username.is_some() { sql.push_str(" AND username = ?"); }
-        if since.is_some()    { sql.push_str(" AND timestamp >= ?"); }
-        if until.is_some()    { sql.push_str(" AND timestamp <= ?"); }
+        if action.is_some() {
+            sql.push_str(" AND action = ?");
+        }
+        if username.is_some() {
+            sql.push_str(" AND username = ?");
+        }
+        if since.is_some() {
+            sql.push_str(" AND timestamp >= ?");
+        }
+        if until.is_some() {
+            sql.push_str(" AND timestamp <= ?");
+        }
         sql.push_str(" ORDER BY timestamp DESC LIMIT ? OFFSET ?");
 
         let mut q = sqlx::query(&sql);
-        if let Some(v) = action   { q = q.bind(v); }
-        if let Some(v) = username { q = q.bind(v); }
-        if let Some(v) = since    { q = q.bind(v); }
-        if let Some(v) = until    { q = q.bind(v); }
+        if let Some(v) = action {
+            q = q.bind(v);
+        }
+        if let Some(v) = username {
+            q = q.bind(v);
+        }
+        if let Some(v) = since {
+            q = q.bind(v);
+        }
+        if let Some(v) = until {
+            q = q.bind(v);
+        }
         q = q.bind(limit).bind(offset);
 
         let rows = q.fetch_all(self.pool()).await?;
         let mut out = Vec::with_capacity(rows.len());
-        for r in rows { out.push(audit_from_row(&r)?); }
+        for r in rows {
+            out.push(audit_from_row(&r)?);
+        }
         Ok(out)
     }
 
@@ -783,16 +797,32 @@ impl Db {
         until: Option<&str>,
     ) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) as c FROM audit_log WHERE 1=1");
-        if action.is_some()   { sql.push_str(" AND action = ?"); }
-        if username.is_some() { sql.push_str(" AND username = ?"); }
-        if since.is_some()    { sql.push_str(" AND timestamp >= ?"); }
-        if until.is_some()    { sql.push_str(" AND timestamp <= ?"); }
+        if action.is_some() {
+            sql.push_str(" AND action = ?");
+        }
+        if username.is_some() {
+            sql.push_str(" AND username = ?");
+        }
+        if since.is_some() {
+            sql.push_str(" AND timestamp >= ?");
+        }
+        if until.is_some() {
+            sql.push_str(" AND timestamp <= ?");
+        }
 
         let mut q = sqlx::query(&sql);
-        if let Some(v) = action   { q = q.bind(v); }
-        if let Some(v) = username { q = q.bind(v); }
-        if let Some(v) = since    { q = q.bind(v); }
-        if let Some(v) = until    { q = q.bind(v); }
+        if let Some(v) = action {
+            q = q.bind(v);
+        }
+        if let Some(v) = username {
+            q = q.bind(v);
+        }
+        if let Some(v) = since {
+            q = q.bind(v);
+        }
+        if let Some(v) = until {
+            q = q.bind(v);
+        }
 
         let row = q.fetch_one(self.pool()).await?;
         Ok(row.try_get("c")?)
@@ -803,19 +833,29 @@ impl Db {
     /// Returns: (total, last_24h, last_7d, top_actions).
     pub async fn audit_stats(&self) -> Result<(i64, i64, i64, Vec<(String, i64)>)> {
         let total: i64 = sqlx::query("SELECT COUNT(*) as c FROM audit_log")
-            .fetch_one(self.pool()).await?.try_get("c")?;
+            .fetch_one(self.pool())
+            .await?
+            .try_get("c")?;
 
         let last_24h: i64 = sqlx::query(
-            "SELECT COUNT(*) as c FROM audit_log WHERE timestamp >= datetime('now', '-1 day')"
-        ).fetch_one(self.pool()).await?.try_get("c")?;
+            "SELECT COUNT(*) as c FROM audit_log WHERE timestamp >= datetime('now', '-1 day')",
+        )
+        .fetch_one(self.pool())
+        .await?
+        .try_get("c")?;
 
         let last_7d: i64 = sqlx::query(
-            "SELECT COUNT(*) as c FROM audit_log WHERE timestamp >= datetime('now', '-7 days')"
-        ).fetch_one(self.pool()).await?.try_get("c")?;
+            "SELECT COUNT(*) as c FROM audit_log WHERE timestamp >= datetime('now', '-7 days')",
+        )
+        .fetch_one(self.pool())
+        .await?
+        .try_get("c")?;
 
         let rows = sqlx::query(
-            "SELECT action, COUNT(*) as c FROM audit_log GROUP BY action ORDER BY c DESC LIMIT 10"
-        ).fetch_all(self.pool()).await?;
+            "SELECT action, COUNT(*) as c FROM audit_log GROUP BY action ORDER BY c DESC LIMIT 10",
+        )
+        .fetch_all(self.pool())
+        .await?;
 
         let mut top = Vec::with_capacity(rows.len());
         for r in rows {

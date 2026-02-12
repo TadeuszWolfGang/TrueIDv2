@@ -76,8 +76,7 @@ pub enum AgentMode {
 pub fn load_config(path: &Path) -> Result<AgentConfig> {
     let contents = std::fs::read_to_string(path)
         .with_context(|| format!("reading config file: {}", path.display()))?;
-    let config: AgentConfig =
-        toml::from_str(&contents).with_context(|| "parsing config.toml")?;
+    let config: AgentConfig = toml::from_str(&contents).with_context(|| "parsing config.toml")?;
     Ok(config)
 }
 
@@ -95,9 +94,21 @@ pub fn resolve_hostname(override_name: Option<&str>) -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-fn default_ad_port() -> u16 { 5615 }
-fn default_dhcp_port() -> u16 { 5617 }
-fn default_mode() -> AgentMode { AgentMode::Ad }
-fn default_buffer_size() -> usize { 1000 }
-fn default_reconnect_secs() -> u64 { 5 }
-fn default_keepalive_secs() -> u64 { 30 }
+fn default_ad_port() -> u16 {
+    5615
+}
+fn default_dhcp_port() -> u16 {
+    5617
+}
+fn default_mode() -> AgentMode {
+    AgentMode::Ad
+}
+fn default_buffer_size() -> usize {
+    1000
+}
+fn default_reconnect_secs() -> u64 {
+    5
+}
+fn default_keepalive_secs() -> u64 {
+    30
+}

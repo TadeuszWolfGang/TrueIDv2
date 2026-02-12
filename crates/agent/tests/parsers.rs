@@ -3,8 +3,7 @@
 use net_identity_agent::collector::ad_events::parse_ad_xml;
 use net_identity_agent::collector::dhcp_events::parse_dhcp_xml;
 use net_identity_agent::transport::syslog::{
-    format_ad_event, format_dhcp_event, format_heartbeat,
-    frame_octet_counting, parse_octet_frame,
+    format_ad_event, format_dhcp_event, format_heartbeat, frame_octet_counting, parse_octet_frame,
 };
 
 const EVENT_4768_XML: &str = include_str!("fixtures/event_4768.xml");
@@ -52,7 +51,13 @@ fn syslog_ad_format() {
 
 #[test]
 fn syslog_dhcp_format() {
-    let msg = format_dhcp_event("DHCP01", "10.0.1.50", "AA:BB:CC:DD:EE:FF", "WORKSTATION01", 86400);
+    let msg = format_dhcp_event(
+        "DHCP01",
+        "10.0.1.50",
+        "AA:BB:CC:DD:EE:FF",
+        "WORKSTATION01",
+        86400,
+    );
     assert!(msg.contains("<13>"));
     assert!(msg.contains("TrueID-Agent: DHCP_LEASE"));
     assert!(msg.contains("mac=AA:BB:CC:DD:EE:FF"));

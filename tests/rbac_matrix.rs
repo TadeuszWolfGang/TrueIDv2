@@ -78,10 +78,16 @@ async fn test_rbac_matrix() {
     ensure_test_users(&admin).await;
 
     let operator = client();
-    assert_eq!(login(&operator, "rbac_operator", "testpassword123").await, StatusCode::OK);
+    assert_eq!(
+        login(&operator, "rbac_operator", "testpassword123").await,
+        StatusCode::OK
+    );
 
     let viewer = client();
-    assert_eq!(login(&viewer, "rbac_viewer", "testpassword123").await, StatusCode::OK);
+    assert_eq!(
+        login(&viewer, "rbac_viewer", "testpassword123").await,
+        StatusCode::OK
+    );
 
     let anon = client(); // No login.
 
@@ -89,7 +95,11 @@ async fn test_rbac_matrix() {
     // Admin, Operator, Viewer → 200; Anonymous → 401
     for path in &["/api/v1/mappings", "/api/v1/events", "/api/v1/stats"] {
         assert_eq!(get_status(&admin, path).await, 200, "Admin GET {path}");
-        assert_eq!(get_status(&operator, path).await, 200, "Operator GET {path}");
+        assert_eq!(
+            get_status(&operator, path).await,
+            200,
+            "Operator GET {path}"
+        );
         assert_eq!(get_status(&viewer, path).await, 200, "Viewer GET {path}");
         assert_eq!(get_status(&anon, path).await, 401, "Anon GET {path}");
     }
@@ -97,7 +107,11 @@ async fn test_rbac_matrix() {
     // ── Admin-only endpoints ─────────────────────────────
     for path in &["/api/v1/users", "/api/v1/api-keys", "/api/v1/audit-logs"] {
         assert_eq!(get_status(&admin, path).await, 200, "Admin GET {path}");
-        assert_eq!(get_status(&operator, path).await, 403, "Operator GET {path}");
+        assert_eq!(
+            get_status(&operator, path).await,
+            403,
+            "Operator GET {path}"
+        );
         assert_eq!(get_status(&viewer, path).await, 403, "Viewer GET {path}");
         assert_eq!(get_status(&anon, path).await, 401, "Anon GET {path}");
     }
@@ -142,7 +156,11 @@ async fn test_api_key_auth() {
         .send()
         .await
         .expect("API key GET users failed");
-    assert_eq!(resp.status(), 403, "Viewer API key should NOT access /users");
+    assert_eq!(
+        resp.status(),
+        403,
+        "Viewer API key should NOT access /users"
+    );
 
     // Invalid API key → 401.
     let resp = key_client
@@ -182,6 +200,10 @@ async fn test_csrf_protection() {
             .await
             .unwrap();
         // Should be 201 (created) — CSRF not required for API key auth.
-        assert_eq!(resp.status().as_u16(), 201, "API key POST should not need CSRF");
+        assert_eq!(
+            resp.status().as_u16(),
+            201,
+            "API key POST should not need CSRF"
+        );
     }
 }

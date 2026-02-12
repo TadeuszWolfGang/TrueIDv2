@@ -74,50 +74,71 @@ pub async fn list_audit_logs(
     Query(params): Query<AuditLogsQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(StatusCode::SERVICE_UNAVAILABLE, error::SERVICE_UNAVAILABLE, "Database unavailable")
+        ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error::SERVICE_UNAVAILABLE,
+            "Database unavailable",
+        )
     })?;
 
     let page = params.page.unwrap_or(1).max(1);
-    let per_page = params.per_page.unwrap_or(50).min(200).max(1);
+    let per_page = params.per_page.unwrap_or(50).clamp(1, 200);
     let offset = ((page - 1) * per_page) as i64;
     let limit = per_page as i64;
 
-    let total = db.count_audit_logs_filtered(
-        params.action.as_deref(),
-        params.username.as_deref(),
-        params.since.as_deref(),
-        params.until.as_deref(),
-    ).await.map_err(|e| {
-        tracing::warn!(error = %e, "Audit log count failed");
-        ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, error::INTERNAL_ERROR, "Failed to count audit logs")
+    let total = db
+        .count_audit_logs_filtered(
+            params.action.as_deref(),
+            params.username.as_deref(),
+            params.since.as_deref(),
+            params.until.as_deref(),
+        )
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, "Audit log count failed");
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error::INTERNAL_ERROR,
+                "Failed to count audit logs",
+            )
             .with_request_id(&auth.request_id)
-    })?;
+        })?;
 
-    let entries = db.query_audit_logs(
-        limit,
-        offset,
-        params.action.as_deref(),
-        params.username.as_deref(),
-        params.since.as_deref(),
-        params.until.as_deref(),
-    ).await.map_err(|e| {
-        tracing::warn!(error = %e, "Audit log query failed");
-        ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, error::INTERNAL_ERROR, "Failed to query audit logs")
+    let entries = db
+        .query_audit_logs(
+            limit,
+            offset,
+            params.action.as_deref(),
+            params.username.as_deref(),
+            params.since.as_deref(),
+            params.until.as_deref(),
+        )
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, "Audit log query failed");
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error::INTERNAL_ERROR,
+                "Failed to query audit logs",
+            )
             .with_request_id(&auth.request_id)
-    })?;
+        })?;
 
-    let dtos: Vec<AuditEntryDto> = entries.into_iter().map(|e| AuditEntryDto {
-        id: e.id,
-        timestamp: e.timestamp.to_rfc3339(),
-        user_id: e.user_id,
-        username: e.username,
-        principal_type: e.principal_type,
-        action: e.action,
-        target: e.target,
-        details: e.details,
-        ip_address: e.ip_address,
-        request_id: e.request_id,
-    }).collect();
+    let dtos: Vec<AuditEntryDto> = entries
+        .into_iter()
+        .map(|e| AuditEntryDto {
+            id: e.id,
+            timestamp: e.timestamp.to_rfc3339(),
+            user_id: e.user_id,
+            username: e.username,
+            principal_type: e.principal_type,
+            action: e.action,
+            target: e.target,
+            details: e.details,
+            ip_address: e.ip_address,
+            request_id: e.request_id,
+        })
+        .collect();
 
     Ok(Json(AuditLogsResponse {
         entries: dtos,
@@ -135,19 +156,30 @@ pub async fn audit_stats(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
     let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(StatusCode::SERVICE_UNAVAILABLE, error::SERVICE_UNAVAILABLE, "Database unavailable")
+        ApiError::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            error::SERVICE_UNAVAILABLE,
+            "Database unavailable",
+        )
     })?;
 
     let (total, last_24h, last_7d, top) = db.audit_stats().await.map_err(|e| {
         tracing::warn!(error = %e, "Audit stats query failed");
-        ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, error::INTERNAL_ERROR, "Failed to get audit stats")
-            .with_request_id(&auth.request_id)
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error::INTERNAL_ERROR,
+            "Failed to get audit stats",
+        )
+        .with_request_id(&auth.request_id)
     })?;
 
     Ok(Json(AuditStatsResponse {
         total,
         last_24h,
         last_7d,
-        top_actions: top.into_iter().map(|(action, count)| ActionCount { action, count }).collect(),
+        top_actions: top
+            .into_iter()
+            .map(|(action, count)| ActionCount { action, count })
+            .collect(),
     }))
 }

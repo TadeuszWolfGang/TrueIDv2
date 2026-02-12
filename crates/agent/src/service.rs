@@ -5,15 +5,15 @@
 
 #[cfg(windows)]
 pub mod imp {
+    use anyhow::Result;
     use std::ffi::OsString;
     use std::time::Duration;
+    use tracing::info;
     use windows_service::service::{
         ServiceAccess, ServiceErrorControl, ServiceInfo, ServiceStartType, ServiceType,
     };
     use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
     use windows_service::{define_windows_service, service_dispatcher};
-    use anyhow::Result;
-    use tracing::info;
 
     const SERVICE_NAME: &str = "TrueIDAgent";
     const DISPLAY_NAME: &str = "TrueID Identity Agent";
@@ -23,10 +23,8 @@ pub mod imp {
     /// Parameters: none.
     /// Returns: `Ok(())` on success or an error.
     pub fn install() -> Result<()> {
-        let manager = ServiceManager::local_computer(
-            None::<&str>,
-            ServiceManagerAccess::CREATE_SERVICE,
-        )?;
+        let manager =
+            ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CREATE_SERVICE)?;
         let exe_path = std::env::current_exe()?;
         let service_info = ServiceInfo {
             name: OsString::from(SERVICE_NAME),
@@ -50,10 +48,7 @@ pub mod imp {
     /// Parameters: none.
     /// Returns: `Ok(())` on success or an error.
     pub fn uninstall() -> Result<()> {
-        let manager = ServiceManager::local_computer(
-            None::<&str>,
-            ServiceManagerAccess::CONNECT,
-        )?;
+        let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)?;
         let service = manager.open_service(SERVICE_NAME, ServiceAccess::DELETE)?;
         service.delete()?;
         info!("Service '{}' uninstalled", SERVICE_NAME);

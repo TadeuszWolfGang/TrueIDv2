@@ -2,7 +2,6 @@
 
 use anyhow::{anyhow, Result};
 use chrono::Utc;
-use trueid_common::model::{IdentityEvent, SourceType};
 use radius::core::code::Code;
 use radius::core::packet::Packet;
 use radius::core::rfc2865;
@@ -10,6 +9,7 @@ use std::net::{IpAddr, SocketAddr};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc::Sender;
 use tracing::warn;
+use trueid_common::model::{IdentityEvent, SourceType};
 
 const MAX_PACKET_SIZE: usize = 4096;
 

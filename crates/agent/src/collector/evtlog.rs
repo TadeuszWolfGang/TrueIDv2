@@ -80,7 +80,15 @@ mod imp {
 
         // First call to get required buffer size.
         let _ = unsafe {
-            EvtRender(None, event, EvtRenderEventXml.0 as u32, 0, None, &mut buf_size, &mut prop_count)
+            EvtRender(
+                None,
+                event,
+                EvtRenderEventXml.0 as u32,
+                0,
+                None,
+                &mut buf_size,
+                &mut prop_count,
+            )
         };
 
         let mut buffer = vec![0u16; (buf_size as usize) / 2 + 1];
