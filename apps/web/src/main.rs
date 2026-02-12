@@ -8,6 +8,7 @@ mod error;
 pub mod middleware;
 pub mod rate_limit;
 mod routes_api_keys;
+mod routes_alerts;
 mod routes_audit;
 mod routes_auth;
 mod routes_conflicts;
@@ -677,6 +678,8 @@ async fn main() -> Result<()> {
         .route("/api/v2/timeline/mac/{mac}", get(routes_timeline::timeline_mac))
         .route("/api/v2/conflicts", get(routes_conflicts::list_conflicts))
         .route("/api/v2/conflicts/stats", get(routes_conflicts::conflict_stats))
+        .route("/api/v2/alerts/history", get(routes_alerts::alert_history))
+        .route("/api/v2/alerts/stats", get(routes_alerts::alert_stats))
         .route("/api/v1/stats", get(api_v1_stats))
         .route("/lookup/{ip}", get(lookup))
         .route("/api/recent", get(recent))
@@ -721,6 +724,9 @@ async fn main() -> Result<()> {
         // API key management
         .route("/api/v1/api-keys", get(routes_api_keys::list_keys).post(routes_api_keys::create_key))
         .route("/api/v1/api-keys/{id}", delete(routes_api_keys::revoke_key))
+        // Alert rules
+        .route("/api/v2/alerts/rules", get(routes_alerts::list_rules).post(routes_alerts::create_rule))
+        .route("/api/v2/alerts/rules/{id}", put(routes_alerts::update_rule).delete(routes_alerts::delete_rule))
         // Audit logs (read-only, append-only — no DELETE/UPDATE by design)
         .route("/api/v1/audit-logs", get(routes_audit::list_audit_logs))
         .route("/api/v1/audit-logs/stats", get(routes_audit::audit_stats))

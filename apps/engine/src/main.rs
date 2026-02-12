@@ -6,6 +6,7 @@
 //! API on a separate port for configuration and monitoring.
 
 mod admin_api;
+mod alerts;
 mod conflicts;
 mod tls_listener;
 
@@ -108,6 +109,8 @@ async fn run_event_loop(
     db: Arc<Db>,
     vendors: Arc<VendorMap>,
     adapter_stats: Arc<RwLock<Vec<AdapterStatus>>>,
+    alert_rules: Arc<RwLock<Vec<alerts::AlertRule>>>,
+    http_client: reqwest::Client,
 ) -> Result<()> {
     while let Some(event) = receiver.recv().await {
         let ip_str = event.ip.to_string();
@@ -137,7 +140,7 @@ async fn run_event_loop(
             }
         }
 
-        match conflicts::detect_conflicts(db.pool(), &event).await {
+        let detected_conflicts = match conflicts::detect_conflicts(db.pool(), &event).await {
             Ok(detected) => {
                 for c in &detected {
                     warn!(
@@ -149,6 +152,7 @@ async fn run_event_loop(
                         "Conflict detected"
                     );
                 }
+                detected
             }
             Err(err) => {
                 warn!(
@@ -156,6 +160,20 @@ async fn run_event_loop(
                     ip = %ip_str,
                     "Conflict detection failed — continuing with upsert"
                 );
+                Vec::new()
+            }
+        };
+
+        {
+            let rules = alert_rules.read().await;
+            let firings =
+                alerts::evaluate_event(db.pool(), &event, &detected_conflicts, &rules).await;
+            for firing in firings {
+                let pool = db.pool().clone();
+                let client = http_client.clone();
+                tokio::spawn(async move {
+                    alerts::fire_alert(&pool, &client, &firing).await;
+                });
             }
         }
 
@@ -391,12 +409,46 @@ async fn main() -> Result<()> {
         }
     });
 
+    // Alert rule cache loaded at startup and refreshed in background.
+    let alert_rules: Arc<RwLock<Vec<alerts::AlertRule>>> =
+        Arc::new(RwLock::new(alerts::load_rules(db.pool()).await.unwrap_or_default()));
+    {
+        let reload_db = db.clone();
+        let reload_rules = alert_rules.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                match alerts::load_rules(reload_db.pool()).await {
+                    Ok(rules) => *reload_rules.write().await = rules,
+                    Err(err) => warn!(error = %err, "Failed to reload alert rules"),
+                }
+            }
+        });
+    }
+
+    let http_client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .expect("Failed to build HTTP client");
+
     let (sender, receiver) = mpsc::channel(CHANNEL_CAPACITY);
     let event_db = db.clone();
     let event_vendors = vendors.clone();
     let event_adapter_stats = adapter_stats.clone();
+    let event_alert_rules = alert_rules.clone();
+    let event_http_client = http_client.clone();
     tokio::spawn(async move {
-        if let Err(err) = run_event_loop(receiver, event_db, event_vendors, event_adapter_stats).await {
+        if let Err(err) = run_event_loop(
+            receiver,
+            event_db,
+            event_vendors,
+            event_adapter_stats,
+            event_alert_rules,
+            event_http_client,
+        )
+        .await
+        {
             warn!(error = %err, "Event loop stopped");
         }
     });

@@ -13,6 +13,12 @@
 - **Removed unused `cookie` crate** dependency from `apps/web/Cargo.toml`.
 
 ### Added
+- **Alerts & webhooks (v2):**
+  - Added migration `0012_add_alerts_tables.sql` with `alert_rules` and `alert_history`.
+  - Added engine alert module (`apps/engine/src/alerts.rs`) with rule loading, event evaluation, cooldown checks, and async webhook delivery.
+  - Integrated alert processing into engine event loop with rule cache reload every 60 seconds.
+  - Added web alert API (`apps/web/src/routes_alerts.rs`) for admin rule CRUD and viewer alert history/stats.
+  - Wired alert routes in `apps/web/src/main.rs` (viewer + admin groups).
 - **Timeline API (v2):**
   - Added `routes_timeline.rs` with investigation endpoints:
     - `GET /api/v2/timeline/ip/{ip}` (current mapping, paginated events, user transitions, unresolved conflicts count).
