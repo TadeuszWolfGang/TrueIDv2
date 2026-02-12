@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Changed
+- Refactored web route organization: extracted legacy handlers to `apps/web/src/routes_v1.rs` and engine proxy handlers to `apps/web/src/routes_proxy.rs`, leaving `apps/web/src/lib.rs` as a router orchestrator.
+- Updated `build_router()` to use module-qualified handler wiring and kept lookup route behavior for existing clients/tests.
 - Refactored `trueid-web` into library + binary split: moved router/app state/handlers to `apps/web/src/lib.rs`, kept startup/bootstrap/server bind in `apps/web/src/main.rs`.
 - Added explicit Cargo targets for web crate (`[lib] trueid_web`, `[[bin]] trueid-web`) and kept static assets fallback only in binary startup.
 - Reworked API v2 in-process tests to import `trueid_web` directly (removed `#[path]` include hack) and run against in-memory SQLite.
