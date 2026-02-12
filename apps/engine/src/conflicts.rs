@@ -1,0 +1,226 @@
+//! Conflict detection for real-time identity ingestion.
+
+use anyhow::Result;
+use chrono::{DateTime, Utc};
+use serde::Serialize;
+use serde_json::json;
+use sqlx::{Row, SqlitePool};
+use trueid_common::model::IdentityEvent;
+
+/// Conflict row representation used by the engine logger and APIs.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConflictRecord {
+    pub id: i64,
+    pub conflict_type: String,
+    pub severity: String,
+    pub ip: Option<String>,
+    pub mac: Option<String>,
+    pub user_old: Option<String>,
+    pub user_new: Option<String>,
+    pub source: String,
+    pub details: Option<String>,
+    pub detected_at: DateTime<Utc>,
+    pub resolved_at: Option<DateTime<Utc>>,
+    pub resolved_by: Option<String>,
+}
+
+/// Insert payload for a conflict row.
+#[derive(Debug, Clone)]
+struct NewConflict {
+    conflict_type: String,
+    severity: String,
+    ip: Option<String>,
+    mac: Option<String>,
+    user_old: Option<String>,
+    user_new: Option<String>,
+    source: String,
+    details: Option<String>,
+}
+
+/// Detects and stores conflicts for a single incoming event.
+///
+/// Parameters: `pool` - SQLite connection pool, `event` - incoming identity event.
+/// Returns: vector of inserted conflict records for logging/observability.
+pub async fn detect_conflicts(pool: &SqlitePool, event: &IdentityEvent) -> Result<Vec<ConflictRecord>> {
+    let mut detected = Vec::new();
+    let event_ip = event.ip.to_string();
+    let event_source = format!("{:?}", event.source);
+
+    let current = sqlx::query("SELECT user, mac FROM mappings WHERE ip = ?")
+        .bind(&event_ip)
+        .fetch_optional(pool)
+        .await?;
+
+    if let Some(row) = current {
+        let existing_user: String = row.try_get("user").unwrap_or_default();
+        let existing_mac: Option<String> = row.try_get("mac").ok();
+        if !existing_user.is_empty() && existing_user != event.user {
+            let details = json!({
+                "ip": event_ip,
+                "old_user": existing_user,
+                "new_user": event.user,
+                "source": event_source,
+            })
+            .to_string();
+            if let Some(record) = insert_conflict_if_not_recent(
+                pool,
+                NewConflict {
+                    conflict_type: "ip_user_change".to_string(),
+                    severity: "warning".to_string(),
+                    ip: Some(event_ip.clone()),
+                    mac: event.mac.clone().or(existing_mac),
+                    user_old: Some(existing_user),
+                    user_new: Some(event.user.clone()),
+                    source: event_source.clone(),
+                    details: Some(details),
+                },
+            )
+            .await?
+            {
+                detected.push(record);
+            }
+        }
+    }
+
+    if let Some(event_mac) = event.mac.clone() {
+        let rows = sqlx::query("SELECT ip FROM mappings WHERE mac = ? AND ip != ? AND is_active = true")
+            .bind(&event_mac)
+            .bind(&event_ip)
+            .fetch_all(pool)
+            .await?;
+
+        if !rows.is_empty() {
+            let mut other_ips = Vec::with_capacity(rows.len());
+            for row in rows {
+                let other_ip: String = row.try_get("ip").unwrap_or_default();
+                if !other_ip.is_empty() {
+                    other_ips.push(other_ip);
+                }
+            }
+
+            if !other_ips.is_empty() {
+                let info_details = json!({
+                    "old_ip": other_ips[0],
+                    "new_ip": event_ip,
+                    "mac": event_mac,
+                    "source": event_source,
+                })
+                .to_string();
+                if let Some(record) = insert_conflict_if_not_recent(
+                    pool,
+                    NewConflict {
+                        conflict_type: "mac_ip_conflict".to_string(),
+                        severity: "info".to_string(),
+                        ip: Some(event_ip.clone()),
+                        mac: Some(event_mac.clone()),
+                        user_old: None,
+                        user_new: Some(event.user.clone()),
+                        source: event_source.clone(),
+                        details: Some(info_details),
+                    },
+                )
+                .await?
+                {
+                    detected.push(record);
+                }
+
+                let critical_details = json!({
+                    "mac": event_mac,
+                    "new_ip": event_ip,
+                    "other_active_ips": other_ips,
+                    "source": event_source,
+                })
+                .to_string();
+                if let Some(record) = insert_conflict_if_not_recent(
+                    pool,
+                    NewConflict {
+                        conflict_type: "duplicate_mac".to_string(),
+                        severity: "critical".to_string(),
+                        ip: Some(event_ip.clone()),
+                        mac: Some(event_mac),
+                        user_old: None,
+                        user_new: Some(event.user.clone()),
+                        source: event_source,
+                        details: Some(critical_details),
+                    },
+                )
+                .await?
+                {
+                    detected.push(record);
+                }
+            }
+        }
+    }
+
+    Ok(detected)
+}
+
+/// Inserts a conflict row unless an equivalent unresolved conflict exists recently.
+///
+/// Parameters: all conflict fields matching table columns.
+/// Returns: inserted conflict record or `None` if deduplicated.
+async fn insert_conflict_if_not_recent(
+    pool: &SqlitePool,
+    new_conflict: NewConflict,
+) -> Result<Option<ConflictRecord>> {
+    let recent = sqlx::query(
+        "SELECT id FROM conflicts
+         WHERE conflict_type = ?
+           AND ip = ?
+           AND resolved_at IS NULL
+           AND detected_at > datetime('now', '-5 minutes')
+         LIMIT 1",
+    )
+    .bind(&new_conflict.conflict_type)
+    .bind(new_conflict.ip.clone())
+    .fetch_optional(pool)
+    .await?;
+
+    if recent.is_some() {
+        return Ok(None);
+    }
+
+    let now = Utc::now();
+    let insert_result = sqlx::query(
+        "INSERT INTO conflicts (
+            conflict_type, severity, ip, mac, user_old, user_new, source, details, detected_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(&new_conflict.conflict_type)
+    .bind(&new_conflict.severity)
+    .bind(new_conflict.ip.clone())
+    .bind(new_conflict.mac.clone())
+    .bind(new_conflict.user_old.clone())
+    .bind(new_conflict.user_new.clone())
+    .bind(new_conflict.source.clone())
+    .bind(new_conflict.details.clone())
+    .bind(now)
+    .execute(pool)
+    .await?;
+
+    let inserted_id = insert_result.last_insert_rowid();
+    let row = sqlx::query(
+        "SELECT id, conflict_type, severity, ip, mac, user_old, user_new, source, details, \
+                detected_at, resolved_at, resolved_by
+         FROM conflicts
+         WHERE id = ?",
+    )
+    .bind(inserted_id)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(Some(ConflictRecord {
+        id: row.try_get("id").unwrap_or(0),
+        conflict_type: row.try_get("conflict_type").unwrap_or_default(),
+        severity: row.try_get("severity").unwrap_or_default(),
+        ip: row.try_get("ip").ok(),
+        mac: row.try_get("mac").ok(),
+        user_old: row.try_get("user_old").ok(),
+        user_new: row.try_get("user_new").ok(),
+        source: row.try_get("source").unwrap_or_default(),
+        details: row.try_get("details").ok(),
+        detected_at: row.try_get("detected_at").unwrap_or_else(|_| Utc::now()),
+        resolved_at: row.try_get("resolved_at").ok(),
+        resolved_by: row.try_get("resolved_by").ok(),
+    }))
+}

@@ -9,6 +9,7 @@ axum = { workspace = true }
 chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sqlx = { workspace = true }
 net-identity-adapter-ad-logs = { path = "../../crates/adapter-ad-logs" }
 net-identity-adapter-dhcp-logs = { path = "../../crates/adapter-dhcp-logs" }
 net-identity-adapter-radius = { path = "../../crates/adapter-radius" }

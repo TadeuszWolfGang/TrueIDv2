@@ -6,6 +6,7 @@
 //! API on a separate port for configuration and monitoring.
 
 mod admin_api;
+mod conflicts;
 mod tls_listener;
 
 use anyhow::Result;
@@ -109,6 +110,7 @@ async fn run_event_loop(
     adapter_stats: Arc<RwLock<Vec<AdapterStatus>>>,
 ) -> Result<()> {
     while let Some(event) = receiver.recv().await {
+        let ip_str = event.ip.to_string();
         let vendor = event
             .mac
             .as_deref()
@@ -132,6 +134,28 @@ async fn run_event_loop(
             if let Some(a) = stats.iter_mut().find(|a| a.name == source_name) {
                 a.events_total += 1;
                 a.last_event_at = Some(Utc::now());
+            }
+        }
+
+        match conflicts::detect_conflicts(db.pool(), &event).await {
+            Ok(detected) => {
+                for c in &detected {
+                    warn!(
+                        conflict_type = %c.conflict_type,
+                        severity = %c.severity,
+                        ip = ?c.ip,
+                        user_old = ?c.user_old,
+                        user_new = ?c.user_new,
+                        "Conflict detected"
+                    );
+                }
+            }
+            Err(err) => {
+                warn!(
+                    error = %err,
+                    ip = %ip_str,
+                    "Conflict detection failed — continuing with upsert"
+                );
             }
         }
 

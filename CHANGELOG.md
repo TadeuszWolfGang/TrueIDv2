@@ -13,6 +13,11 @@
 - **Removed unused `cookie` crate** dependency from `apps/web/Cargo.toml`.
 
 ### Added
+- **Conflict detection foundation (v2):**
+  - Added migration `0011_add_conflicts_table.sql` with `conflicts` table and indexes.
+  - Added engine conflict detection module (`apps/engine/src/conflicts.rs`) for `ip_user_change`, `mac_ip_conflict`, and `duplicate_mac` with 5-minute dedup.
+  - Added web conflict API (`apps/web/src/routes_conflicts.rs`): list, stats, and resolve endpoints.
+  - Wired routes in `apps/web/src/main.rs` for Viewer+ read and Operator+ resolve actions.
 - **API v2 search foundation**:
   - New module `apps/web/src/routes_search.rs` with:
     - `GET /api/v2/search` (unified mappings + events query, filters, pagination, sorting, scope, timing).
@@ -57,7 +62,7 @@
 ### Dependencies
 - `crates/common`: +aes-gcm, argon2, async-trait, base64, rand, sha2.
 - `apps/web`: +async-trait, axum-server (tls-rustls), cookie, dashmap, jsonwebtoken, rand, uuid.
-- `apps/engine`: (no new external deps, uses axum middleware from existing dep).
+- `apps/engine`: +sqlx (workspace dependency) for conflict detection queries.
 
 ### Previous
 - **net-identity-agent:** New Rust-based Windows Event Log agent (`crates/agent/`) with TCP+TLS transport (mTLS), ring buffer, exponential-backoff reconnect, heartbeat, and `--dry-run` mode.
