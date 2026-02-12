@@ -10,6 +10,7 @@ pub mod rate_limit;
 mod routes_api_keys;
 mod routes_audit;
 mod routes_auth;
+mod routes_search;
 mod routes_users;
 
 use anyhow::Result;
@@ -666,6 +667,9 @@ async fn main() -> Result<()> {
     let viewer_routes = Router::new()
         .route("/api/v1/mappings", get(api_v1_mappings))
         .route("/api/v1/events", get(api_v1_events))
+        .route("/api/v2/search", get(routes_search::search))
+        .route("/api/v2/export/mappings", get(routes_search::export_mappings))
+        .route("/api/v2/export/events", get(routes_search::export_events))
         .route("/api/v1/stats", get(api_v1_stats))
         .route("/lookup/{ip}", get(lookup))
         .route("/api/recent", get(recent))
@@ -677,7 +681,6 @@ async fn main() -> Result<()> {
         .route("/api/auth/logout", post(routes_auth::logout))
         .route("/api/auth/logout-all", post(routes_auth::logout_all))
         .route("/api/auth/change-password", post(routes_auth::change_password))
-        .route("/api/auth/sessions/{id}", delete(routes_auth::revoke_session))
         .layer(axum_mw::from_fn_with_state(
             state.clone(),
             middleware::require_viewer_layer,
@@ -687,6 +690,7 @@ async fn main() -> Result<()> {
     let operator_routes = Router::new()
         .route("/api/v1/mappings", post(proxy_post_mapping))
         .route("/api/v1/mappings/{ip}", delete(proxy_delete_mapping))
+        .route("/api/auth/sessions/{id}", delete(routes_auth::revoke_session))
         .layer(axum_mw::from_fn_with_state(
             state.clone(),
             middleware::require_operator_layer,

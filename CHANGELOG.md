@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Fixed
+- **Route authorization hardening** — moved `DELETE /api/auth/sessions/{id}` back to `operator_routes` (Operator+), removed accidental exposure from `viewer_routes`.
 - **CSRF on token refresh** — dashboard refresh timer (10 min) now sends `X-CSRF-Token` header, preventing 403 and forced logout.
 - **CSRF in smoke-test.sh** — refresh and logout curl calls now extract CSRF token from cookie jar and send header.
 - **request_id in login/refresh** — handlers read `RequestId` from Axum extensions (not request headers), fixing empty `request_id` in audit logs and error responses.
@@ -12,6 +13,13 @@
 - **Removed unused `cookie` crate** dependency from `apps/web/Cargo.toml`.
 
 ### Added
+- **API v2 search foundation**:
+  - New module `apps/web/src/routes_search.rs` with:
+    - `GET /api/v2/search` (unified mappings + events query, filters, pagination, sorting, scope, timing).
+    - `GET /api/v2/export/mappings` (JSON/CSV export with filters).
+    - `GET /api/v2/export/events` (JSON/CSV export, 100k safety cap, truncation header).
+  - New migration `0010_add_search_indexes.sql` adding search/time indexes for `events` and `mappings`.
+  - Router wiring in `viewer_routes` for new v2 endpoints.
 - **RBAC & Authentication system** (17-step plan fully implemented):
   - Database migration `0009_add_auth_tables.sql`: `users`, `sessions`, `api_keys`, `audit_log` tables with indexes and triggers.
   - Domain models: `UserRole` (Admin/Operator/Viewer), `User`, `UserPublic`, `Session`, `ApiKeyRecord`, `AuditEntry`.
