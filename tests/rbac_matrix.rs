@@ -1,5 +1,8 @@
 //! RBAC matrix integration tests for TrueID.
 //!
+//! These tests require a running TrueID instance.
+//! Run explicitly: cargo test -p trueid-integration-tests -- --ignored
+//!
 //! Tests that each role (Admin, Operator, Viewer) and anonymous access
 //! gets the correct HTTP status for protected endpoints.
 //!
@@ -71,6 +74,7 @@ async fn get_status(c: &reqwest::Client, path: &str) -> u16 {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_rbac_matrix() {
     // Setup: login as admin, create test users.
     let admin = client();
@@ -124,6 +128,7 @@ async fn test_rbac_matrix() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_api_key_auth() {
     let admin = client();
     assert_eq!(login(&admin, ADMIN_USER, ADMIN_PASS).await, StatusCode::OK);
@@ -173,6 +178,7 @@ async fn test_api_key_auth() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_csrf_protection() {
     // API key requests should NOT require CSRF token.
     let admin = client();

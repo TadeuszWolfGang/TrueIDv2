@@ -1,5 +1,8 @@
 //! Integration tests for TrueID authentication flows.
 //!
+//! These tests require a running TrueID instance.
+//! Run explicitly: cargo test -p trueid-integration-tests -- --ignored
+//!
 //! Requires a running TrueID instance. Set TRUEID_TEST_URL env var
 //! (default: http://127.0.0.1:3000). Bootstrap admin must be created
 //! with TRUEID_ADMIN_USER=admin TRUEID_ADMIN_PASS=integration12345.
@@ -40,6 +43,7 @@ async fn login(c: &reqwest::Client, user: &str, pass: &str) -> (reqwest::StatusC
 // ── Tests ──────────────────────────────────────────────────
 
 #[tokio::test]
+#[ignore]
 async fn test_health() {
     let c = client();
     let resp = c
@@ -51,6 +55,7 @@ async fn test_health() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_login_success() {
     let c = client();
     let (status, body) = login(&c, ADMIN_USER, ADMIN_PASS).await;
@@ -60,6 +65,7 @@ async fn test_login_success() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_login_failure_wrong_password() {
     let c = client();
     let (status, _body) = login(&c, ADMIN_USER, "wrongpassword123").await;
@@ -67,6 +73,7 @@ async fn test_login_failure_wrong_password() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_login_failure_unknown_user() {
     let c = client();
     let (status, _body) = login(&c, "nonexistent_user", "whatever12345").await;
@@ -74,6 +81,7 @@ async fn test_login_failure_unknown_user() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_me_without_auth() {
     let c = client();
     let resp = c
@@ -85,6 +93,7 @@ async fn test_me_without_auth() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_me_after_login() {
     let c = client();
     let (status, _) = login(&c, ADMIN_USER, ADMIN_PASS).await;
@@ -101,6 +110,7 @@ async fn test_me_after_login() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_logout() {
     let c = client();
     let (status, _) = login(&c, ADMIN_USER, ADMIN_PASS).await;
@@ -124,6 +134,7 @@ async fn test_logout() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_token_refresh() {
     let c = client();
     let (status, _) = login(&c, ADMIN_USER, ADMIN_PASS).await;
@@ -147,6 +158,7 @@ async fn test_token_refresh() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_session_listing() {
     let c1 = client();
     let (s1, _) = login(&c1, ADMIN_USER, ADMIN_PASS).await;
@@ -170,6 +182,7 @@ async fn test_session_listing() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_logout_all() {
     let c1 = client();
     let (s1, _) = login(&c1, ADMIN_USER, ADMIN_PASS).await;
@@ -197,6 +210,7 @@ async fn test_logout_all() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_protected_endpoint_without_auth() {
     let c = client();
     let resp = c
@@ -208,6 +222,7 @@ async fn test_protected_endpoint_without_auth() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_admin_endpoint_with_auth() {
     let c = client();
     let (status, _) = login(&c, ADMIN_USER, ADMIN_PASS).await;
@@ -222,6 +237,7 @@ async fn test_admin_endpoint_with_auth() {
 }
 
 #[tokio::test]
+#[ignore]
 async fn test_audit_logs_admin() {
     let c = client();
     let (status, _) = login(&c, ADMIN_USER, ADMIN_PASS).await;

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Changed
+- Refactored `trueid-web` into library + binary split: moved router/app state/handlers to `apps/web/src/lib.rs`, kept startup/bootstrap/server bind in `apps/web/src/main.rs`.
+- Added explicit Cargo targets for web crate (`[lib] trueid_web`, `[[bin]] trueid-web`) and kept static assets fallback only in binary startup.
+- Reworked API v2 in-process tests to import `trueid_web` directly (removed `#[path]` include hack) and run against in-memory SQLite.
+- Marked external integration tests in `tests/auth_integration.rs` and `tests/rbac_matrix.rs` as opt-in (`#[ignore]`) with explicit run instructions.
+
 ### Fixed
 - **Route authorization hardening** — moved `DELETE /api/auth/sessions/{id}` back to `operator_routes` (Operator+), removed accidental exposure from `viewer_routes`.
 - **CSRF on token refresh** — dashboard refresh timer (10 min) now sends `X-CSRF-Token` header, preventing 403 and forced logout.

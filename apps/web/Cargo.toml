@@ -3,6 +3,14 @@ name = "trueid-web"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "trueid_web"
+path = "src/lib.rs"
+
+[[bin]]
+name = "trueid-web"
+path = "src/main.rs"
+
 [dependencies]
 anyhow = { workspace = true }
 async-trait = "0.1"
@@ -23,3 +31,8 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
 dotenvy = "0.15"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+hyper = "1"
