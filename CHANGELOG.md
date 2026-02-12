@@ -13,6 +13,12 @@
 - **Removed unused `cookie` crate** dependency from `apps/web/Cargo.toml`.
 
 ### Added
+- **Timeline API (v2):**
+  - Added `routes_timeline.rs` with investigation endpoints:
+    - `GET /api/v2/timeline/ip/{ip}` (current mapping, paginated events, user transitions, unresolved conflicts count).
+    - `GET /api/v2/timeline/user/{user}` (active mappings, paginated events, distinct IP list).
+    - `GET /api/v2/timeline/mac/{mac}` (current mappings and mapping-based IP history).
+  - Wired timeline routes in `viewer_routes` for authenticated read access.
 - **Conflict detection foundation (v2):**
   - Added migration `0011_add_conflicts_table.sql` with `conflicts` table and indexes.
   - Added engine conflict detection module (`apps/engine/src/conflicts.rs`) for `ip_user_change`, `mac_ip_conflict`, and `duplicate_mac` with 5-minute dedup.

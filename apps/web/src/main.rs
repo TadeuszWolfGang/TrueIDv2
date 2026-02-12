@@ -12,6 +12,7 @@ mod routes_audit;
 mod routes_auth;
 mod routes_conflicts;
 mod routes_search;
+mod routes_timeline;
 mod routes_users;
 
 use anyhow::Result;
@@ -671,6 +672,9 @@ async fn main() -> Result<()> {
         .route("/api/v2/search", get(routes_search::search))
         .route("/api/v2/export/mappings", get(routes_search::export_mappings))
         .route("/api/v2/export/events", get(routes_search::export_events))
+        .route("/api/v2/timeline/ip/{ip}", get(routes_timeline::timeline_ip))
+        .route("/api/v2/timeline/user/{user}", get(routes_timeline::timeline_user))
+        .route("/api/v2/timeline/mac/{mac}", get(routes_timeline::timeline_mac))
         .route("/api/v2/conflicts", get(routes_conflicts::list_conflicts))
         .route("/api/v2/conflicts/stats", get(routes_conflicts::conflict_stats))
         .route("/api/v1/stats", get(api_v1_stats))
