@@ -134,7 +134,10 @@ pub(crate) async fn api_v1_mappings(
     let count_sql = format!("SELECT COUNT(*) as c FROM mappings m {}", where_clause);
     let data_sql = format!(
         "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
-                m.subnet_id, s.name as subnet_name, d.hostname, m.device_type
+                m.subnet_id, s.name as subnet_name, d.hostname, m.device_type, m.multi_user,
+                (SELECT GROUP_CONCAT(DISTINCT sess.user)
+                 FROM ip_sessions sess
+                 WHERE sess.ip = m.ip AND sess.is_active = 1) as session_users
          FROM mappings m
          LEFT JOIN subnets s ON m.subnet_id = s.id
          LEFT JOIN dns_cache d ON m.ip = d.ip

@@ -451,7 +451,10 @@ pub async fn search(
         let count_sql = format!("SELECT COUNT(*) as c FROM mappings m {where_clause}");
         let data_sql = format!(
             "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
-                    m.subnet_id, s.name as subnet_name, d.hostname, m.device_type
+                    m.subnet_id, s.name as subnet_name, d.hostname, m.device_type, m.multi_user,
+                    (SELECT GROUP_CONCAT(DISTINCT sess.user)
+                     FROM ip_sessions sess
+                     WHERE sess.ip = m.ip AND sess.is_active = 1) as session_users
              FROM mappings m
              LEFT JOIN subnets s ON m.subnet_id = s.id
              LEFT JOIN dns_cache d ON m.ip = d.ip
@@ -615,7 +618,10 @@ pub async fn export_mappings(
     };
     let sql = format!(
         "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
-                m.subnet_id, s.name as subnet_name, d.hostname, m.device_type
+                m.subnet_id, s.name as subnet_name, d.hostname, m.device_type, m.multi_user,
+                (SELECT GROUP_CONCAT(DISTINCT sess.user)
+                 FROM ip_sessions sess
+                 WHERE sess.ip = m.ip AND sess.is_active = 1) as session_users
          FROM mappings m
          LEFT JOIN subnets s ON m.subnet_id = s.id
          LEFT JOIN dns_cache d ON m.ip = d.ip
@@ -685,12 +691,13 @@ pub async fn export_mappings(
     }
 
     let mut csv = String::from(
-        "ip,user,mac,source,last_seen,confidence,is_active,vendor,subnet_id,subnet_name,hostname,device_type\n",
+        "ip,user,mac,source,last_seen,confidence,is_active,vendor,subnet_id,subnet_name,hostname,device_type,multi_user,current_users\n",
     );
     for row in &data {
         let user = row.current_users.first().cloned().unwrap_or_default();
+        let current_users = row.current_users.join(";");
         let line = format!(
-            "{},{},{},{},{},{},{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
             csv_escape(&row.ip),
             csv_escape(&user),
             csv_escape(row.mac.as_deref().unwrap_or("")),
@@ -703,6 +710,8 @@ pub async fn export_mappings(
             csv_escape(row.subnet_name.as_deref().unwrap_or("")),
             csv_escape(row.hostname.as_deref().unwrap_or("")),
             csv_escape(row.device_type.as_deref().unwrap_or("")),
+            row.multi_user,
+            csv_escape(&current_users),
         );
         csv.push_str(&line);
     }

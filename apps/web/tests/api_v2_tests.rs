@@ -10,7 +10,7 @@ use chrono::{Duration, Utc};
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use std::net::IpAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Once};
 use tower::ServiceExt;
 use trueid_common::db::init_db;
 use trueid_common::model::{IdentityEvent, SourceType, UserRole};
@@ -128,6 +128,71 @@ async fn seed_test_data(db: &trueid_common::db::Db) {
             .await
             .expect("history upsert_mapping failed");
     }
+
+    // Phase 2 seed: subnets.
+    sqlx::query(
+        "INSERT INTO subnets (id, cidr, name, vlan_id, location) VALUES (1, '10.1.2.0/24', 'Office LAN', 100, 'Floor 3')",
+    )
+    .execute(db.pool())
+    .await
+    .expect("insert subnet 1 failed");
+    sqlx::query(
+        "INSERT INTO subnets (id, cidr, name, vlan_id) VALUES (2, '192.168.1.0/24', 'Server VLAN', 200)",
+    )
+    .execute(db.pool())
+    .await
+    .expect("insert subnet 2 failed");
+
+    sqlx::query("UPDATE mappings SET subnet_id = 1 WHERE ip LIKE '10.1.2.%'")
+        .execute(db.pool())
+        .await
+        .expect("tag mappings subnet 1 failed");
+    sqlx::query("UPDATE mappings SET subnet_id = 2 WHERE ip LIKE '192.168.1.%'")
+        .execute(db.pool())
+        .await
+        .expect("tag mappings subnet 2 failed");
+
+    // Phase 2 seed: dns cache.
+    sqlx::query(
+        "INSERT INTO dns_cache (ip, hostname, resolved_at, expires_at) VALUES ('10.1.2.3', 'jkowalski-pc.corp.local', datetime('now'), datetime('now', '+1 hour'))",
+    )
+    .execute(db.pool())
+    .await
+    .expect("insert dns 10.1.2.3 failed");
+    sqlx::query(
+        "INSERT INTO dns_cache (ip, hostname, previous_hostname, resolved_at, expires_at, resolve_count) VALUES ('10.1.2.4', 'asmith-laptop.corp.local', 'old-host.corp.local', datetime('now'), datetime('now', '+1 hour'), 3)",
+    )
+    .execute(db.pool())
+    .await
+    .expect("insert dns 10.1.2.4 failed");
+
+    // Phase 2 seed: DHCP observations + mapping device type.
+    sqlx::query(
+        "INSERT INTO dhcp_observations (mac, fingerprint, device_type, hostname, ip, match_source) VALUES ('AA:BB:CC:DD:EE:01', '1,3,6,15,31,33,43,44,46,47,119,121,249,252', 'Windows 10/11', 'jkowalski-pc', '10.1.2.3', 'exact')",
+    )
+    .execute(db.pool())
+    .await
+    .expect("insert dhcp observation failed");
+    sqlx::query("UPDATE mappings SET device_type = 'Windows 10/11' WHERE ip = '10.1.2.3'")
+        .execute(db.pool())
+        .await
+        .expect("update mapping device_type failed");
+
+    // Multi-user session seed (terminal server style).
+    sqlx::query(
+        "INSERT OR IGNORE INTO ip_sessions (ip, user, source, mac, session_start, last_seen, is_active)
+         VALUES
+         ('10.1.2.3', 'jkowalski', 'Radius', 'AA:BB:CC:DD:EE:01', datetime('now'), datetime('now'), 1),
+         ('10.1.2.3', 'asmith', 'AdLog', 'AA:BB:CC:DD:EE:01', datetime('now'), datetime('now'), 1),
+         ('10.1.2.3', 'tsguest', 'Manual', 'AA:BB:CC:DD:EE:01', datetime('now'), datetime('now'), 1)",
+    )
+    .execute(db.pool())
+    .await
+    .expect("insert ip_sessions seed failed");
+    sqlx::query("UPDATE mappings SET multi_user = 1 WHERE ip = '10.1.2.3'")
+        .execute(db.pool())
+        .await
+        .expect("update mapping multi_user failed");
 }
 
 /// Logs in and returns combined auth cookie header.
@@ -227,6 +292,122 @@ async fn auth_get_raw(app: &Router, cookie: &str, uri: &str) -> (StatusCode, Hea
         .to_bytes()
         .to_vec();
     (status, headers, body)
+}
+
+/// Extracts CSRF token value from login cookie string.
+///
+/// Parameters: `cookie` - combined Cookie header value.
+/// Returns: CSRF token string or empty string when missing.
+fn csrf_from_cookie(cookie: &str) -> String {
+    cookie
+        .split(';')
+        .map(str::trim)
+        .find_map(|part| part.strip_prefix("trueid_csrf_token=").map(str::to_string))
+        .unwrap_or_default()
+}
+
+/// Executes authenticated POST with JSON body and parses JSON response.
+///
+/// Parameters: `app` - test router, `cookie` - cookie header string, `uri` - path, `body` - JSON payload.
+/// Returns: `(status, json_body)`.
+async fn auth_post(app: &Router, cookie: &str, uri: &str, body: &Value) -> (StatusCode, Value) {
+    let req = Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header("cookie", cookie)
+        .header("x-csrf-token", csrf_from_cookie(cookie))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_string(body).expect("serialize post body failed"),
+        ))
+        .expect("build auth_post request failed");
+    let resp = app
+        .clone()
+        .oneshot(req)
+        .await
+        .expect("auth_post execution failed");
+    let status = resp.status();
+    let bytes = resp
+        .into_body()
+        .collect()
+        .await
+        .expect("collect post body failed")
+        .to_bytes();
+    let json_body: Value = serde_json::from_slice(&bytes).unwrap_or(json!(null));
+    (status, json_body)
+}
+
+/// Executes authenticated PUT with JSON body and parses JSON response.
+///
+/// Parameters: `app` - test router, `cookie` - cookie header string, `uri` - path, `body` - JSON payload.
+/// Returns: `(status, json_body)`.
+async fn auth_put(app: &Router, cookie: &str, uri: &str, body: &Value) -> (StatusCode, Value) {
+    let req = Request::builder()
+        .method("PUT")
+        .uri(uri)
+        .header("cookie", cookie)
+        .header("x-csrf-token", csrf_from_cookie(cookie))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_string(body).expect("serialize put body failed"),
+        ))
+        .expect("build auth_put request failed");
+    let resp = app
+        .clone()
+        .oneshot(req)
+        .await
+        .expect("auth_put execution failed");
+    let status = resp.status();
+    let bytes = resp
+        .into_body()
+        .collect()
+        .await
+        .expect("collect put body failed")
+        .to_bytes();
+    let json_body: Value = serde_json::from_slice(&bytes).unwrap_or(json!(null));
+    (status, json_body)
+}
+
+/// Executes authenticated DELETE and parses JSON response.
+///
+/// Parameters: `app` - test router, `cookie` - cookie header string, `uri` - path.
+/// Returns: `(status, json_body)`.
+async fn auth_delete(app: &Router, cookie: &str, uri: &str) -> (StatusCode, Value) {
+    let req = Request::builder()
+        .method("DELETE")
+        .uri(uri)
+        .header("cookie", cookie)
+        .header("x-csrf-token", csrf_from_cookie(cookie))
+        .body(Body::empty())
+        .expect("build auth_delete request failed");
+    let resp = app
+        .clone()
+        .oneshot(req)
+        .await
+        .expect("auth_delete execution failed");
+    let status = resp.status();
+    let bytes = resp
+        .into_body()
+        .collect()
+        .await
+        .expect("collect delete body failed")
+        .to_bytes();
+    let json_body: Value = serde_json::from_slice(&bytes).unwrap_or(json!(null));
+    (status, json_body)
+}
+
+/// Ensures CONFIG_ENCRYPTION_KEY is set for switch CRUD tests.
+///
+/// Parameters: none.
+/// Returns: none.
+fn ensure_test_encryption_key() {
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        std::env::set_var(
+            "CONFIG_ENCRYPTION_KEY",
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        );
+    });
 }
 
 #[tokio::test]
@@ -466,7 +647,7 @@ async fn test_export_mappings_csv() {
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(
         lines.first().copied().unwrap_or(""),
-        "ip,user,mac,source,last_seen,confidence,is_active,vendor,subnet_id,subnet_name,hostname"
+        "ip,user,mac,source,last_seen,confidence,is_active,vendor,subnet_id,subnet_name,hostname,device_type,multi_user,current_users"
     );
     assert_eq!(lines.len(), 6);
 }
@@ -570,6 +751,609 @@ async fn test_lookup_still_works() {
     assert_eq!(status, StatusCode::OK, "lookup body: {body}");
     assert!(body["mapping"].is_object() || body["mapping"].is_null());
     assert!(body["recent_events"].is_array());
+}
+
+#[tokio::test]
+async fn test_v1_mappings_has_enrichment_fields() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v1/mappings?limit=50").await;
+    assert_eq!(status, StatusCode::OK);
+    let rows = body["data"].as_array().cloned().unwrap_or_default();
+    let target = rows
+        .iter()
+        .find(|r| r["ip"] == "10.1.2.3")
+        .expect("expected mapping 10.1.2.3");
+    assert_eq!(target["subnet_name"], "Office LAN");
+    assert_eq!(target["hostname"], "jkowalski-pc.corp.local");
+    assert_eq!(target["device_type"], "Windows 10/11");
+}
+
+#[tokio::test]
+async fn test_export_csv_has_enrichment_columns() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, _, body) = auth_get_raw(&app, &cookie, "/api/v2/export/mappings?format=csv").await;
+    assert_eq!(status, StatusCode::OK);
+    let csv = String::from_utf8(body).expect("csv decode failed");
+    let lines: Vec<&str> = csv.lines().collect();
+    assert_eq!(
+        lines.first().copied().unwrap_or(""),
+        "ip,user,mac,source,last_seen,confidence,is_active,vendor,subnet_id,subnet_name,hostname,device_type,multi_user,current_users"
+    );
+    let row = lines
+        .iter()
+        .find(|l| l.starts_with("10.1.2.3,"))
+        .expect("missing 10.1.2.3 row");
+    assert!(row.contains("Office LAN"));
+    assert!(row.contains("jkowalski-pc.corp.local"));
+    assert!(row.contains("Windows 10/11"));
+}
+
+#[tokio::test]
+async fn test_search_returns_enrichment_fields() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/search?q=10.1.2.3&scope=mappings").await;
+    assert_eq!(status, StatusCode::OK);
+    let rows = body["mappings"]["data"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let target = rows
+        .iter()
+        .find(|r| r["ip"] == "10.1.2.3")
+        .expect("expected mapping 10.1.2.3");
+    assert_eq!(target["subnet_name"], "Office LAN");
+    assert_eq!(target["hostname"], "jkowalski-pc.corp.local");
+    assert_eq!(target["device_type"], "Windows 10/11");
+}
+
+#[tokio::test]
+async fn test_multi_user_session_tracking() {
+    let (app, db) = build_test_app().await;
+    let ip = "10.9.9.9";
+    for user in ["alice", "bob", "carol"] {
+        let event = IdentityEvent {
+            source: SourceType::Radius,
+            ip: ip.parse::<IpAddr>().expect("ip parse failed"),
+            user: user.to_string(),
+            timestamp: Utc::now(),
+            raw_data: format!("multi-user event for {user}"),
+            mac: Some("AA:BB:CC:DD:EE:99".to_string()),
+            confidence_score: 90,
+        };
+        db.upsert_mapping(event, Some("TestVendor"))
+            .await
+            .expect("multi-user upsert failed");
+    }
+
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v1/mappings?search=10.9.9.9").await;
+    assert_eq!(status, StatusCode::OK);
+    let rows = body["data"].as_array().cloned().unwrap_or_default();
+    let target = rows
+        .iter()
+        .find(|r| r["ip"] == ip)
+        .expect("expected multi-user mapping");
+    assert_eq!(target["multi_user"], true);
+    let users = target["current_users"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|v| v.as_str().map(str::to_string))
+        .collect::<Vec<_>>();
+    assert!(users.iter().any(|u| u == "alice"));
+    assert!(users.iter().any(|u| u == "bob"));
+    assert!(users.iter().any(|u| u == "carol"));
+}
+
+#[tokio::test]
+async fn test_single_user_not_multi() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v1/mappings?search=192.168.1.11").await;
+    assert_eq!(status, StatusCode::OK);
+    let rows = body["data"].as_array().cloned().unwrap_or_default();
+    let target = rows
+        .iter()
+        .find(|r| r["ip"] == "192.168.1.11")
+        .expect("expected single-user mapping");
+    assert_eq!(target["multi_user"], false);
+    assert_eq!(target["current_users"][0], "bwilson");
+}
+
+#[tokio::test]
+async fn test_ipv6_mapping() {
+    let (app, db) = build_test_app().await;
+    let ipv6 = "2001:db8::10";
+    let event = IdentityEvent {
+        source: SourceType::Manual,
+        ip: ipv6.parse::<IpAddr>().expect("ipv6 parse failed"),
+        user: "ipv6user".to_string(),
+        timestamp: Utc::now(),
+        raw_data: "ipv6 test event".to_string(),
+        mac: Some("AA:BB:CC:DD:EE:66".to_string()),
+        confidence_score: 100,
+    };
+    db.upsert_mapping(event, Some("TestVendor"))
+        .await
+        .expect("ipv6 upsert failed");
+
+    sqlx::query(
+        "INSERT INTO subnets (cidr, name, vlan_id) VALUES ('2001:db8::/32', 'IPv6 LAN', 300)",
+    )
+    .execute(db.pool())
+    .await
+    .expect("insert ipv6 subnet failed");
+    sqlx::query(
+        "UPDATE mappings
+         SET subnet_id = (SELECT id FROM subnets WHERE cidr = '2001:db8::/32')
+         WHERE ip = ?",
+    )
+    .bind(ipv6)
+    .execute(db.pool())
+    .await
+    .expect("tag ipv6 mapping failed");
+
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v1/mappings?search=2001:db8::10").await;
+    assert_eq!(status, StatusCode::OK);
+    let rows = body["data"].as_array().cloned().unwrap_or_default();
+    let target = rows
+        .iter()
+        .find(|r| r["ip"] == ipv6)
+        .expect("expected ipv6 mapping");
+    assert_eq!(target["subnet_name"], "IPv6 LAN");
+}
+
+#[tokio::test]
+async fn test_list_subnets() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/subnets").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.as_array().map(|a| a.len()).unwrap_or(0), 2);
+}
+
+#[tokio::test]
+async fn test_subnet_stats() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/subnets/stats").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total_subnets"].as_i64().unwrap_or(-1), 2);
+    assert_eq!(body["total_tagged_mappings"].as_i64().unwrap_or(-1), 5);
+}
+
+#[tokio::test]
+async fn test_subnet_mappings() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/subnets/1/mappings").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"].as_i64().unwrap_or(-1), 3);
+}
+
+#[tokio::test]
+async fn test_create_subnet() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/subnets",
+        &json!({"cidr":"172.16.0.0/16","name":"VPN"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(created["name"], "VPN");
+    let (status, list) = auth_get(&app, &cookie, "/api/v2/subnets").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list.as_array().map(|a| a.len()).unwrap_or(0), 3);
+}
+
+#[tokio::test]
+async fn test_create_subnet_duplicate_cidr() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/subnets",
+        &json!({"cidr":"10.1.2.0/24","name":"Dup"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["code"], "CONFLICT");
+}
+
+#[tokio::test]
+async fn test_create_subnet_invalid_vlan() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/subnets",
+        &json!({"cidr":"10.10.0.0/16","name":"X","vlan_id":5000}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], "INVALID_INPUT");
+}
+
+#[tokio::test]
+async fn test_update_subnet() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_put(
+        &app,
+        &cookie,
+        "/api/v2/subnets/1",
+        &json!({"name":"Renamed LAN","location":"Floor 5"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["name"], "Renamed LAN");
+    assert_eq!(body["location"], "Floor 5");
+}
+
+#[tokio::test]
+async fn test_delete_subnet_cascades_null() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, _) = auth_delete(&app, &cookie, "/api/v2/subnets/1").await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (status, body) = auth_get(&app, &cookie, "/api/v1/mappings?limit=50").await;
+    assert_eq!(status, StatusCode::OK);
+    let rows = body["data"].as_array().cloned().unwrap_or_default();
+    for row in &rows {
+        assert_ne!(row["subnet_name"], "Office LAN");
+    }
+}
+
+#[tokio::test]
+async fn test_list_dns() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/dns").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"].as_i64().unwrap_or(-1), 2);
+}
+
+#[tokio::test]
+async fn test_dns_stats() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/dns/stats").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total_cached"].as_i64().unwrap_or(-1), 2);
+    assert_eq!(body["resolved_ok"].as_i64().unwrap_or(-1), 2);
+}
+
+#[tokio::test]
+async fn test_dns_by_ip() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/dns/10.1.2.4").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["hostname"], "asmith-laptop.corp.local");
+    assert_eq!(body["previous_hostname"], "old-host.corp.local");
+}
+
+#[tokio::test]
+async fn test_delete_dns_entry() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, _) = auth_delete(&app, &cookie, "/api/v2/dns/10.1.2.3").await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = auth_get(&app, &cookie, "/api/v2/dns/10.1.2.3").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_flush_dns_cache() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_post(&app, &cookie, "/api/v2/dns/flush", &json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["deleted"].as_i64().unwrap_or(0), 2);
+    let (status, stats) = auth_get(&app, &cookie, "/api/v2/dns/stats").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(stats["total_cached"].as_i64().unwrap_or(-1), 0);
+}
+
+#[tokio::test]
+async fn test_list_switches_empty() {
+    ensure_test_encryption_key();
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/switches").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.as_array().map(|a| a.len()).unwrap_or(0), 0);
+}
+
+#[tokio::test]
+async fn test_create_switch() {
+    ensure_test_encryption_key();
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/switches",
+        &json!({"ip":"10.0.0.1","name":"Core Switch","community":"public"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ip"], "10.0.0.1");
+    assert!(body.get("community").is_none());
+    assert!(body.get("community_encrypted").is_none());
+}
+
+#[tokio::test]
+async fn test_create_switch_duplicate_ip() {
+    ensure_test_encryption_key();
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let _ = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/switches",
+        &json!({"ip":"10.0.0.1","name":"Core Switch","community":"public"}),
+    )
+    .await;
+    let (status, body) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/switches",
+        &json!({"ip":"10.0.0.1","name":"Core Switch 2","community":"public"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["code"], "CONFLICT");
+}
+
+#[tokio::test]
+async fn test_update_switch() {
+    ensure_test_encryption_key();
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (_, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/switches",
+        &json!({"ip":"10.0.0.2","name":"Old Name","community":"public"}),
+    )
+    .await;
+    let id = created["id"].as_i64().unwrap_or(0);
+    let (status, body) = auth_put(
+        &app,
+        &cookie,
+        &format!("/api/v2/switches/{id}"),
+        &json!({"name":"Renamed"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["name"], "Renamed");
+}
+
+#[tokio::test]
+async fn test_delete_switch() {
+    ensure_test_encryption_key();
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (_, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/switches",
+        &json!({"ip":"10.0.0.3","name":"DeleteMe","community":"public"}),
+    )
+    .await;
+    let id = created["id"].as_i64().unwrap_or(0);
+    let (status, _) = auth_delete(&app, &cookie, &format!("/api/v2/switches/{id}")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, list) = auth_get(&app, &cookie, "/api/v2/switches").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list.as_array().map(|a| a.len()).unwrap_or(0), 0);
+}
+
+#[tokio::test]
+async fn test_switch_stats() {
+    ensure_test_encryption_key();
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, stats0) = auth_get(&app, &cookie, "/api/v2/switches/stats").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(stats0["total_switches"].as_i64().unwrap_or(-1), 0);
+    let _ = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/switches",
+        &json!({"ip":"10.0.0.4","name":"S1","community":"public"}),
+    )
+    .await;
+    let (status, stats1) = auth_get(&app, &cookie, "/api/v2/switches/stats").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(stats1["total_switches"].as_i64().unwrap_or(-1), 1);
+}
+
+#[tokio::test]
+async fn test_switch_community_never_in_response() {
+    ensure_test_encryption_key();
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (_, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/switches",
+        &json!({"ip":"10.0.0.5","name":"NoSecret","community":"public"}),
+    )
+    .await;
+    let id = created["id"].as_i64().unwrap_or(0);
+    let (status, body) = auth_get(&app, &cookie, &format!("/api/v2/switches/{id}")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.get("community").is_none());
+    assert!(body.get("community_encrypted").is_none());
+}
+
+#[tokio::test]
+async fn test_list_fingerprints() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/fingerprints").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.as_array().map(|a| a.len()).unwrap_or(0) >= 20);
+}
+
+#[tokio::test]
+async fn test_fingerprint_stats() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/fingerprints/stats").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["builtin_fingerprints"].as_i64().unwrap_or(0) >= 20);
+    assert_eq!(body["total_observations"].as_i64().unwrap_or(-1), 1);
+}
+
+#[tokio::test]
+async fn test_list_observations() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/fingerprints/observations").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"].as_i64().unwrap_or(-1), 1);
+    assert_eq!(body["data"][0]["mac"], "AA:BB:CC:DD:EE:01");
+}
+
+#[tokio::test]
+async fn test_create_custom_fingerprint() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/fingerprints",
+        &json!({"fingerprint":"15,3,1,6,28","device_type":"Custom Sensor"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(created["source"], "user");
+    assert_eq!(created["fingerprint"], "1,3,6,15,28");
+}
+
+#[tokio::test]
+async fn test_delete_builtin_fingerprint_forbidden() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, list) = auth_get(&app, &cookie, "/api/v2/fingerprints").await;
+    assert_eq!(status, StatusCode::OK);
+    let rows = list.as_array().cloned().unwrap_or_default();
+    let builtin_id = rows
+        .iter()
+        .find(|r| r["source"] == "builtin")
+        .and_then(|r| r["id"].as_i64())
+        .expect("missing builtin fingerprint");
+    let (status, body) =
+        auth_delete(&app, &cookie, &format!("/api/v2/fingerprints/{builtin_id}")).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body["code"], "FORBIDDEN");
+}
+
+#[tokio::test]
+async fn test_delete_user_fingerprint_ok() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (_, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/fingerprints",
+        &json!({"fingerprint":"1,3,6,15,28","device_type":"Custom Sensor"}),
+    )
+    .await;
+    let id = created["id"].as_i64().unwrap_or(0);
+    let (status, _) = auth_delete(&app, &cookie, &format!("/api/v2/fingerprints/{id}")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn test_fingerprint_backfill() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) =
+        auth_post(&app, &cookie, "/api/v2/fingerprints/backfill", &json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["updated"].as_u64().is_some());
+}
+
+#[tokio::test]
+async fn test_phase2_viewer_cannot_mutate() {
+    ensure_test_encryption_key();
+    let (app, db) = build_test_app().await;
+    let viewer = db
+        .create_user("testviewer", "testpassword123", UserRole::Viewer)
+        .await
+        .expect("create viewer failed");
+    db.set_force_password_change(viewer.id, false)
+        .await
+        .expect("set force password failed");
+    let cookie = login_and_get_cookie(&app, "testviewer", "testpassword123").await;
+
+    let (s1, _) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/subnets",
+        &json!({"cidr":"172.30.0.0/16","name":"ViewerWrite"}),
+    )
+    .await;
+    assert_eq!(s1, StatusCode::FORBIDDEN);
+
+    let (s2, _) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/switches",
+        &json!({"ip":"10.0.9.1","name":"ViewerSwitch","community":"public"}),
+    )
+    .await;
+    assert_eq!(s2, StatusCode::FORBIDDEN);
+
+    let (s3, _) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/fingerprints",
+        &json!({"fingerprint":"1,3,6,15","device_type":"Viewer Custom"}),
+    )
+    .await;
+    assert_eq!(s3, StatusCode::FORBIDDEN);
+
+    let (s4, _) = auth_delete(&app, &cookie, "/api/v2/dns/10.1.2.3").await;
+    assert_eq!(s4, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn test_phase2_no_auth_rejected() {
+    let (app, _) = build_test_app().await;
+    for uri in [
+        "/api/v2/subnets",
+        "/api/v2/dns",
+        "/api/v2/switches",
+        "/api/v2/fingerprints",
+    ] {
+        let req = Request::builder()
+            .method("GET")
+            .uri(uri)
+            .body(Body::empty())
+            .expect("build no-auth request failed");
+        let resp = app
+            .clone()
+            .oneshot(req)
+            .await
+            .expect("execute no-auth request failed");
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "uri={uri}");
+    }
 }
 
 #[tokio::test]

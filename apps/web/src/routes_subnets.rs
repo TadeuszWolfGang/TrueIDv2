@@ -88,27 +88,27 @@ struct PaginatedSubnetMappings {
     per_page: i64,
 }
 
-/// Parses IPv4 CIDR into network/mask components.
+/// Parses IPv4/IPv6 CIDR into network/mask components.
 ///
 /// Parameters: `cidr` - CIDR string.
-/// Returns: `(network_u32, mask_u32)` for valid IPv4 CIDR, otherwise `None`.
-fn parse_cidr(cidr: &str) -> Option<(u32, u32)> {
+/// Returns: `Some(())` for valid CIDR, otherwise `None`.
+fn parse_cidr(cidr: &str) -> Option<()> {
     let parts: Vec<&str> = cidr.splitn(2, '/').collect();
     if parts.len() != 2 {
         return None;
     }
-    let ip: std::net::Ipv4Addr = parts[0].parse().ok()?;
     let prefix_len: u32 = parts[1].parse().ok()?;
-    if prefix_len > 32 {
-        return None;
+    if let Ok(_ip) = parts[0].parse::<std::net::Ipv4Addr>() {
+        if prefix_len <= 32 {
+            return Some(());
+        }
     }
-    let mask = if prefix_len == 0 {
-        0
-    } else {
-        !0u32 << (32 - prefix_len)
-    };
-    let network = u32::from(ip) & mask;
-    Some((network, mask))
+    if let Ok(_ip) = parts[0].parse::<std::net::Ipv6Addr>() {
+        if prefix_len <= 128 {
+            return Some(());
+        }
+    }
+    None
 }
 
 /// Validates subnet payload fields.
@@ -126,7 +126,7 @@ fn validate_fields(
             return Err(ApiError::new(
                 StatusCode::BAD_REQUEST,
                 error::INVALID_INPUT,
-                "Invalid CIDR. Only valid IPv4 CIDR is supported.",
+                "Invalid CIDR. Use valid IPv4 or IPv6 CIDR.",
             )
             .with_request_id(request_id));
         }
@@ -654,7 +654,10 @@ pub(crate) async fn subnet_mappings(
 
     let rows = sqlx::query(
         "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
-                m.subnet_id, s.name as subnet_name, d.hostname, m.device_type
+                m.subnet_id, s.name as subnet_name, d.hostname, m.device_type, m.multi_user,
+                (SELECT GROUP_CONCAT(DISTINCT sess.user)
+                 FROM ip_sessions sess
+                 WHERE sess.ip = m.ip AND sess.is_active = 1) as session_users
          FROM mappings m
          LEFT JOIN subnets s ON m.subnet_id = s.id
          LEFT JOIN dns_cache d ON m.ip = d.ip

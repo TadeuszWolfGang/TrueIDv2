@@ -167,6 +167,37 @@ impl Db {
             }
         }
 
+        sqlx::query(
+            "INSERT INTO ip_sessions (ip, user, source, mac, session_start, last_seen, is_active)
+             VALUES (?, ?, ?, ?, ?, ?, 1)
+             ON CONFLICT(ip, user, source) DO UPDATE SET
+                 last_seen = excluded.last_seen,
+                 mac = COALESCE(excluded.mac, ip_sessions.mac),
+                 is_active = 1",
+        )
+        .bind(&ip)
+        .bind(&event.user)
+        .bind(source)
+        .bind(mac)
+        .bind(last_seen)
+        .bind(last_seen)
+        .execute(&mut *tx)
+        .await?;
+
+        let active_count: i64 =
+            sqlx::query("SELECT COUNT(DISTINCT user) as c FROM ip_sessions WHERE ip = ? AND is_active = 1")
+                .bind(&ip)
+                .fetch_one(&mut *tx)
+                .await?
+                .try_get("c")
+                .unwrap_or(0);
+
+        sqlx::query("UPDATE mappings SET multi_user = ? WHERE ip = ?")
+            .bind(active_count > 1)
+            .bind(&ip)
+            .execute(&mut *tx)
+            .await?;
+
         tx.commit().await?;
 
         Ok(())
@@ -179,7 +210,10 @@ impl Db {
     pub async fn get_mapping(&self, ip: &str) -> Result<Option<DeviceMapping>> {
         let row = sqlx::query(
             "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
-                    m.subnet_id, s.name as subnet_name, d.hostname, m.device_type
+                    m.subnet_id, s.name as subnet_name, d.hostname, m.device_type, m.multi_user,
+                    (SELECT GROUP_CONCAT(DISTINCT sess.user)
+                     FROM ip_sessions sess
+                     WHERE sess.ip = m.ip AND sess.is_active = 1) as session_users
              FROM mappings m
              LEFT JOIN subnets s ON m.subnet_id = s.id
              LEFT JOIN dns_cache d ON m.ip = d.ip
@@ -208,6 +242,26 @@ impl Db {
         .bind(-ttl_minutes)
         .execute(&self.pool)
         .await?;
+
+        sqlx::query(
+            "UPDATE ip_sessions SET is_active = 0
+             WHERE is_active = 1 AND last_seen < datetime('now', ? || ' minutes')",
+        )
+        .bind(-ttl_minutes)
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            "UPDATE mappings
+             SET multi_user = (
+                 SELECT CASE WHEN COUNT(DISTINCT user) > 1 THEN 1 ELSE 0 END
+                 FROM ip_sessions
+                 WHERE ip = mappings.ip AND is_active = 1
+             )",
+        )
+        .execute(&self.pool)
+        .await?;
+
         Ok(result.rows_affected())
     }
 
@@ -218,7 +272,10 @@ impl Db {
     pub async fn get_active_mappings(&self) -> Result<Vec<DeviceMapping>> {
         let rows = sqlx::query(
             "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
-                    m.subnet_id, s.name as subnet_name, d.hostname, m.device_type
+                    m.subnet_id, s.name as subnet_name, d.hostname, m.device_type, m.multi_user,
+                    (SELECT GROUP_CONCAT(DISTINCT sess.user)
+                     FROM ip_sessions sess
+                     WHERE sess.ip = m.ip AND sess.is_active = 1) as session_users
              FROM mappings m
              LEFT JOIN subnets s ON m.subnet_id = s.id
              LEFT JOIN dns_cache d ON m.ip = d.ip
@@ -501,7 +558,10 @@ impl Db {
     pub async fn get_recent_mappings(&self, limit: i64) -> Result<Vec<DeviceMapping>> {
         let rows = sqlx::query(
             "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
-                    m.subnet_id, s.name as subnet_name, d.hostname, m.device_type
+                    m.subnet_id, s.name as subnet_name, d.hostname, m.device_type, m.multi_user,
+                    (SELECT GROUP_CONCAT(DISTINCT sess.user)
+                     FROM ip_sessions sess
+                     WHERE sess.ip = m.ip AND sess.is_active = 1) as session_users
              FROM mappings m
              LEFT JOIN subnets s ON m.subnet_id = s.id
              LEFT JOIN dns_cache d ON m.ip = d.ip

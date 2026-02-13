@@ -143,23 +143,28 @@ pub async fn evaluate_event(
         None
     };
 
-    let mut subnet_is_new = None;
-    if let std::net::IpAddr::V4(v4) = event.ip {
-        let octets = v4.octets();
-        let prefix = format!("{}.{}.{}.%", octets[0], octets[1], octets[2]);
-        subnet_is_new =
-            match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM mappings WHERE ip LIKE ?")
-                .bind(prefix)
-                .fetch_one(pool)
-                .await
-            {
-                Ok(v) => Some(v == 0),
-                Err(e) => {
-                    warn!(error = %e, ip = %ip, "Alert evaluate: failed subnet query");
-                    None
-                }
-            };
-    }
+    let subnet_prefix = match event.ip {
+        std::net::IpAddr::V4(v4) => {
+            let octets = v4.octets();
+            format!("{}.{}.{}.%", octets[0], octets[1], octets[2])
+        }
+        std::net::IpAddr::V6(v6) => {
+            let seg = v6.segments();
+            format!("{:x}:{:x}:{:x}:{:x}:%", seg[0], seg[1], seg[2], seg[3])
+        }
+    };
+    let subnet_is_new =
+        match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM mappings WHERE ip LIKE ?")
+            .bind(subnet_prefix)
+            .fetch_one(pool)
+            .await
+        {
+            Ok(v) => Some(v == 0),
+            Err(e) => {
+                warn!(error = %e, ip = %ip, "Alert evaluate: failed subnet query");
+                None
+            }
+        };
 
     for rule in rules {
         let should_fire = match rule.rule_type.as_str() {

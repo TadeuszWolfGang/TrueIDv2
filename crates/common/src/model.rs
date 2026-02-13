@@ -74,6 +74,10 @@ pub struct DeviceMapping {
     /// Device type identified via DHCP option 55 fingerprint.
     #[serde(default)]
     pub device_type: Option<String>,
+    // ── Multi-user session support ──
+    /// Whether this IP has multiple concurrent active sessions (terminal server).
+    #[serde(default)]
+    pub multi_user: bool,
 }
 
 impl DeviceMapping {
@@ -96,11 +100,21 @@ impl DeviceMapping {
         let subnet_name: Option<String> = row.try_get("subnet_name").ok();
         let hostname: Option<String> = row.try_get("hostname").ok();
         let device_type: Option<String> = row.try_get("device_type").ok();
+        let multi_user: bool = row.try_get("multi_user").unwrap_or(false);
+        let session_users_raw: Option<String> = row.try_get("session_users").ok().flatten();
+        let current_users = match session_users_raw {
+            Some(ref csv) if !csv.is_empty() => csv
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>(),
+            _ => vec![user.clone()],
+        };
 
         Ok(Self {
             ip,
             mac,
-            current_users: vec![user],
+            current_users,
             last_seen,
             source: source_from_str(&source),
             confidence_score: u8::try_from(confidence).unwrap_or(0),
@@ -110,6 +124,7 @@ impl DeviceMapping {
             subnet_name,
             hostname,
             device_type,
+            multi_user,
         })
     }
 }

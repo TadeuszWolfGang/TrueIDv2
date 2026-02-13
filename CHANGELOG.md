@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Changed
+- Added multi-user IP session support (`ip_sessions`) with `mappings.multi_user` and `current_users` populated from active sessions.
+- Extended subnet matching foundation to dual-stack (IPv4 + IPv6 CIDR) and updated v1/v2 mapping queries/exports with `multi_user` and `current_users`.
+- Updated web E2E tests for new mappings CSV schema and added coverage for multi-user sessions and IPv6 mapping flow.
 - Refactored web handlers to use shared `helpers::require_db(...)` and reduced repeated `DeviceMapping` row mapping via `DeviceMapping::from_row()`.
 - Extracted engine `main.rs` responsibilities into `vendor.rs`, `tls_parsers.rs`, and `adapter_status.rs`; unified MAC normalization in `trueid_common::model::normalize_mac`.
 - Added DNS reverse lookup cache foundation (`0014_add_dns_cache.sql`), engine background resolver loop with TTL/interval config + 3s timeout, new `/api/v2/dns*` endpoints, and `hostname` propagation in v1/v2 mappings/search/export responses.

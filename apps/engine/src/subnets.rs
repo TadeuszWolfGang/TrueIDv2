@@ -6,35 +6,57 @@ use sqlx::{Row, SqlitePool};
 /// Cached subnet entry used for CIDR matching.
 pub struct SubnetEntry {
     pub id: i64,
-    pub network: u32,
-    pub mask: u32,
     pub cidr: String,
+    network: SubnetNetwork,
 }
 
-/// Parses IPv4 CIDR (e.g. "10.1.2.0/24") into network and mask.
+/// Parsed CIDR network for IPv4 or IPv6 subnet.
+enum SubnetNetwork {
+    V4 { network: u32, mask: u32 },
+    V6 { network: u128, mask: u128 },
+}
+
+/// Parses CIDR into network and mask.
 ///
 /// Parameters: `cidr` - CIDR string.
-/// Returns: `(network_u32, mask_u32)` when valid IPv4 CIDR, otherwise `None`.
-fn parse_cidr(cidr: &str) -> Option<(u32, u32)> {
+/// Returns: parsed subnet network for valid IPv4/IPv6 CIDR.
+fn parse_cidr(cidr: &str) -> Option<SubnetNetwork> {
     let parts: Vec<&str> = cidr.splitn(2, '/').collect();
     if parts.len() != 2 {
         return None;
     }
-    let ip: std::net::Ipv4Addr = parts[0].parse().ok()?;
     let prefix_len: u32 = parts[1].parse().ok()?;
-    if prefix_len > 32 {
-        return None;
+
+    if let Ok(v4) = parts[0].parse::<std::net::Ipv4Addr>() {
+        if prefix_len > 32 {
+            return None;
+        }
+        let mask = if prefix_len == 0 {
+            0
+        } else {
+            !0u32 << (32 - prefix_len)
+        };
+        let network = u32::from(v4) & mask;
+        return Some(SubnetNetwork::V4 { network, mask });
     }
-    let mask = if prefix_len == 0 {
-        0
-    } else {
-        !0u32 << (32 - prefix_len)
-    };
-    let network = u32::from(ip) & mask;
-    Some((network, mask))
+
+    if let Ok(v6) = parts[0].parse::<std::net::Ipv6Addr>() {
+        if prefix_len > 128 {
+            return None;
+        }
+        let mask = if prefix_len == 0 {
+            0
+        } else {
+            !0u128 << (128 - prefix_len)
+        };
+        let network = u128::from(v6) & mask;
+        return Some(SubnetNetwork::V6 { network, mask });
+    }
+
+    None
 }
 
-/// Loads all valid IPv4 subnet definitions from DB into cache.
+/// Loads all valid subnet definitions from DB into cache.
 ///
 /// Parameters: `pool` - SQLite pool.
 /// Returns: list of parsed subnet entries.
@@ -46,13 +68,8 @@ pub async fn load_subnets(pool: &SqlitePool) -> Result<Vec<SubnetEntry>> {
     for row in rows {
         let id: i64 = row.try_get("id")?;
         let cidr: String = row.try_get("cidr")?;
-        if let Some((network, mask)) = parse_cidr(&cidr) {
-            out.push(SubnetEntry {
-                id,
-                network,
-                mask,
-                cidr,
-            });
+        if let Some(network) = parse_cidr(&cidr) {
+            out.push(SubnetEntry { id, cidr, network });
         } else {
             tracing::warn!(subnet_id = id, cidr = %cidr, "Skipping invalid subnet CIDR");
         }
@@ -65,15 +82,31 @@ pub async fn load_subnets(pool: &SqlitePool) -> Result<Vec<SubnetEntry>> {
 /// Parameters: `ip` - target IP, `subnets` - cached subnet entries.
 /// Returns: matched subnet ID or `None` when no match.
 pub fn match_subnet(ip: &std::net::IpAddr, subnets: &[SubnetEntry]) -> Option<i64> {
-    let ip_u32 = match ip {
-        std::net::IpAddr::V4(v4) => u32::from(*v4),
-        std::net::IpAddr::V6(_) => return None, // TODO: Phase 4
-    };
-    subnets
-        .iter()
-        .filter(|s| (ip_u32 & s.mask) == s.network)
-        .max_by_key(|s| s.mask.count_ones())
-        .map(|s| s.id)
+    let mut best: Option<(i64, u32)> = None;
+
+    for entry in subnets {
+        let matches = match (&entry.network, ip) {
+            (SubnetNetwork::V4 { network, mask }, std::net::IpAddr::V4(v4)) => {
+                (u32::from(*v4) & mask) == *network
+            }
+            (SubnetNetwork::V6 { network, mask }, std::net::IpAddr::V6(v6)) => {
+                (u128::from(*v6) & mask) == *network
+            }
+            _ => false,
+        };
+        if !matches {
+            continue;
+        }
+        let prefix_len = match &entry.network {
+            SubnetNetwork::V4 { mask, .. } => mask.count_ones(),
+            SubnetNetwork::V6 { mask, .. } => mask.count_ones(),
+        };
+        if best.is_none() || prefix_len > best.map(|(_, p)| p).unwrap_or(0) {
+            best = Some((entry.id, prefix_len));
+        }
+    }
+
+    best.map(|(id, _)| id)
 }
 
 /// Tags a mapping row with subnet_id based on cached subnet definitions.
