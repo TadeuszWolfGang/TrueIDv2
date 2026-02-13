@@ -1,0 +1,9 @@
+-- Fix unsorted seed fingerprints so they match normalize_fingerprint() output.
+UPDATE dhcp_fingerprints SET fingerprint = '1,3,6,15,31,33,43,44,46,47,121,249,252' WHERE fingerprint = '1,15,3,6,44,46,47,31,33,121,249,43,252';
+UPDATE dhcp_fingerprints SET fingerprint = '1,3,6,15,44,46,95,119,121,252' WHERE fingerprint = '1,121,3,6,15,119,252,95,44,46';
+UPDATE dhcp_fingerprints SET fingerprint = '1,3,6,15,119,252' WHERE fingerprint = '1,3,6,15,119,252';
+UPDATE dhcp_fingerprints SET fingerprint = '1,3,6,15,95,119,121,252' WHERE fingerprint = '1,121,3,6,15,119,252,95';
+UPDATE dhcp_fingerprints SET fingerprint = '1,3,6,15,119,121,252' WHERE fingerprint = '1,121,3,6,15,119,252';
+UPDATE dhcp_fingerprints SET fingerprint = '1,13,3,6,15,52,67,119,252' WHERE fingerprint = '1,3,6,15,119,252,67,52,13';
+UPDATE dhcp_fingerprints SET fingerprint = '1,2,3,6,12,15,28' WHERE fingerprint = '1,28,2,3,15,6,12';
+UPDATE dhcp_fingerprints SET fingerprint = '1,3,6,12,15,26,28,40,41,42' WHERE fingerprint = '1,3,6,12,15,28,42,40,41,26';
