@@ -655,6 +655,9 @@ pub(crate) async fn subnet_mappings(
     let rows = sqlx::query(
         "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
                 m.subnet_id, s.name as subnet_name, d.hostname, m.device_type, m.multi_user,
+                (SELECT GROUP_CONCAT(DISTINCT ug.group_name)
+                 FROM user_groups ug
+                 WHERE lower(ug.username) = lower(m.user)) as group_names,
                 (SELECT GROUP_CONCAT(DISTINCT sess.user)
                  FROM ip_sessions sess
                  WHERE sess.ip = m.ip AND sess.is_active = 1) as session_users

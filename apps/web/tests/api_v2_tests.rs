@@ -647,7 +647,7 @@ async fn test_export_mappings_csv() {
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(
         lines.first().copied().unwrap_or(""),
-        "ip,user,mac,source,last_seen,confidence,is_active,vendor,subnet_id,subnet_name,hostname,device_type,multi_user,current_users"
+        "ip,user,mac,source,last_seen,confidence,is_active,vendor,subnet_id,subnet_name,hostname,device_type,multi_user,current_users,groups"
     );
     assert_eq!(lines.len(), 6);
 }
@@ -779,7 +779,7 @@ async fn test_export_csv_has_enrichment_columns() {
     let lines: Vec<&str> = csv.lines().collect();
     assert_eq!(
         lines.first().copied().unwrap_or(""),
-        "ip,user,mac,source,last_seen,confidence,is_active,vendor,subnet_id,subnet_name,hostname,device_type,multi_user,current_users"
+        "ip,user,mac,source,last_seen,confidence,is_active,vendor,subnet_id,subnet_name,hostname,device_type,multi_user,current_users,groups"
     );
     let row = lines
         .iter()
@@ -1354,6 +1354,503 @@ async fn test_phase2_no_auth_rejected() {
             .expect("execute no-auth request failed");
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "uri={uri}");
     }
+}
+
+#[tokio::test]
+async fn test_firewall_create_target() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/firewall/targets",
+        &json!({
+            "name":"PA-5260-DC1","firewall_type":"panos","host":"10.0.0.1","port":443,
+            "username":"trueid-svc","password":"testpass123","verify_tls":false,"push_interval_secs":30
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["name"], "PA-5260-DC1");
+    assert_eq!(body["firewall_type"], "panos");
+    assert_eq!(body["host"], "10.0.0.1");
+    assert_eq!(body["port"], 443);
+    assert_eq!(body["username"], "trueid-svc");
+    assert_eq!(body["verify_tls"], false);
+    assert_eq!(body["push_interval_secs"], 30);
+    assert!(body.get("password").is_none());
+    assert!(body.get("password_enc").is_none());
+    assert!(body.get("token").is_none());
+}
+
+#[tokio::test]
+async fn test_firewall_create_fortigate() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/firewall/targets",
+        &json!({
+            "name":"FG-600E-HQ","firewall_type":"fortigate","host":"10.0.0.2","port":443,
+            "password":"api-token-test-123","verify_tls":false,"push_interval_secs":60
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["firewall_type"], "fortigate");
+}
+
+#[tokio::test]
+async fn test_firewall_create_duplicate_host() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let _ = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/firewall/targets",
+        &json!({
+            "name":"PA1","firewall_type":"panos","host":"10.0.0.10","port":443,
+            "username":"trueid-svc","password":"testpass123"
+        }),
+    )
+    .await;
+    let (status, _) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/firewall/targets",
+        &json!({
+            "name":"PA2","firewall_type":"panos","host":"10.0.0.10","port":443,
+            "username":"trueid-svc","password":"testpass456"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn test_firewall_create_invalid_type() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, _) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/firewall/targets",
+        &json!({
+            "name":"J1","firewall_type":"juniper","host":"10.0.0.11","port":443,
+            "username":"svc","password":"x"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_firewall_list_targets() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let _ = auth_post(&app, &cookie, "/api/v2/firewall/targets", &json!({
+        "name":"PA","firewall_type":"panos","host":"10.0.0.12","port":443,"username":"svc","password":"x"
+    })).await;
+    let _ = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/firewall/targets",
+        &json!({
+            "name":"FG","firewall_type":"fortigate","host":"10.0.0.13","port":443,"password":"tok"
+        }),
+    )
+    .await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/firewall/targets").await;
+    assert_eq!(status, StatusCode::OK);
+    let arr = body.as_array().cloned().unwrap_or_default();
+    assert_eq!(arr.len(), 2);
+    for item in &arr {
+        assert!(item.get("password").is_none());
+        assert!(item.get("password_enc").is_none());
+        assert!(item.get("token").is_none());
+    }
+}
+
+#[tokio::test]
+async fn test_firewall_get_update_target() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (_, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/firewall/targets",
+        &json!({
+            "name":"PA-OLD","firewall_type":"panos","host":"10.0.0.14","port":443,
+            "username":"svc","password":"x","push_interval_secs":30
+        }),
+    )
+    .await;
+    let id = created["id"].as_i64().unwrap_or_default();
+    let old_updated = created["updated_at"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    let (status, got) = auth_get(&app, &cookie, &format!("/api/v2/firewall/targets/{id}")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(got["name"], "PA-OLD");
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    let (status, _) = auth_put(
+        &app,
+        &cookie,
+        &format!("/api/v2/firewall/targets/{id}"),
+        &json!({"name":"PA-NEW","push_interval_secs":45}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, updated) =
+        auth_get(&app, &cookie, &format!("/api/v2/firewall/targets/{id}")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(updated["name"], "PA-NEW");
+    assert_eq!(updated["push_interval_secs"], 45);
+    assert_ne!(
+        updated["updated_at"].as_str().unwrap_or_default(),
+        old_updated
+    );
+}
+
+#[tokio::test]
+async fn test_firewall_delete_target() {
+    let (app, db) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (_, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/firewall/targets",
+        &json!({
+            "name":"PA-DEL","firewall_type":"panos","host":"10.0.0.15","port":443,
+            "username":"svc","password":"x"
+        }),
+    )
+    .await;
+    let id = created["id"].as_i64().unwrap_or_default();
+    sqlx::query(
+        "INSERT INTO firewall_push_history (target_id, mapping_count, status) VALUES (?, 1, 'ok')",
+    )
+    .bind(id)
+    .execute(db.pool())
+    .await
+    .expect("insert firewall history failed");
+    let (status, _) = auth_delete(&app, &cookie, &format!("/api/v2/firewall/targets/{id}")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = auth_get(&app, &cookie, &format!("/api/v2/firewall/targets/{id}")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let left: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM firewall_push_history WHERE target_id = ?")
+            .bind(id)
+            .fetch_one(db.pool())
+            .await
+            .expect("count firewall history failed");
+    assert_eq!(left, 0);
+}
+
+#[tokio::test]
+async fn test_firewall_history_empty() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (_, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/firewall/targets",
+        &json!({
+            "name":"PA-HIST","firewall_type":"panos","host":"10.0.0.16","port":443,
+            "username":"svc","password":"x"
+        }),
+    )
+    .await;
+    let id = created["id"].as_i64().unwrap_or_default();
+    let (status, body) = auth_get(
+        &app,
+        &cookie,
+        &format!("/api/v2/firewall/targets/{id}/history"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"], 0);
+    assert_eq!(body["data"].as_array().map(|a| a.len()).unwrap_or(0), 0);
+}
+
+#[tokio::test]
+async fn test_firewall_stats() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/firewall/stats").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["total_targets"].is_i64());
+    assert!(body["enabled_targets"].is_i64());
+    assert!(body["panos_targets"].is_i64());
+    assert!(body["fortigate_targets"].is_i64());
+}
+
+#[tokio::test]
+async fn test_siem_create_target() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/siem/targets",
+        &json!({
+            "name":"Splunk-HEC","format":"cef","transport":"udp","host":"splunk.corp.local","port":514,
+            "forward_mappings":true,"forward_conflicts":true,"forward_alerts":false
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["format"], "cef");
+    assert_eq!(body["transport"], "udp");
+}
+
+#[tokio::test]
+async fn test_siem_create_tcp_json() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/siem/targets",
+        &json!({"name":"Elastic","format":"json","transport":"tcp","host":"elastic.local","port":5514}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["format"], "json");
+    assert_eq!(body["transport"], "tcp");
+}
+
+#[tokio::test]
+async fn test_siem_create_invalid_format() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, _) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/siem/targets",
+        &json!({"name":"X","format":"xml","transport":"udp","host":"x.local","port":514}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_siem_list_and_get() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let _ = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/siem/targets",
+        &json!({
+            "name":"S1","format":"cef","transport":"udp","host":"s1.local","port":514
+        }),
+    )
+    .await;
+    let (_, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/siem/targets",
+        &json!({
+            "name":"S2","format":"json","transport":"tcp","host":"s2.local","port":5514
+        }),
+    )
+    .await;
+    let id = created["id"].as_i64().unwrap_or_default();
+    let (status, list) = auth_get(&app, &cookie, "/api/v2/siem/targets").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list.as_array().map(|a| a.len()).unwrap_or(0), 2);
+    let (status, got) = auth_get(&app, &cookie, &format!("/api/v2/siem/targets/{id}")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(got["name"], "S2");
+}
+
+#[tokio::test]
+async fn test_siem_update_and_delete() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (_, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/siem/targets",
+        &json!({
+            "name":"S-OLD","format":"cef","transport":"udp","host":"s3.local","port":514
+        }),
+    )
+    .await;
+    let id = created["id"].as_i64().unwrap_or_default();
+    let (status, updated) = auth_put(
+        &app,
+        &cookie,
+        &format!("/api/v2/siem/targets/{id}"),
+        &json!({"name":"S-NEW","format":"json"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(updated["name"], "S-NEW");
+    assert_eq!(updated["format"], "json");
+    let (status, _) = auth_delete(&app, &cookie, &format!("/api/v2/siem/targets/{id}")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = auth_get(&app, &cookie, &format!("/api/v2/siem/targets/{id}")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_siem_stats() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/siem/stats").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["total_targets"].is_i64());
+    assert!(body["enabled_targets"].is_i64());
+    assert!(body["total_events_forwarded"].is_i64());
+}
+
+#[tokio::test]
+async fn test_ldap_get_default_config() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/ldap/config").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["enabled"], false);
+    assert_eq!(body["password_set"], false);
+    assert!(body["ldap_url"]
+        .as_str()
+        .unwrap_or_default()
+        .starts_with("ldap://"));
+}
+
+#[tokio::test]
+async fn test_ldap_update_config() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, _) = auth_put(
+        &app,
+        &cookie,
+        "/api/v2/ldap/config",
+        &json!({
+            "ldap_url":"ldap://dc2.corp.local:389",
+            "bind_dn":"CN=TrueID,OU=Service,DC=corp,DC=local",
+            "bind_password":"secret123",
+            "enabled":true
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/ldap/config").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ldap_url"], "ldap://dc2.corp.local:389");
+    assert_eq!(body["password_set"], true);
+    assert!(body.get("bind_password").is_none());
+}
+
+#[tokio::test]
+async fn test_ldap_update_config_validation() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, _) = auth_put(
+        &app,
+        &cookie,
+        "/api/v2/ldap/config",
+        &json!({"sync_interval_secs":5}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = auth_put(
+        &app,
+        &cookie,
+        "/api/v2/ldap/config",
+        &json!({"ldap_url":""}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_ldap_groups_empty() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/ldap/groups").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.as_array().map(|a| a.len()).unwrap_or(0), 0);
+}
+
+#[tokio::test]
+async fn test_ldap_groups_with_data() {
+    let (app, db) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    sqlx::query(
+        "INSERT INTO user_groups (username, group_name) VALUES
+         ('jkowalski','Domain Admins'),
+         ('jkowalski','VPN Users'),
+         ('asmith','VPN Users')",
+    )
+    .execute(db.pool())
+    .await
+    .expect("seed user_groups failed");
+
+    let (status, groups) = auth_get(&app, &cookie, "/api/v2/ldap/groups").await;
+    assert_eq!(status, StatusCode::OK);
+    let names = groups
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|v| v["group_name"].as_str().map(str::to_string))
+        .collect::<Vec<_>>();
+    assert!(names.iter().any(|n| n == "Domain Admins"));
+    assert!(names.iter().any(|n| n == "VPN Users"));
+
+    let (status, members) =
+        auth_get(&app, &cookie, "/api/v2/ldap/groups/VPN%20Users/members").await;
+    assert_eq!(status, StatusCode::OK);
+    let users = members
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|v| v["username"].as_str().map(str::to_string))
+        .collect::<Vec<_>>();
+    assert!(users.iter().any(|u| u == "jkowalski"));
+    assert!(users.iter().any(|u| u == "asmith"));
+
+    let (status, user_groups) =
+        auth_get(&app, &cookie, "/api/v2/ldap/users/jkowalski/groups").await;
+    assert_eq!(status, StatusCode::OK);
+    let user_group_names = user_groups
+        .as_array()
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|v| v["group_name"].as_str().map(str::to_string))
+        .collect::<Vec<_>>();
+    assert!(user_group_names.iter().any(|n| n == "Domain Admins"));
+    assert!(user_group_names.iter().any(|n| n == "VPN Users"));
+}
+
+#[tokio::test]
+async fn test_ldap_groups_enrichment_in_mappings() {
+    let (app, db) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    sqlx::query("INSERT INTO user_groups (username, group_name) VALUES ('jkowalski', 'IT Dept')")
+        .execute(db.pool())
+        .await
+        .expect("seed ldap group failed");
+    let (status, body) = auth_get(&app, &cookie, "/api/v1/mappings?search=jkowalski").await;
+    assert_eq!(status, StatusCode::OK);
+    let rows = body["data"].as_array().cloned().unwrap_or_default();
+    let found = rows.iter().any(|row| {
+        row["groups"]
+            .as_array()
+            .map(|arr| arr.iter().any(|g| g == "IT Dept"))
+            .unwrap_or(false)
+    });
+    assert!(
+        found,
+        "expected IT Dept in at least one mapping groups field"
+    );
 }
 
 #[tokio::test]

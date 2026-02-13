@@ -444,7 +444,10 @@ fn should_forward(event: &SiemEvent, target: &SiemTarget) -> bool {
 ///
 /// Parameters: `pool` - SQLite pool, `pending_counts` - per-target forwarded counters.
 /// Returns: success after counters are flushed.
-async fn flush_forward_counters(pool: &SqlitePool, pending_counts: &mut HashMap<i64, i64>) -> Result<()> {
+async fn flush_forward_counters(
+    pool: &SqlitePool,
+    pending_counts: &mut HashMap<i64, i64>,
+) -> Result<()> {
     if pending_counts.is_empty() {
         return Ok(());
     }
@@ -555,4 +558,99 @@ pub async fn run_siem_forwarder(mut receiver: mpsc::Receiver<SiemEvent>, pool: S
 /// Returns: `(sender, receiver)` pair for decoupled forwarding.
 pub fn create_siem_channel() -> (mpsc::Sender<SiemEvent>, mpsc::Receiver<SiemEvent>) {
     mpsc::channel(10_000)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_cef_mapping() {
+        let event = SiemEvent::Mapping {
+            ip: "10.1.2.3".into(),
+            user: "jkowalski".into(),
+            mac: Some("AA:BB:CC:DD:EE:FF".into()),
+            source: "RADIUS".into(),
+            vendor: Some("Cisco".into()),
+            device_type: None,
+            confidence: 95,
+            timestamp: Utc::now(),
+        };
+        let output = format_event(&event, &SiemFormat::Cef);
+        assert!(output.starts_with("CEF:0|TrueID|Engine|1.0|identity-mapping|"));
+        assert!(output.contains("src=10.1.2.3"));
+        assert!(output.contains("suser=jkowalski"));
+        assert!(output.contains("smac=AA:BB:CC:DD:EE:FF"));
+    }
+
+    #[test]
+    fn test_format_leef_conflict() {
+        let event = SiemEvent::Conflict {
+            ip: Some("10.1.2.3".into()),
+            user_old: Some("olduser".into()),
+            user_new: Some("newuser".into()),
+            conflict_type: "ip_conflict".into(),
+            severity: "high".into(),
+            timestamp: Utc::now(),
+        };
+        let output = format_event(&event, &SiemFormat::Leef);
+        assert!(output.starts_with("LEEF:2.0|TrueID|Engine|1.0|identity-conflict|"));
+        assert!(output.contains("src=10.1.2.3"));
+    }
+
+    #[test]
+    fn test_format_json_alert() {
+        let event = SiemEvent::Alert {
+            rule_name: "new_subnet".into(),
+            severity: "high".into(),
+            ip: Some("10.99.0.1".into()),
+            user: Some("admin".into()),
+            message: "New subnet detected".into(),
+            timestamp: Utc::now(),
+        };
+        let output = format_event(&event, &SiemFormat::Json);
+        assert!(output.contains("\"event_type\":\"alert-fired\""));
+        assert!(output.contains("\"rule_name\":\"new_subnet\""));
+    }
+
+    #[test]
+    fn test_cef_escaping() {
+        let val = escape_cef_value("test=value\\with|pipe");
+        assert_eq!(val, "test\\=value\\\\with|pipe");
+    }
+
+    #[test]
+    fn test_should_forward_filtering() {
+        let target = SiemTarget {
+            id: 1,
+            name: "test".into(),
+            format: SiemFormat::Cef,
+            transport: SiemTransport::Udp,
+            host: "localhost".into(),
+            port: 514,
+            forward_mappings: true,
+            forward_conflicts: false,
+            forward_alerts: true,
+        };
+        let mapping = SiemEvent::Mapping {
+            ip: "1.2.3.4".into(),
+            user: "x".into(),
+            mac: None,
+            source: "R".into(),
+            vendor: None,
+            device_type: None,
+            confidence: 90,
+            timestamp: Utc::now(),
+        };
+        let conflict = SiemEvent::Conflict {
+            ip: None,
+            user_old: None,
+            user_new: None,
+            conflict_type: "x".into(),
+            severity: "low".into(),
+            timestamp: Utc::now(),
+        };
+        assert!(should_forward(&mapping, &target));
+        assert!(!should_forward(&conflict, &target));
+    }
 }

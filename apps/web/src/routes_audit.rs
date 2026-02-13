@@ -11,6 +11,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::error::{self, ApiError};
+use crate::helpers;
 use crate::middleware::AuthUser;
 use crate::AppState;
 
@@ -73,13 +74,7 @@ pub async fn list_audit_logs(
     State(state): State<AppState>,
     Query(params): Query<AuditLogsQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let page = params.page.unwrap_or(1).max(1);
     let per_page = params.per_page.unwrap_or(50).clamp(1, 200);
@@ -155,13 +150,7 @@ pub async fn audit_stats(
     auth: AuthUser,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let (total, last_24h, last_7d, top) = db.audit_stats().await.map_err(|e| {
         tracing::warn!(error = %e, "Audit stats query failed");

@@ -223,7 +223,11 @@ fn validate_payload(
         )
         .with_request_id(request_id));
     }
-    if matches!(parse_firewall_type(firewall_type), Ok(FirewallType::FortiGate)) && !password_present {
+    if matches!(
+        parse_firewall_type(firewall_type),
+        Ok(FirewallType::FortiGate)
+    ) && !password_present
+    {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
             error::INVALID_INPUT,
@@ -435,7 +439,8 @@ async fn panos_keygen(client: &reqwest::Client, target: &FirewallTargetInternal)
 /// Parameters: `entries` - entries to include.
 /// Returns: XML payload string.
 fn panos_payload(entries: &[PushEntry]) -> String {
-    let mut xml = String::from("<uid-message><version>2.0</version><type>update</type><payload><login>");
+    let mut xml =
+        String::from("<uid-message><version>2.0</version><type>update</type><payload><login>");
     for entry in entries {
         xml.push_str(&format!(
             "<entry name=\"{}\" ip=\"{}\" timeout=\"{}\"/>",
@@ -464,7 +469,11 @@ async fn push_panos(
     for chunk in entries.chunks(1000) {
         let resp = client
             .post(&url)
-            .query(&[("type", "user-id"), ("action", "set"), ("key", key.as_str())])
+            .query(&[
+                ("type", "user-id"),
+                ("action", "set"),
+                ("key", key.as_str()),
+            ])
             .form(&[("cmd", panos_payload(chunk))])
             .send()
             .await?;
@@ -723,10 +732,12 @@ pub(crate) async fn get_target(
     })?;
     match row {
         Some(row) => Ok(Json(map_target_row(&row)).into_response()),
-        None => Err(
-            ApiError::new(StatusCode::NOT_FOUND, error::NOT_FOUND, "Firewall target not found")
-                .with_request_id(&auth.request_id),
-        ),
+        None => Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            error::NOT_FOUND,
+            "Firewall target not found",
+        )
+        .with_request_id(&auth.request_id)),
     }
 }
 
@@ -797,18 +808,14 @@ pub(crate) async fn create_target(
     })?;
     let target_id = result.last_insert_rowid();
 
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "firewall_target_create",
-            Some(&target_id.to_string()),
-            Some(req.name.trim()),
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    helpers::audit(
+        db,
+        &auth,
+        "firewall_target_create",
+        Some(&target_id.to_string()),
+        Some(req.name.trim()),
+    )
+    .await;
 
     get_target(auth, Path(target_id), State(state)).await
 }
@@ -834,14 +841,19 @@ pub(crate) async fn update_target(
         .with_request_id(&auth.request_id)
     })?;
     let Some(existing_target) = existing else {
-        return Err(
-            ApiError::new(StatusCode::NOT_FOUND, error::NOT_FOUND, "Firewall target not found")
-                .with_request_id(&auth.request_id),
-        );
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            error::NOT_FOUND,
+            "Firewall target not found",
+        )
+        .with_request_id(&auth.request_id));
     };
 
     let final_type = firewall_type_str(existing_target.firewall_type);
-    let username_for_validation = req.username.as_deref().or(existing_target.username.as_deref());
+    let username_for_validation = req
+        .username
+        .as_deref()
+        .or(existing_target.username.as_deref());
     let password_present = req
         .password
         .as_deref()
@@ -860,15 +872,17 @@ pub(crate) async fn update_target(
         None => None,
     };
     let encrypted_password = match req.password.as_deref() {
-        Some(value) if !value.trim().is_empty() => Some(db.encrypt_config_value(value.trim()).map_err(|e| {
-            warn!(error = %e, "Failed to encrypt firewall credential");
-            ApiError::new(
-                StatusCode::BAD_REQUEST,
-                error::INVALID_INPUT,
-                "Cannot encrypt credential. Check CONFIG_ENCRYPTION_KEY",
-            )
-            .with_request_id(&auth.request_id)
-        })?),
+        Some(value) if !value.trim().is_empty() => {
+            Some(db.encrypt_config_value(value.trim()).map_err(|e| {
+                warn!(error = %e, "Failed to encrypt firewall credential");
+                ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    error::INVALID_INPUT,
+                    "Cannot encrypt credential. Check CONFIG_ENCRYPTION_KEY",
+                )
+                .with_request_id(&auth.request_id)
+            })?)
+        }
         _ => None,
     };
 
@@ -918,18 +932,14 @@ pub(crate) async fn update_target(
         }
     })?;
 
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "firewall_target_update",
-            Some(&id.to_string()),
-            None,
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    helpers::audit(
+        db,
+        &auth,
+        "firewall_target_update",
+        Some(&id.to_string()),
+        None,
+    )
+    .await;
 
     get_target(auth, Path(id), State(state)).await
 }
@@ -958,23 +968,21 @@ pub(crate) async fn delete_target(
             .with_request_id(&auth.request_id)
         })?;
     if result.rows_affected() == 0 {
-        return Err(
-            ApiError::new(StatusCode::NOT_FOUND, error::NOT_FOUND, "Firewall target not found")
-                .with_request_id(&auth.request_id),
-        );
-    }
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "firewall_target_delete",
-            Some(&id.to_string()),
-            None,
-            None,
-            Some(&auth.request_id),
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            error::NOT_FOUND,
+            "Firewall target not found",
         )
-        .await;
+        .with_request_id(&auth.request_id));
+    }
+    helpers::audit(
+        db,
+        &auth,
+        "firewall_target_delete",
+        Some(&id.to_string()),
+        None,
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -998,10 +1006,12 @@ pub(crate) async fn force_push(
         .with_request_id(&auth.request_id)
     })?;
     let Some(target) = target else {
-        return Err(
-            ApiError::new(StatusCode::NOT_FOUND, error::NOT_FOUND, "Firewall target not found")
-                .with_request_id(&auth.request_id),
-        );
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            error::NOT_FOUND,
+            "Firewall target not found",
+        )
+        .with_request_id(&auth.request_id));
     };
 
     let push_result = execute_push(db, &target).await;
@@ -1012,18 +1022,14 @@ pub(crate) async fn force_push(
 
     let _ = write_history(db, id, count, status, error_message.as_deref(), duration_ms).await;
     let _ = update_target_status(db, id, status, count, error_message.as_deref()).await;
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "firewall_target_force_push",
-            Some(&id.to_string()),
-            Some(status),
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    helpers::audit(
+        db,
+        &auth,
+        "firewall_target_force_push",
+        Some(&id.to_string()),
+        Some(status),
+    )
+    .await;
 
     if let Some(message) = error_message {
         return Err(ApiError::new(
@@ -1063,25 +1069,23 @@ pub(crate) async fn test_target(
         .with_request_id(&auth.request_id)
     })?;
     let Some(target) = target else {
-        return Err(
-            ApiError::new(StatusCode::NOT_FOUND, error::NOT_FOUND, "Firewall target not found")
-                .with_request_id(&auth.request_id),
-        );
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            error::NOT_FOUND,
+            "Firewall target not found",
+        )
+        .with_request_id(&auth.request_id));
     };
 
     let result = test_target_connection(&target).await;
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "firewall_target_test",
-            Some(&id.to_string()),
-            Some(if result.is_ok() { "ok" } else { "error" }),
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    helpers::audit(
+        db,
+        &auth,
+        "firewall_target_test",
+        Some(&id.to_string()),
+        Some(if result.is_ok() { "ok" } else { "error" }),
+    )
+    .await;
 
     match result {
         Ok(()) => Ok(Json(TestResponse {
@@ -1115,21 +1119,20 @@ pub(crate) async fn target_history(
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
     let offset = (page - 1) * limit;
 
-    let total: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM firewall_push_history WHERE target_id = ?",
-    )
-    .bind(id)
-    .fetch_one(db.pool())
-    .await
-    .map_err(|e| {
-        warn!(error = %e, target_id = id, "Failed to count firewall push history");
-        ApiError::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error::INTERNAL_ERROR,
-            "Failed to fetch firewall push history",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+    let total: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM firewall_push_history WHERE target_id = ?")
+            .bind(id)
+            .fetch_one(db.pool())
+            .await
+            .map_err(|e| {
+                warn!(error = %e, target_id = id, "Failed to count firewall push history");
+                ApiError::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    error::INTERNAL_ERROR,
+                    "Failed to fetch firewall push history",
+                )
+                .with_request_id(&auth.request_id)
+            })?;
 
     let rows = sqlx::query(
         "SELECT id, target_id, pushed_at, mapping_count, status, error_message, duration_ms
@@ -1160,7 +1163,9 @@ pub(crate) async fn target_history(
             target_id: row.try_get("target_id").unwrap_or_default(),
             pushed_at: row.try_get("pushed_at").unwrap_or_else(|_| Utc::now()),
             mapping_count: row.try_get("mapping_count").unwrap_or_default(),
-            status: row.try_get("status").unwrap_or_else(|_| "error".to_string()),
+            status: row
+                .try_get("status")
+                .unwrap_or_else(|_| "error".to_string()),
             error_message: row.try_get("error_message").ok(),
             duration_ms: row.try_get("duration_ms").ok(),
         });

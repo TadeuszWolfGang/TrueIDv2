@@ -187,15 +187,17 @@ pub(crate) async fn update_ldap_config(
     }
 
     let encrypted_password = match body.bind_password.as_deref() {
-        Some(p) if !p.trim().is_empty() => Some(db.encrypt_config_value(p.trim()).map_err(|e| {
-            warn!(error = %e, "Failed to encrypt LDAP bind password");
-            ApiError::new(
-                StatusCode::BAD_REQUEST,
-                error::INVALID_INPUT,
-                "Cannot encrypt LDAP password. Check CONFIG_ENCRYPTION_KEY",
-            )
-            .with_request_id(&auth.request_id)
-        })?),
+        Some(p) if !p.trim().is_empty() => {
+            Some(db.encrypt_config_value(p.trim()).map_err(|e| {
+                warn!(error = %e, "Failed to encrypt LDAP bind password");
+                ApiError::new(
+                    StatusCode::BAD_REQUEST,
+                    error::INVALID_INPUT,
+                    "Cannot encrypt LDAP password. Check CONFIG_ENCRYPTION_KEY",
+                )
+                .with_request_id(&auth.request_id)
+            })?)
+        }
         _ => None,
     };
 
@@ -230,18 +232,7 @@ pub(crate) async fn update_ldap_config(
         .with_request_id(&auth.request_id)
     })?;
 
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "ldap_config_update",
-            Some("ldap_config"),
-            None,
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    helpers::audit(db, &auth, "ldap_config_update", Some("ldap_config"), None).await;
 
     get_ldap_config(auth, State(state)).await
 }
@@ -255,28 +246,18 @@ pub(crate) async fn force_ldap_sync(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
     let db = helpers::require_db(&state, &auth.request_id)?;
-    let res = routes_proxy::proxy_to_engine(&state, reqwest::Method::POST, "/engine/ldap/sync", None)
-        .await
-        .map_err(|_| {
-            ApiError::new(
-                StatusCode::BAD_GATEWAY,
-                error::INTERNAL_ERROR,
-                "Failed to trigger LDAP sync",
-            )
-            .with_request_id(&auth.request_id)
-        })?;
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "ldap_force_sync",
-            Some("ldap_config"),
-            None,
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    let res =
+        routes_proxy::proxy_to_engine(&state, reqwest::Method::POST, "/engine/ldap/sync", None)
+            .await
+            .map_err(|_| {
+                ApiError::new(
+                    StatusCode::BAD_GATEWAY,
+                    error::INTERNAL_ERROR,
+                    "Failed to trigger LDAP sync",
+                )
+                .with_request_id(&auth.request_id)
+            })?;
+    helpers::audit(db, &auth, "ldap_force_sync", Some("ldap_config"), None).await;
     Ok(res)
 }
 

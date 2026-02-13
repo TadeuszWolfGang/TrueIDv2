@@ -19,8 +19,8 @@ mod snmp_poller;
 mod subnets;
 mod tls_listener;
 mod tls_parsers;
-mod vpn_adapters;
 mod vendor;
+mod vpn_adapters;
 
 use anyhow::Result;
 use axum::Router;
@@ -58,15 +58,8 @@ const DEFAULT_TLS_CERT: &str = "./certs/server.pem";
 const DEFAULT_TLS_KEY: &str = "./certs/server-key.pem";
 const DEFAULT_ADMIN_HTTP_ADDR: &str = "127.0.0.1:8080";
 
-/// Runs the event processing loop, persisting each event to the database.
-///
-/// Also updates adapter stats counters for live monitoring.
-///
-/// Parameters: `receiver` - incoming event channel, `db` - database handle,
-/// `vendors` - OUI vendor lookup table, `adapter_stats` - shared adapter stats.
-/// Returns: `Ok(())` when the channel closes.
-async fn run_event_loop(
-    mut receiver: Receiver<IdentityEvent>,
+/// Shared context for the event processing loop.
+struct EventLoopCtx {
     db: Arc<Db>,
     vendors: Arc<VendorMap>,
     adapter_stats: Arc<RwLock<Vec<AdapterStatus>>>,
@@ -75,7 +68,25 @@ async fn run_event_loop(
     alert_rules: Arc<RwLock<Vec<alerts::AlertRule>>>,
     http_client: reqwest::Client,
     siem_sender: Sender<siem_forwarder::SiemEvent>,
-) -> Result<()> {
+}
+
+/// Runs the event processing loop, persisting each event to the database.
+///
+/// Also updates adapter stats counters for live monitoring.
+///
+/// Parameters: `receiver` - incoming event channel, `ctx` - shared loop context.
+/// Returns: `Ok(())` when the channel closes.
+async fn run_event_loop(mut receiver: Receiver<IdentityEvent>, ctx: EventLoopCtx) -> Result<()> {
+    let EventLoopCtx {
+        db,
+        vendors,
+        adapter_stats,
+        subnet_cache,
+        fingerprint_db,
+        alert_rules,
+        http_client,
+        siem_sender,
+    } = ctx;
     while let Some(event) = receiver.recv().await {
         let ip_str = event.ip.to_string();
         let dhcp_options55 = if matches!(event.source, SourceType::DhcpLease) {
@@ -481,20 +492,18 @@ async fn main() -> Result<()> {
     let event_alert_rules = alert_rules.clone();
     let event_http_client = http_client.clone();
     let event_siem_sender = siem_sender.clone();
+    let event_ctx = EventLoopCtx {
+        db: event_db,
+        vendors: event_vendors,
+        adapter_stats: event_adapter_stats,
+        subnet_cache: event_subnet_cache,
+        fingerprint_db: event_fingerprint_db,
+        alert_rules: event_alert_rules,
+        http_client: event_http_client,
+        siem_sender: event_siem_sender,
+    };
     tokio::spawn(async move {
-        if let Err(err) = run_event_loop(
-            receiver,
-            event_db,
-            event_vendors,
-            event_adapter_stats,
-            event_subnet_cache,
-            event_fingerprint_db,
-            event_alert_rules,
-            event_http_client,
-            event_siem_sender,
-        )
-        .await
-        {
+        if let Err(err) = run_event_loop(receiver, event_ctx).await {
             warn!(error = %err, "Event loop stopped");
         }
     });

@@ -216,10 +216,12 @@ pub(crate) async fn get_target(
     })?;
     match row {
         Some(row) => Ok(Json(map_row(&row)).into_response()),
-        None => Err(
-            ApiError::new(StatusCode::NOT_FOUND, error::NOT_FOUND, "SIEM target not found")
-                .with_request_id(&auth.request_id),
-        ),
+        None => Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            error::NOT_FOUND,
+            "SIEM target not found",
+        )
+        .with_request_id(&auth.request_id)),
     }
 }
 
@@ -282,18 +284,14 @@ pub(crate) async fn create_target(
     })?;
 
     let id = result.last_insert_rowid();
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "siem_target_create",
-            Some(&id.to_string()),
-            Some(req.name.trim()),
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    helpers::audit(
+        db,
+        &auth,
+        "siem_target_create",
+        Some(&id.to_string()),
+        Some(req.name.trim()),
+    )
+    .await;
 
     get_target(auth, Path(id), State(state)).await
 }
@@ -310,27 +308,32 @@ pub(crate) async fn update_target(
 ) -> Result<impl IntoResponse, ApiError> {
     let db = helpers::require_db(&state, &auth.request_id)?;
 
-    let existing = sqlx::query("SELECT format, transport, host, port, name FROM siem_targets WHERE id = ?")
-        .bind(id)
-        .fetch_optional(db.pool())
-        .await
-        .map_err(|e| {
-            warn!(error = %e, target_id = id, "Failed to load SIEM target for update");
-            ApiError::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                error::INTERNAL_ERROR,
-                "Failed to update SIEM target",
-            )
-            .with_request_id(&auth.request_id)
-        })?;
+    let existing =
+        sqlx::query("SELECT format, transport, host, port, name FROM siem_targets WHERE id = ?")
+            .bind(id)
+            .fetch_optional(db.pool())
+            .await
+            .map_err(|e| {
+                warn!(error = %e, target_id = id, "Failed to load SIEM target for update");
+                ApiError::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    error::INTERNAL_ERROR,
+                    "Failed to update SIEM target",
+                )
+                .with_request_id(&auth.request_id)
+            })?;
     let Some(existing) = existing else {
-        return Err(
-            ApiError::new(StatusCode::NOT_FOUND, error::NOT_FOUND, "SIEM target not found")
-                .with_request_id(&auth.request_id),
-        );
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            error::NOT_FOUND,
+            "SIEM target not found",
+        )
+        .with_request_id(&auth.request_id));
     };
 
-    let existing_format: String = existing.try_get("format").unwrap_or_else(|_| "cef".to_string());
+    let existing_format: String = existing
+        .try_get("format")
+        .unwrap_or_else(|_| "cef".to_string());
     let existing_transport: String = existing
         .try_get("transport")
         .unwrap_or_else(|_| "udp".to_string());
@@ -402,18 +405,7 @@ pub(crate) async fn update_target(
         }
     })?;
 
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "siem_target_update",
-            Some(&id.to_string()),
-            None,
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    helpers::audit(db, &auth, "siem_target_update", Some(&id.to_string()), None).await;
 
     get_target(auth, Path(id), State(state)).await
 }
@@ -442,24 +434,15 @@ pub(crate) async fn delete_target(
             .with_request_id(&auth.request_id)
         })?;
     if result.rows_affected() == 0 {
-        return Err(
-            ApiError::new(StatusCode::NOT_FOUND, error::NOT_FOUND, "SIEM target not found")
-                .with_request_id(&auth.request_id),
-        );
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            error::NOT_FOUND,
+            "SIEM target not found",
+        )
+        .with_request_id(&auth.request_id));
     }
 
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "siem_target_delete",
-            Some(&id.to_string()),
-            None,
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    helpers::audit(db, &auth, "siem_target_delete", Some(&id.to_string()), None).await;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -498,24 +481,12 @@ pub(crate) async fn siem_stats(
                 )
                 .with_request_id(&auth.request_id)
             })?;
-    let total_events_forwarded: i64 = sqlx::query_scalar("SELECT COALESCE(SUM(events_forwarded), 0) FROM siem_targets")
-        .fetch_one(db.pool())
-        .await
-        .map_err(|e| {
-            warn!(error = %e, "Failed to sum forwarded SIEM events");
-            ApiError::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                error::INTERNAL_ERROR,
-                "Failed to read SIEM stats",
-            )
-            .with_request_id(&auth.request_id)
-        })?;
-    let targets_with_error: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM siem_targets WHERE last_error IS NOT NULL AND last_error != ''")
+    let total_events_forwarded: i64 =
+        sqlx::query_scalar("SELECT COALESCE(SUM(events_forwarded), 0) FROM siem_targets")
             .fetch_one(db.pool())
             .await
             .map_err(|e| {
-                warn!(error = %e, "Failed to count SIEM targets with errors");
+                warn!(error = %e, "Failed to sum forwarded SIEM events");
                 ApiError::new(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     error::INTERNAL_ERROR,
@@ -523,6 +494,20 @@ pub(crate) async fn siem_stats(
                 )
                 .with_request_id(&auth.request_id)
             })?;
+    let targets_with_error: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM siem_targets WHERE last_error IS NOT NULL AND last_error != ''",
+    )
+    .fetch_one(db.pool())
+    .await
+    .map_err(|e| {
+        warn!(error = %e, "Failed to count SIEM targets with errors");
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error::INTERNAL_ERROR,
+            "Failed to read SIEM stats",
+        )
+        .with_request_id(&auth.request_id)
+    })?;
 
     Ok(Json(SiemStatsResponse {
         total_targets,

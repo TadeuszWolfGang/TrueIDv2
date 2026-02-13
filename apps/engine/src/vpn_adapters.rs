@@ -15,16 +15,12 @@ const VPN_CONFIDENCE: u8 = 80;
 
 // ── AnyConnect patterns ──
 static ANYCONNECT_USER_IP: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
-        r"User\s*[<=]?\s*(?P<user>\S+)\s+IP\s*[<=]?\s*(?P<ip>\d{1,3}(?:\.\d{1,3}){3})",
-    )
-    .expect("invalid ANYCONNECT_USER_IP regex")
+    Regex::new(r"User\s*[<=]?\s*(?P<user>\S+)\s+IP\s*[<=]?\s*(?P<ip>\d{1,3}(?:\.\d{1,3}){3})")
+        .expect("invalid ANYCONNECT_USER_IP regex")
 });
 static ANYCONNECT_USERNAME_IP: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
-        r"Username\s*=\s*(?P<user>[^,]+),\s*IP\s*=\s*(?P<ip>\d{1,3}(?:\.\d{1,3}){3})",
-    )
-    .expect("invalid ANYCONNECT_USERNAME_IP regex")
+    Regex::new(r"Username\s*=\s*(?P<user>[^,]+),\s*IP\s*=\s*(?P<ip>\d{1,3}(?:\.\d{1,3}){3})")
+        .expect("invalid ANYCONNECT_USERNAME_IP regex")
 });
 
 // ── GlobalProtect patterns ──
@@ -35,10 +31,8 @@ static GP_USER_IP: Lazy<Regex> = Lazy::new(|| {
     .expect("invalid GP_USER_IP regex")
 });
 static GP_IP_USER: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(
-        r"(?:from|Login from):\s*(?P<ip>\d{1,3}(?:\.\d{1,3}){3}).*User:\s*(?P<user>\S+)",
-    )
-    .expect("invalid GP_IP_USER regex")
+    Regex::new(r"(?:from|Login from):\s*(?P<ip>\d{1,3}(?:\.\d{1,3}){3}).*User:\s*(?P<user>\S+)")
+        .expect("invalid GP_IP_USER regex")
 });
 
 // ── Fortinet patterns ──
@@ -168,8 +162,11 @@ fn try_fortinet(text: &str) -> Option<IdentityEvent> {
 ///
 /// Parameters: `text` - syslog payload text.
 /// Returns: optional VPN identity event.
-fn parse_vpn_syslog(text: &str) -> Option<IdentityEvent> {
-    if text.contains("ASA-") || text.contains("AnyConnect") {
+pub fn parse_vpn_syslog(text: &str) -> Option<IdentityEvent> {
+    if text.contains("ASA-")
+        || text.contains("AnyConnect")
+        || (text.contains("Username =") && text.contains("IP ="))
+    {
         if let Some(event) = try_anyconnect(text) {
             return Some(event);
         }
@@ -206,5 +203,75 @@ pub async fn run_vpn_listener(bind_addr: SocketAddr, sender: Sender<IdentityEven
                 warn!(?peer, error = %e, "Failed to send VPN event");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_anyconnect_user_ip_format() {
+        let msg = r#"<166>%ASA-6-113039: Group <VPN> User <jkowalski> IP <10.20.30.40> AnyConnect session"#;
+        let event = parse_vpn_syslog(msg).expect("should parse AnyConnect");
+        assert_eq!(event.user, "jkowalski");
+        assert_eq!(event.ip.to_string(), "10.20.30.40");
+        assert!(matches!(event.source, SourceType::VpnAnyConnect));
+        assert_eq!(event.confidence_score, 80);
+        assert!(event.mac.is_none());
+    }
+
+    #[test]
+    fn test_anyconnect_username_equals_format() {
+        let msg = "Username = asmith, IP = 172.16.1.100, Session started";
+        let event = parse_vpn_syslog(msg).expect("should parse AnyConnect Username=");
+        assert_eq!(event.user, "asmith");
+        assert_eq!(event.ip.to_string(), "172.16.1.100");
+    }
+
+    #[test]
+    fn test_globalprotect_syslog_format() {
+        let msg = "1,2025/01/15 10:30:00,GP,GLOBALPROTECT,,login,,,,jkowalski,,,172.16.5.10,,";
+        let event = parse_vpn_syslog(msg).expect("should parse GlobalProtect CSV");
+        assert_eq!(event.user, "jkowalski");
+        assert_eq!(event.ip.to_string(), "172.16.5.10");
+        assert!(matches!(event.source, SourceType::VpnGlobalProtect));
+    }
+
+    #[test]
+    fn test_globalprotect_user_from_format() {
+        let msg = "GlobalProtect gateway login: User: bwilson from: 10.50.1.20 connected";
+        let event = parse_vpn_syslog(msg).expect("should parse GP User/from");
+        assert_eq!(event.user, "bwilson");
+        assert_eq!(event.ip.to_string(), "10.50.1.20");
+    }
+
+    #[test]
+    fn test_fortinet_vpn_syslog() {
+        let msg = r#"date=2025-01-15 subtype="vpn" action=tunnel-up remip=192.168.100.5 user="mkowalska""#;
+        let event = parse_vpn_syslog(msg).expect("should parse Fortinet");
+        assert_eq!(event.user, "mkowalska");
+        assert_eq!(event.ip.to_string(), "192.168.100.5");
+        assert!(matches!(event.source, SourceType::VpnFortinet));
+    }
+
+    #[test]
+    fn test_fortinet_reversed_order() {
+        let msg = r#"date=2025-01-15 user="admin" subtype=vpn action=tunnel-up remip=10.0.0.99"#;
+        let event = parse_vpn_syslog(msg).expect("should parse Fortinet reversed");
+        assert_eq!(event.user, "admin");
+        assert_eq!(event.ip.to_string(), "10.0.0.99");
+    }
+
+    #[test]
+    fn test_unknown_syslog_returns_none() {
+        let msg = "Jan 15 10:00:00 router1 kernel: link up eth0";
+        assert!(parse_vpn_syslog(msg).is_none());
+    }
+
+    #[test]
+    fn test_invalid_ip_returns_none() {
+        let msg = r#"<166>%ASA-6-113039: User <test> IP <999.999.999.999> bad"#;
+        assert!(parse_vpn_syslog(msg).is_none());
     }
 }

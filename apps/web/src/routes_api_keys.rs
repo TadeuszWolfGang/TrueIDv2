@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use crate::error::{self, ApiError};
+use crate::helpers;
 use crate::middleware::AuthUser;
 use crate::AppState;
 use trueid_common::model::{ApiKeyRecord, UserRole};
@@ -37,13 +38,7 @@ pub async fn list_keys(
     _auth: AuthUser,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-    })?;
+    let db = helpers::require_db(&state, &_auth.request_id)?;
 
     let keys = db.list_api_keys().await.map_err(|e| {
         warn!(error = %e, "Failed to list API keys");
@@ -74,13 +69,7 @@ pub async fn create_key(
         .with_request_id(&auth.request_id));
     }
 
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let expires_at = body
         .expires_in_days
@@ -123,13 +112,7 @@ pub async fn revoke_key(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let revoked = db.revoke_api_key(id).await.map_err(|e| {
         warn!(error = %e, "Failed to revoke API key");

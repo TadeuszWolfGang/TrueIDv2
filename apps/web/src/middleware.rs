@@ -16,6 +16,7 @@ use tracing::warn;
 
 use crate::auth::{self, extract_cookie, validate_token, COOKIE_NAME, CSRF_COOKIE_NAME};
 use crate::error::{self, ApiError};
+use crate::helpers;
 use crate::AppState;
 use crate::RequestId;
 use trueid_common::model::UserRole;
@@ -128,14 +129,7 @@ where
         let user_id: i64 = claims.sub.parse().unwrap_or(0);
 
         // Verify user still exists and token_version matches.
-        let db = app_state.db.as_ref().ok_or_else(|| {
-            ApiError::new(
-                StatusCode::SERVICE_UNAVAILABLE,
-                error::SERVICE_UNAVAILABLE,
-                "Database unavailable",
-            )
-            .with_request_id(&rid)
-        })?;
+        let db = helpers::require_db(&app_state, &rid)?;
 
         let user = db.get_user_by_id(user_id).await.ok().flatten();
         let Some(user) = user else {

@@ -24,3 +24,28 @@ pub(crate) fn require_db<'a>(
         .with_request_id(request_id)
     })
 }
+
+/// Writes audit log entry for the authenticated user's action.
+///
+/// Parameters: `db` - database handle, `auth` - authenticated user, `action` - audit action name, `target_id` - optional target resource id, `details` - optional additional details.
+/// Returns: none.
+pub(crate) async fn audit(
+    db: &Db,
+    auth: &crate::middleware::AuthUser,
+    action: &str,
+    target_id: Option<&str>,
+    details: Option<&str>,
+) {
+    let _ = db
+        .write_audit_log(
+            Some(auth.user_id),
+            &auth.username,
+            &auth.principal_type,
+            action,
+            target_id,
+            details,
+            None,
+            Some(&auth.request_id),
+        )
+        .await;
+}

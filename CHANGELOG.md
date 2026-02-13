@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Changed
+- Added Phase 3 test coverage: 21 new API v2 E2E tests in `apps/web/tests/api_v2_tests.rs` for firewall, SIEM, and LDAP flows.
+- Added 13 engine unit tests for VPN parsing and SIEM formatting in `apps/engine/src/vpn_adapters.rs` and `apps/engine/src/siem_forwarder.rs`.
+- Refactored web handlers to enrich `groups` in v1/v2 mapping SQL, append `groups` column in mappings CSV export, and reuse `helpers::require_db(...)`/`helpers::audit(...)` in Phase 3 route modules.
+- Refactored engine event processing to use `EventLoopCtx` in `apps/engine/src/main.rs` to reduce `run_event_loop` parameter arity without behavior change.
 - Added LDAP/AD group sync foundation with migration `0021_add_ldap_groups.sql` (`user_groups`, `ldap_config`) and default disabled LDAP config row.
 - Added engine LDAP sync task (`apps/engine/src/ldap_sync.rs`) with periodic sync loop, force-sync path, CN extraction, stale cleanup, and sync status updates.
 - Added Prometheus metrics generator (`apps/engine/src/metrics.rs`) and public engine metrics endpoint `GET /engine/metrics` plus web proxy `GET /metrics`.
