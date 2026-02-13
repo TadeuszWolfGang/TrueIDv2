@@ -54,11 +54,41 @@ async fn build_test_app() -> (Router, Arc<trueid_common::db::Db>) {
 /// Returns: none.
 async fn seed_test_data(db: &trueid_common::db::Db) {
     let base = vec![
-        ("10.1.2.3", "jkowalski", SourceType::Radius, "AA:BB:CC:DD:EE:01", 95_u8),
-        ("10.1.2.4", "asmith", SourceType::AdLog, "AA:BB:CC:DD:EE:02", 85_u8),
-        ("10.1.2.5", "mjones", SourceType::DhcpLease, "AA:BB:CC:DD:EE:03", 60_u8),
-        ("192.168.1.10", "jkowalski", SourceType::Radius, "AA:BB:CC:DD:EE:04", 90_u8),
-        ("192.168.1.11", "bwilson", SourceType::Manual, "AA:BB:CC:DD:EE:05", 100_u8),
+        (
+            "10.1.2.3",
+            "jkowalski",
+            SourceType::Radius,
+            "AA:BB:CC:DD:EE:01",
+            95_u8,
+        ),
+        (
+            "10.1.2.4",
+            "asmith",
+            SourceType::AdLog,
+            "AA:BB:CC:DD:EE:02",
+            85_u8,
+        ),
+        (
+            "10.1.2.5",
+            "mjones",
+            SourceType::DhcpLease,
+            "AA:BB:CC:DD:EE:03",
+            60_u8,
+        ),
+        (
+            "192.168.1.10",
+            "jkowalski",
+            SourceType::Radius,
+            "AA:BB:CC:DD:EE:04",
+            90_u8,
+        ),
+        (
+            "192.168.1.11",
+            "bwilson",
+            SourceType::Manual,
+            "AA:BB:CC:DD:EE:05",
+            100_u8,
+        ),
     ];
     for (idx, (ip, user, source, mac, confidence)) in base.into_iter().enumerate() {
         let event = IdentityEvent {
@@ -284,12 +314,8 @@ async fn test_search_exact_user() {
 async fn test_search_by_source() {
     let (app, _) = build_test_app().await;
     let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
-    let (status, body) = auth_get(
-        &app,
-        &cookie,
-        "/api/v2/search?scope=mappings&source=Radius",
-    )
-    .await;
+    let (status, body) =
+        auth_get(&app, &cookie, "/api/v2/search?scope=mappings&source=Radius").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["mappings"]["total"].as_i64().unwrap_or(-1), 2);
 }
@@ -319,9 +345,27 @@ async fn test_search_pagination() {
     .await;
 
     assert_eq!(p1["mappings"]["total"].as_i64().unwrap_or(-1), 5);
-    assert_eq!(p1["mappings"]["data"].as_array().map(|a| a.len()).unwrap_or(0), 2);
-    assert_eq!(p2["mappings"]["data"].as_array().map(|a| a.len()).unwrap_or(0), 2);
-    assert_eq!(p3["mappings"]["data"].as_array().map(|a| a.len()).unwrap_or(0), 1);
+    assert_eq!(
+        p1["mappings"]["data"]
+            .as_array()
+            .map(|a| a.len())
+            .unwrap_or(0),
+        2
+    );
+    assert_eq!(
+        p2["mappings"]["data"]
+            .as_array()
+            .map(|a| a.len())
+            .unwrap_or(0),
+        2
+    );
+    assert_eq!(
+        p3["mappings"]["data"]
+            .as_array()
+            .map(|a| a.len())
+            .unwrap_or(0),
+        1
+    );
 }
 
 #[tokio::test]
@@ -384,15 +428,14 @@ async fn test_search_has_query_time() {
 async fn test_export_mappings_json() {
     let (app, _) = build_test_app().await;
     let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
-    let (status, headers, body) = auth_get_raw(&app, &cookie, "/api/v2/export/mappings?format=json").await;
+    let (status, headers, body) =
+        auth_get_raw(&app, &cookie, "/api/v2/export/mappings?format=json").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(
-        headers
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .contains("application/json")
-    );
+    assert!(headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .contains("application/json"));
     let dispo = headers
         .get("content-disposition")
         .and_then(|v| v.to_str().ok())
@@ -406,15 +449,14 @@ async fn test_export_mappings_json() {
 async fn test_export_mappings_csv() {
     let (app, _) = build_test_app().await;
     let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
-    let (status, headers, body) = auth_get_raw(&app, &cookie, "/api/v2/export/mappings?format=csv").await;
+    let (status, headers, body) =
+        auth_get_raw(&app, &cookie, "/api/v2/export/mappings?format=csv").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(
-        headers
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .contains("text/csv")
-    );
+    assert!(headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .contains("text/csv"));
     let dispo = headers
         .get("content-disposition")
         .and_then(|v| v.to_str().ok())
@@ -424,7 +466,7 @@ async fn test_export_mappings_csv() {
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(
         lines.first().copied().unwrap_or(""),
-        "ip,user,mac,source,last_seen,confidence,is_active,vendor"
+        "ip,user,mac,source,last_seen,confidence,is_active,vendor,subnet_id,subnet_name"
     );
     assert_eq!(lines.len(), 6);
 }
@@ -433,8 +475,12 @@ async fn test_export_mappings_csv() {
 async fn test_export_mappings_with_filter() {
     let (app, _) = build_test_app().await;
     let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
-    let (status, _, body) =
-        auth_get_raw(&app, &cookie, "/api/v2/export/mappings?format=json&source=Radius").await;
+    let (status, _, body) = auth_get_raw(
+        &app,
+        &cookie,
+        "/api/v2/export/mappings?format=json&source=Radius",
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     let arr: Value = serde_json::from_slice(&body).expect("json parse failed");
     assert_eq!(arr.as_array().map(|a| a.len()).unwrap_or(0), 2);
@@ -444,15 +490,14 @@ async fn test_export_mappings_with_filter() {
 async fn test_export_events_json() {
     let (app, _) = build_test_app().await;
     let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
-    let (status, headers, body) = auth_get_raw(&app, &cookie, "/api/v2/export/events?format=json").await;
+    let (status, headers, body) =
+        auth_get_raw(&app, &cookie, "/api/v2/export/events?format=json").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(
-        headers
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("")
-            .contains("application/json")
-    );
+    assert!(headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .contains("application/json"));
     let arr: Value = serde_json::from_slice(&body).expect("json parse failed");
     assert!(arr.as_array().map(|a| a.len()).unwrap_or(0) >= 5);
 }

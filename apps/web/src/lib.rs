@@ -6,13 +6,14 @@ pub mod auth;
 pub mod error;
 pub mod middleware;
 pub mod rate_limit;
-pub mod routes_api_keys;
 pub mod routes_alerts;
+pub mod routes_api_keys;
 pub mod routes_audit;
 pub mod routes_auth;
 pub mod routes_conflicts;
 pub mod routes_proxy;
 pub mod routes_search;
+pub mod routes_subnets;
 pub mod routes_timeline;
 pub mod routes_users;
 pub mod routes_v1;
@@ -68,7 +69,11 @@ async fn request_id_layer(mut req: Request, next: axum_mw::Next) -> Response {
 ///
 /// Extracts client IP from X-Forwarded-For header or peer address.
 /// Returns 429 Too Many Requests with Retry-After header when limit exceeded.
-async fn login_rate_limit(State(state): State<AppState>, req: Request, next: axum_mw::Next) -> Response {
+async fn login_rate_limit(
+    State(state): State<AppState>,
+    req: Request,
+    next: axum_mw::Next,
+) -> Response {
     let ip = req
         .headers()
         .get("x-forwarded-for")
@@ -106,7 +111,10 @@ async fn security_headers_layer(req: Request, next: axum_mw::Next) -> Response {
              connect-src 'self'; frame-ancestors 'none'",
         ),
     );
-    h.insert("x-frame-options", axum::http::HeaderValue::from_static("DENY"));
+    h.insert(
+        "x-frame-options",
+        axum::http::HeaderValue::from_static("DENY"),
+    );
     h.insert(
         "x-content-type-options",
         axum::http::HeaderValue::from_static("nosniff"),
@@ -142,20 +150,47 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/mappings", get(routes_v1::api_v1_mappings))
         .route("/api/v1/events", get(routes_v1::api_v1_events))
         .route("/api/v2/search", get(routes_search::search))
-        .route("/api/v2/export/mappings", get(routes_search::export_mappings))
+        .route(
+            "/api/v2/export/mappings",
+            get(routes_search::export_mappings),
+        )
         .route("/api/v2/export/events", get(routes_search::export_events))
-        .route("/api/v2/timeline/ip/{ip}", get(routes_timeline::timeline_ip))
-        .route("/api/v2/timeline/user/{user}", get(routes_timeline::timeline_user))
-        .route("/api/v2/timeline/mac/{mac}", get(routes_timeline::timeline_mac))
+        .route(
+            "/api/v2/timeline/ip/{ip}",
+            get(routes_timeline::timeline_ip),
+        )
+        .route(
+            "/api/v2/timeline/user/{user}",
+            get(routes_timeline::timeline_user),
+        )
+        .route(
+            "/api/v2/timeline/mac/{mac}",
+            get(routes_timeline::timeline_mac),
+        )
         .route("/api/v2/conflicts", get(routes_conflicts::list_conflicts))
-        .route("/api/v2/conflicts/stats", get(routes_conflicts::conflict_stats))
+        .route(
+            "/api/v2/conflicts/stats",
+            get(routes_conflicts::conflict_stats),
+        )
+        .route("/api/v2/subnets", get(routes_subnets::list_subnets))
+        .route("/api/v2/subnets/stats", get(routes_subnets::subnet_stats))
+        .route(
+            "/api/v2/subnets/{id}/mappings",
+            get(routes_subnets::subnet_mappings),
+        )
         .route("/api/v2/alerts/history", get(routes_alerts::alert_history))
         .route("/api/v2/alerts/stats", get(routes_alerts::alert_stats))
         .route("/api/v1/stats", get(routes_v1::api_v1_stats))
         .route("/lookup/:ip", get(routes_v1::lookup))
         .route("/api/recent", get(routes_v1::recent))
-        .route("/api/v1/admin/adapters", get(routes_proxy::proxy_admin_adapters))
-        .route("/api/v1/admin/agents", get(routes_proxy::proxy_admin_agents))
+        .route(
+            "/api/v1/admin/adapters",
+            get(routes_proxy::proxy_admin_adapters),
+        )
+        .route(
+            "/api/v1/admin/agents",
+            get(routes_proxy::proxy_admin_agents),
+        )
         .route(
             "/api/v1/admin/runtime-config",
             get(routes_proxy::proxy_admin_runtime_config),
@@ -164,7 +199,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/auth/sessions", get(routes_auth::list_sessions))
         .route("/api/auth/logout", post(routes_auth::logout))
         .route("/api/auth/logout-all", post(routes_auth::logout_all))
-        .route("/api/auth/change-password", post(routes_auth::change_password))
+        .route(
+            "/api/auth/change-password",
+            post(routes_auth::change_password),
+        )
         .layer(axum_mw::from_fn_with_state(
             state.clone(),
             middleware::require_viewer_layer,
@@ -172,8 +210,14 @@ pub fn build_router(state: AppState) -> Router {
 
     let operator_routes = Router::new()
         .route("/api/v1/mappings", post(routes_proxy::proxy_post_mapping))
-        .route("/api/v1/mappings/{ip}", delete(routes_proxy::proxy_delete_mapping))
-        .route("/api/auth/sessions/{id}", delete(routes_auth::revoke_session))
+        .route(
+            "/api/v1/mappings/{ip}",
+            delete(routes_proxy::proxy_delete_mapping),
+        )
+        .route(
+            "/api/auth/sessions/{id}",
+            delete(routes_auth::revoke_session),
+        )
         .route(
             "/api/v2/conflicts/{id}/resolve",
             post(routes_conflicts::resolve_conflict),
@@ -210,7 +254,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/v1/users/{id}/reset-password",
             post(routes_users::reset_password),
         )
-        .route("/api/v1/users/{id}/unlock", post(routes_users::unlock_account))
+        .route(
+            "/api/v1/users/{id}/unlock",
+            post(routes_users::unlock_account),
+        )
         .route(
             "/api/v1/api-keys",
             get(routes_api_keys::list_keys).post(routes_api_keys::create_key),
@@ -223,6 +270,11 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/v2/alerts/rules/{id}",
             put(routes_alerts::update_rule).delete(routes_alerts::delete_rule),
+        )
+        .route("/api/v2/subnets", post(routes_subnets::create_subnet))
+        .route(
+            "/api/v2/subnets/{id}",
+            put(routes_subnets::update_subnet).delete(routes_subnets::delete_subnet),
         )
         .route("/api/v1/audit-logs", get(routes_audit::list_audit_logs))
         .route("/api/v1/audit-logs/stats", get(routes_audit::audit_stats))

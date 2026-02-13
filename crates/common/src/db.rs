@@ -154,9 +154,11 @@ impl Db {
     /// Returns: optional `DeviceMapping` if found or an error.
     pub async fn get_mapping(&self, ip: &str) -> Result<Option<DeviceMapping>> {
         let row = sqlx::query(
-            "SELECT ip, user, source, last_seen, confidence, mac, is_active, vendor
-             FROM mappings
-             WHERE ip = ?",
+            "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
+                    m.subnet_id, s.name as subnet_name
+             FROM mappings m
+             LEFT JOIN subnets s ON m.subnet_id = s.id
+             WHERE m.ip = ?",
         )
         .bind(ip)
         .fetch_optional(&self.pool)
@@ -176,6 +178,8 @@ impl Db {
             u8::try_from(confidence).context("confidence value out of u8 range")?;
         let is_active: bool = row.try_get("is_active")?;
         let vendor: Option<String> = row.try_get("vendor")?;
+        let subnet_id: Option<i64> = row.try_get("subnet_id").ok();
+        let subnet_name: Option<String> = row.try_get("subnet_name").ok();
 
         Ok(Some(DeviceMapping {
             ip,
@@ -186,6 +190,8 @@ impl Db {
             confidence_score,
             is_active,
             vendor,
+            subnet_id,
+            subnet_name,
         }))
     }
 
@@ -211,10 +217,12 @@ impl Db {
     /// Returns: list of active `DeviceMapping` values or an error.
     pub async fn get_active_mappings(&self) -> Result<Vec<DeviceMapping>> {
         let rows = sqlx::query(
-            "SELECT ip, user, source, last_seen, confidence, mac, is_active, vendor
-             FROM mappings
-             WHERE is_active = true
-             ORDER BY last_seen DESC",
+            "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
+                    m.subnet_id, s.name as subnet_name
+             FROM mappings m
+             LEFT JOIN subnets s ON m.subnet_id = s.id
+             WHERE m.is_active = true
+             ORDER BY m.last_seen DESC",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -231,6 +239,8 @@ impl Db {
                 u8::try_from(confidence).context("confidence value out of u8 range")?;
             let is_active: bool = row.try_get("is_active")?;
             let vendor: Option<String> = row.try_get("vendor")?;
+            let subnet_id: Option<i64> = row.try_get("subnet_id").ok();
+            let subnet_name: Option<String> = row.try_get("subnet_name").ok();
 
             results.push(DeviceMapping {
                 ip,
@@ -241,6 +251,8 @@ impl Db {
                 confidence_score,
                 is_active,
                 vendor,
+                subnet_id,
+                subnet_name,
             });
         }
 
@@ -511,9 +523,11 @@ impl Db {
     /// Returns: list of recent `DeviceMapping` values or an error.
     pub async fn get_recent_mappings(&self, limit: i64) -> Result<Vec<DeviceMapping>> {
         let rows = sqlx::query(
-            "SELECT ip, user, source, last_seen, confidence, mac, is_active, vendor
-             FROM mappings
-             ORDER BY last_seen DESC
+            "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
+                    m.subnet_id, s.name as subnet_name
+             FROM mappings m
+             LEFT JOIN subnets s ON m.subnet_id = s.id
+             ORDER BY m.last_seen DESC
              LIMIT ?",
         )
         .bind(limit)
@@ -532,6 +546,8 @@ impl Db {
                 u8::try_from(confidence).context("confidence value out of u8 range")?;
             let is_active: bool = row.try_get("is_active")?;
             let vendor: Option<String> = row.try_get("vendor")?;
+            let subnet_id: Option<i64> = row.try_get("subnet_id").ok();
+            let subnet_name: Option<String> = row.try_get("subnet_name").ok();
 
             results.push(DeviceMapping {
                 ip,
@@ -542,6 +558,8 @@ impl Db {
                 confidence_score,
                 is_active,
                 vendor,
+                subnet_id,
+                subnet_name,
             });
         }
 

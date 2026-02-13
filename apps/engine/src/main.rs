@@ -8,6 +8,7 @@
 mod admin_api;
 mod alerts;
 mod conflicts;
+mod subnets;
 mod tls_listener;
 
 use anyhow::Result;
@@ -109,6 +110,7 @@ async fn run_event_loop(
     db: Arc<Db>,
     vendors: Arc<VendorMap>,
     adapter_stats: Arc<RwLock<Vec<AdapterStatus>>>,
+    subnet_cache: Arc<RwLock<Vec<subnets::SubnetEntry>>>,
     alert_rules: Arc<RwLock<Vec<alerts::AlertRule>>>,
     http_client: reqwest::Client,
 ) -> Result<()> {
@@ -179,6 +181,14 @@ async fn run_event_loop(
 
         if let Err(err) = db.upsert_mapping(event, vendor.as_deref()).await {
             warn!(error = %err, "Failed to upsert mapping");
+            continue;
+        }
+
+        {
+            let subnets = subnet_cache.read().await;
+            if let Err(e) = subnets::tag_subnet(db.pool(), &ip_str, &subnets).await {
+                warn!(error = %e, ip = %ip_str, "Subnet tagging failed");
+            }
         }
     }
     Ok(())
@@ -239,7 +249,11 @@ fn start_janitor(db: Arc<Db>) {
             let ttl = db.get_config_i64("stale_ttl_minutes", 5).await;
             match db.deactivate_stale(ttl).await {
                 Ok(count) if count > 0 => {
-                    info!(deactivated = count, ttl_minutes = ttl, "Janitor: marked stale mappings");
+                    info!(
+                        deactivated = count,
+                        ttl_minutes = ttl,
+                        "Janitor: marked stale mappings"
+                    );
                 }
                 Ok(_) => {}
                 Err(err) => {
@@ -273,25 +287,69 @@ pub async fn handle_heartbeat(msg: &str, db: &Db) {
     };
     let uptime = get("uptime").and_then(|v| v.parse().ok()).unwrap_or(0);
     let sent = get("events_sent").and_then(|v| v.parse().ok()).unwrap_or(0);
-    let dropped = get("events_dropped").and_then(|v| v.parse().ok()).unwrap_or(0);
+    let dropped = get("events_dropped")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
 
-    if let Err(err) = db.upsert_agent(&hostname, uptime, sent, dropped, "tls").await {
+    if let Err(err) = db
+        .upsert_agent(&hostname, uptime, sent, dropped, "tls")
+        .await
+    {
         warn!(error = %err, hostname = %hostname, "Failed to upsert agent heartbeat");
     }
 }
 
 /// Builds the initial adapter stats list for monitoring.
 fn build_initial_adapter_stats(
-    radius_addr: &str, ad_addr: &str, dhcp_addr: &str,
-    ad_tls_addr: &str, dhcp_tls_addr: &str, tls_enabled: bool,
+    radius_addr: &str,
+    ad_addr: &str,
+    dhcp_addr: &str,
+    ad_tls_addr: &str,
+    dhcp_tls_addr: &str,
+    tls_enabled: bool,
 ) -> Vec<AdapterStatus> {
     let tls_status = if tls_enabled { "idle" } else { "disabled" };
     vec![
-        AdapterStatus { name: "RADIUS".into(), protocol: "UDP".into(), bind: radius_addr.into(), status: "idle".into(), last_event_at: None, events_total: 0 },
-        AdapterStatus { name: "AD Syslog".into(), protocol: "UDP".into(), bind: ad_addr.into(), status: "idle".into(), last_event_at: None, events_total: 0 },
-        AdapterStatus { name: "DHCP Syslog".into(), protocol: "UDP".into(), bind: dhcp_addr.into(), status: "idle".into(), last_event_at: None, events_total: 0 },
-        AdapterStatus { name: "AD TLS".into(), protocol: "TCP+TLS".into(), bind: ad_tls_addr.into(), status: tls_status.into(), last_event_at: None, events_total: 0 },
-        AdapterStatus { name: "DHCP TLS".into(), protocol: "TCP+TLS".into(), bind: dhcp_tls_addr.into(), status: tls_status.into(), last_event_at: None, events_total: 0 },
+        AdapterStatus {
+            name: "RADIUS".into(),
+            protocol: "UDP".into(),
+            bind: radius_addr.into(),
+            status: "idle".into(),
+            last_event_at: None,
+            events_total: 0,
+        },
+        AdapterStatus {
+            name: "AD Syslog".into(),
+            protocol: "UDP".into(),
+            bind: ad_addr.into(),
+            status: "idle".into(),
+            last_event_at: None,
+            events_total: 0,
+        },
+        AdapterStatus {
+            name: "DHCP Syslog".into(),
+            protocol: "UDP".into(),
+            bind: dhcp_addr.into(),
+            status: "idle".into(),
+            last_event_at: None,
+            events_total: 0,
+        },
+        AdapterStatus {
+            name: "AD TLS".into(),
+            protocol: "TCP+TLS".into(),
+            bind: ad_tls_addr.into(),
+            status: tls_status.into(),
+            last_event_at: None,
+            events_total: 0,
+        },
+        AdapterStatus {
+            name: "DHCP TLS".into(),
+            protocol: "TCP+TLS".into(),
+            bind: dhcp_tls_addr.into(),
+            status: tls_status.into(),
+            last_event_at: None,
+            events_total: 0,
+        },
     ]
 }
 
@@ -303,7 +361,9 @@ fn start_adapter_status_updater(adapter_stats: Arc<RwLock<Vec<AdapterStatus>>>) 
             let now = Utc::now();
             let mut stats = adapter_stats.write().await;
             for a in stats.iter_mut() {
-                if a.status == "disabled" { continue; }
+                if a.status == "disabled" {
+                    continue;
+                }
                 a.status = match a.last_event_at {
                     Some(t) if (now - t).num_minutes() < 5 => "active".into(),
                     Some(_) => "idle".into(),
@@ -365,8 +425,12 @@ async fn main() -> Result<()> {
 
     // Adapter stats (shared with admin API).
     let adapter_stats = Arc::new(RwLock::new(build_initial_adapter_stats(
-        &radius_bind_str, &ad_syslog_bind_str, &dhcp_syslog_bind_str,
-        &ad_tls_bind_str, &dhcp_tls_bind_str, tls_files_exist,
+        &radius_bind_str,
+        &ad_syslog_bind_str,
+        &dhcp_syslog_bind_str,
+        &ad_tls_bind_str,
+        &dhcp_tls_bind_str,
+        tls_files_exist,
     )));
     start_adapter_status_updater(adapter_stats.clone());
 
@@ -388,7 +452,9 @@ async fn main() -> Result<()> {
     });
 
     // Admin HTTP API (:8080).
-    let service_token = std::env::var("ENGINE_SERVICE_TOKEN").ok().filter(|s| !s.is_empty());
+    let service_token = std::env::var("ENGINE_SERVICE_TOKEN")
+        .ok()
+        .filter(|s| !s.is_empty());
     if service_token.is_none() {
         warn!("ENGINE_SERVICE_TOKEN not set — admin API is unprotected.");
     }
@@ -410,8 +476,9 @@ async fn main() -> Result<()> {
     });
 
     // Alert rule cache loaded at startup and refreshed in background.
-    let alert_rules: Arc<RwLock<Vec<alerts::AlertRule>>> =
-        Arc::new(RwLock::new(alerts::load_rules(db.pool()).await.unwrap_or_default()));
+    let alert_rules: Arc<RwLock<Vec<alerts::AlertRule>>> = Arc::new(RwLock::new(
+        alerts::load_rules(db.pool()).await.unwrap_or_default(),
+    ));
     {
         let reload_db = db.clone();
         let reload_rules = alert_rules.clone();
@@ -427,6 +494,28 @@ async fn main() -> Result<()> {
         });
     }
 
+    // Subnet cache loaded at startup and refreshed in background.
+    let subnet_cache: Arc<RwLock<Vec<subnets::SubnetEntry>>> = Arc::new(RwLock::new(
+        subnets::load_subnets(db.pool()).await.unwrap_or_default(),
+    ));
+    {
+        let reload_db = db.clone();
+        let reload_cache = subnet_cache.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                match subnets::load_subnets(reload_db.pool()).await {
+                    Ok(loaded) => {
+                        let mut cache = reload_cache.write().await;
+                        *cache = loaded;
+                    }
+                    Err(e) => warn!(error = %e, "Failed to reload subnet cache"),
+                }
+            }
+        });
+    }
+
     let http_client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
@@ -436,6 +525,7 @@ async fn main() -> Result<()> {
     let event_db = db.clone();
     let event_vendors = vendors.clone();
     let event_adapter_stats = adapter_stats.clone();
+    let event_subnet_cache = subnet_cache.clone();
     let event_alert_rules = alert_rules.clone();
     let event_http_client = http_client.clone();
     tokio::spawn(async move {
@@ -444,6 +534,7 @@ async fn main() -> Result<()> {
             event_db,
             event_vendors,
             event_adapter_stats,
+            event_subnet_cache,
             event_alert_rules,
             event_http_client,
         )
@@ -490,9 +581,13 @@ async fn main() -> Result<()> {
                         }
                     });
                 tokio::spawn(async move {
-                    if let Err(err) =
-                        tls_listener::run_tls_listener(ad_tls_addr, ad_acceptor, ad_handler, "AD-TLS")
-                            .await
+                    if let Err(err) = tls_listener::run_tls_listener(
+                        ad_tls_addr,
+                        ad_acceptor,
+                        ad_handler,
+                        "AD-TLS",
+                    )
+                    .await
                     {
                         warn!(error = %err, "AD TLS listener stopped");
                     }
@@ -517,15 +612,22 @@ async fn main() -> Result<()> {
                         }
                     });
                 tokio::spawn(async move {
-                    if let Err(err) =
-                        tls_listener::run_tls_listener(dhcp_tls_addr, acceptor, dhcp_handler, "DHCP-TLS")
-                            .await
+                    if let Err(err) = tls_listener::run_tls_listener(
+                        dhcp_tls_addr,
+                        acceptor,
+                        dhcp_handler,
+                        "DHCP-TLS",
+                    )
+                    .await
                     {
                         warn!(error = %err, "DHCP TLS listener stopped");
                     }
                 });
 
-                info!("TLS listeners started (AD: {}, DHCP: {})", ad_tls_addr, dhcp_tls_addr);
+                info!(
+                    "TLS listeners started (AD: {}, DHCP: {})",
+                    ad_tls_addr, dhcp_tls_addr
+                );
             }
             Err(err) => {
                 warn!(error = %err, "Failed to build TLS acceptor — TLS listeners disabled");

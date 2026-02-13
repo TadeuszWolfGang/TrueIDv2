@@ -59,6 +59,13 @@ pub struct DeviceMapping {
     /// Hardware vendor name resolved from OUI database.
     #[serde(default)]
     pub vendor: Option<String>,
+    // ── Phase 2: subnet awareness ──
+    /// Subnet ID if IP matches a known subnet definition.
+    #[serde(default)]
+    pub subnet_id: Option<i64>,
+    /// Subnet human-readable name (denormalized for API convenience).
+    #[serde(default)]
+    pub subnet_name: Option<String>,
 }
 
 /// Stored event row from the events table.

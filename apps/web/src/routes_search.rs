@@ -201,11 +201,11 @@ fn parse_order(raw: Option<&str>) -> &'static str {
 /// Returns: SQL-safe column name for mappings.
 fn mappings_sort_column(raw: Option<&str>) -> &'static str {
     match raw {
-        Some("ip") => "ip",
-        Some("user") => "user",
-        Some("source") => "source",
-        Some("last_seen") => "last_seen",
-        _ => "last_seen",
+        Some("ip") => "m.ip",
+        Some("user") => "m.user",
+        Some("source") => "m.source",
+        Some("last_seen") => "m.last_seen",
+        _ => "m.last_seen",
     }
 }
 
@@ -256,8 +256,9 @@ fn build_mappings_filters(
 
     if include_free_text {
         if let Some(search) = &q.q {
-            conditions
-                .push("(ip LIKE ? OR user LIKE ? OR mac LIKE ? OR vendor LIKE ?)".to_string());
+            conditions.push(
+                "(m.ip LIKE ? OR m.user LIKE ? OR m.mac LIKE ? OR m.vendor LIKE ?)".to_string(),
+            );
             let like = format!("%{search}%");
             binds.push(BindParam::Text(like.clone()));
             binds.push(BindParam::Text(like.clone()));
@@ -266,38 +267,38 @@ fn build_mappings_filters(
         }
     }
     if let Some(ip) = &q.ip {
-        conditions.push("ip = ?".to_string());
+        conditions.push("m.ip = ?".to_string());
         binds.push(BindParam::Text(ip.clone()));
     }
     if let Some(user) = &q.user {
-        conditions.push("user = ?".to_string());
+        conditions.push("m.user = ?".to_string());
         binds.push(BindParam::Text(user.clone()));
     }
     if let Some(mac) = &q.mac {
-        conditions.push("mac = ?".to_string());
+        conditions.push("m.mac = ?".to_string());
         binds.push(BindParam::Text(mac.clone()));
     }
     if let Some(vendor) = &q.vendor {
-        conditions.push("vendor LIKE ?".to_string());
+        conditions.push("m.vendor LIKE ?".to_string());
         binds.push(BindParam::Text(format!("%{vendor}%")));
     }
     if let Some(source) = &q.source {
-        conditions.push("source = ?".to_string());
+        conditions.push("m.source = ?".to_string());
         binds.push(BindParam::Text(source.clone()));
     }
     if let Some(active) = q.active {
         if active {
-            conditions.push("is_active = true".to_string());
+            conditions.push("m.is_active = true".to_string());
         } else {
-            conditions.push("is_active = false".to_string());
+            conditions.push("m.is_active = false".to_string());
         }
     }
     if let Some(from) = from_dt {
-        conditions.push("last_seen >= ?".to_string());
+        conditions.push("m.last_seen >= ?".to_string());
         binds.push(BindParam::DateTime(from));
     }
     if let Some(to) = to_dt {
-        conditions.push("last_seen <= ?".to_string());
+        conditions.push("m.last_seen <= ?".to_string());
         binds.push(BindParam::DateTime(to));
     }
 
@@ -453,10 +454,13 @@ pub async fn search(
         } else {
             format!("WHERE {}", conditions.join(" AND "))
         };
-        let count_sql = format!("SELECT COUNT(*) as c FROM mappings {where_clause}");
+        let count_sql = format!("SELECT COUNT(*) as c FROM mappings m {where_clause}");
         let data_sql = format!(
-            "SELECT ip, user, source, last_seen, confidence, mac, is_active, vendor \
-             FROM mappings {where_clause} ORDER BY {} {} LIMIT ? OFFSET ?",
+            "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
+                    m.subnet_id, s.name as subnet_name
+             FROM mappings m
+             LEFT JOIN subnets s ON m.subnet_id = s.id
+             {where_clause} ORDER BY {} {} LIMIT ? OFFSET ?",
             mappings_sort_column(q.sort.as_deref()),
             order
         );
@@ -504,6 +508,8 @@ pub async fn search(
                 confidence_score: u8::try_from(confidence).unwrap_or(0),
                 is_active: row.try_get("is_active").unwrap_or(false),
                 vendor: row.try_get("vendor").ok(),
+                subnet_id: row.try_get("subnet_id").ok(),
+                subnet_name: row.try_get("subnet_name").ok(),
             });
         }
 
@@ -624,8 +630,11 @@ pub async fn export_mappings(
         format!("WHERE {}", conditions.join(" AND "))
     };
     let sql = format!(
-        "SELECT ip, user, source, last_seen, confidence, mac, is_active, vendor \
-         FROM mappings {where_clause} ORDER BY last_seen DESC"
+        "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
+                m.subnet_id, s.name as subnet_name
+         FROM mappings m
+         LEFT JOIN subnets s ON m.subnet_id = s.id
+         {where_clause} ORDER BY m.last_seen DESC"
     );
 
     let rows = apply_binds(sqlx::query(&sql), &binds)
@@ -654,6 +663,8 @@ pub async fn export_mappings(
             confidence_score: u8::try_from(confidence).unwrap_or(0),
             is_active: row.try_get("is_active").unwrap_or(false),
             vendor: row.try_get("vendor").ok(),
+            subnet_id: row.try_get("subnet_id").ok(),
+            subnet_name: row.try_get("subnet_name").ok(),
         });
     }
 
@@ -692,11 +703,13 @@ pub async fn export_mappings(
         );
     }
 
-    let mut csv = String::from("ip,user,mac,source,last_seen,confidence,is_active,vendor\n");
+    let mut csv = String::from(
+        "ip,user,mac,source,last_seen,confidence,is_active,vendor,subnet_id,subnet_name\n",
+    );
     for row in &data {
         let user = row.current_users.first().cloned().unwrap_or_default();
         let line = format!(
-            "{},{},{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{},{},{},{}\n",
             csv_escape(&row.ip),
             csv_escape(&user),
             csv_escape(row.mac.as_deref().unwrap_or("")),
@@ -705,6 +718,8 @@ pub async fn export_mappings(
             row.confidence_score,
             row.is_active,
             csv_escape(row.vendor.as_deref().unwrap_or("")),
+            row.subnet_id.map(|v| v.to_string()).unwrap_or_default(),
+            csv_escape(row.subnet_name.as_deref().unwrap_or("")),
         );
         csv.push_str(&line);
     }

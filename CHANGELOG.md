@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Changed
+- Added subnet/VLAN awareness foundation (migration `0013_add_subnets.sql`, engine subnet cache + post-upsert subnet tagging, and new `/api/v2/subnets*` API endpoints).
+- Extended `DeviceMapping` with `subnet_id` and `subnet_name`, and updated v1/v2 mappings queries + exports to include subnet context (CSV header now includes `subnet_id,subnet_name`).
+- Updated web integration test `test_export_mappings_csv` to expect the new mappings export header with subnet columns.
 - Refactored web route organization: extracted legacy handlers to `apps/web/src/routes_v1.rs` and engine proxy handlers to `apps/web/src/routes_proxy.rs`, leaving `apps/web/src/lib.rs` as a router orchestrator.
 - Updated `build_router()` to use module-qualified handler wiring and kept lookup route behavior for existing clients/tests.
 - Refactored `trueid-web` into library + binary split: moved router/app state/handlers to `apps/web/src/lib.rs`, kept startup/bootstrap/server bind in `apps/web/src/main.rs`.

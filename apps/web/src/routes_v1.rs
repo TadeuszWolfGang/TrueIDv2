@@ -90,11 +90,11 @@ pub(crate) async fn api_v1_mappings(
     let offset = (page - 1) * per_page;
 
     let sort_col = match q.sort.as_deref() {
-        Some("ip") => "ip",
-        Some("user") => "user",
-        Some("confidence") => "confidence",
-        Some("source") => "source",
-        _ => "last_seen",
+        Some("ip") => "m.ip",
+        Some("user") => "m.user",
+        Some("confidence") => "m.confidence",
+        Some("source") => "m.source",
+        _ => "m.last_seen",
     };
     let order = if q.order.as_deref() == Some("asc") {
         "ASC"
@@ -106,18 +106,18 @@ pub(crate) async fn api_v1_mappings(
     let mut binds: Vec<String> = Vec::new();
 
     if let Some(ref src) = q.source {
-        conditions.push("source = ?");
+        conditions.push("m.source = ?");
         binds.push(src.clone());
     }
     if let Some(active) = q.active {
         if active {
-            conditions.push("is_active = true");
+            conditions.push("m.is_active = true");
         } else {
-            conditions.push("is_active = false");
+            conditions.push("m.is_active = false");
         }
     }
     if let Some(ref search) = q.search {
-        conditions.push("(ip LIKE ? OR user LIKE ? OR mac LIKE ? OR vendor LIKE ?)");
+        conditions.push("(m.ip LIKE ? OR m.user LIKE ? OR m.mac LIKE ? OR m.vendor LIKE ?)");
         let like = format!("%{}%", search);
         binds.push(like.clone());
         binds.push(like.clone());
@@ -131,10 +131,13 @@ pub(crate) async fn api_v1_mappings(
         format!("WHERE {}", conditions.join(" AND "))
     };
 
-    let count_sql = format!("SELECT COUNT(*) as c FROM mappings {}", where_clause);
+    let count_sql = format!("SELECT COUNT(*) as c FROM mappings m {}", where_clause);
     let data_sql = format!(
-        "SELECT ip, user, source, last_seen, confidence, mac, is_active, vendor \
-         FROM mappings {} ORDER BY {} {} LIMIT ? OFFSET ?",
+        "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
+                m.subnet_id, s.name as subnet_name
+         FROM mappings m
+         LEFT JOIN subnets s ON m.subnet_id = s.id
+         {} ORDER BY {} {} LIMIT ? OFFSET ?",
         where_clause, sort_col, order,
     );
 
@@ -179,6 +182,8 @@ pub(crate) async fn api_v1_mappings(
         let confidence: i64 = row.try_get("confidence").unwrap_or(0);
         let is_active: bool = row.try_get("is_active").unwrap_or(false);
         let vendor: Option<String> = row.try_get("vendor").ok();
+        let subnet_id: Option<i64> = row.try_get("subnet_id").ok();
+        let subnet_name: Option<String> = row.try_get("subnet_name").ok();
 
         data.push(DeviceMapping {
             ip,
@@ -189,6 +194,8 @@ pub(crate) async fn api_v1_mappings(
             confidence_score: u8::try_from(confidence).unwrap_or(0),
             is_active,
             vendor,
+            subnet_id,
+            subnet_name,
         });
     }
 
@@ -260,7 +267,10 @@ pub(crate) async fn api_v1_events(
             q = q.bind(b.clone());
         }
         if let Some(until_ts) = q_until {
-            let until_dt = Utc.timestamp_opt(until_ts, 0).single().unwrap_or_else(Utc::now);
+            let until_dt = Utc
+                .timestamp_opt(until_ts, 0)
+                .single()
+                .unwrap_or_else(Utc::now);
             q = q.bind(until_dt);
         }
         q = q.bind(limit);
