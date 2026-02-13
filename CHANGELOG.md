@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Changed
+- Added LDAP/AD group sync foundation with migration `0021_add_ldap_groups.sql` (`user_groups`, `ldap_config`) and default disabled LDAP config row.
+- Added engine LDAP sync task (`apps/engine/src/ldap_sync.rs`) with periodic sync loop, force-sync path, CN extraction, stale cleanup, and sync status updates.
+- Added Prometheus metrics generator (`apps/engine/src/metrics.rs`) and public engine metrics endpoint `GET /engine/metrics` plus web proxy `GET /metrics`.
+- Added LDAP web API (`apps/web/src/routes_ldap.rs`) for config management, force sync, and group membership queries; password is encrypted at rest and never returned.
+- Extended mapping enrichment with LDAP groups by adding `groups` to `DeviceMapping` and loading `group_names` from `user_groups` in DB queries.
+- Added `ldap3 = "0.11"` dependency in `apps/engine` for async LDAP integration.
 - Added VPN syslog adapter module (`apps/engine/src/vpn_adapters.rs`) for Cisco AnyConnect, Palo Alto GlobalProtect, and Fortinet SSL-VPN on shared `VPN_SYSLOG_BIND` UDP listener.
 - Extended `SourceType` with `VpnAnyConnect`, `VpnGlobalProtect`, and `VpnFortinet`; updated source serialization/parsing and source priority mapping in `crates/common`.
 - Added TLS agent VPN event parsing in `apps/engine/src/tls_parsers.rs` for `TrueID-Agent: VPN_SESSION ...` messages.

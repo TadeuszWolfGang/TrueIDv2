@@ -15,6 +15,7 @@ pub mod routes_conflicts;
 pub mod routes_dns;
 pub mod routes_firewall;
 pub mod routes_fingerprints;
+pub mod routes_ldap;
 pub mod routes_proxy;
 pub mod routes_search;
 pub mod routes_siem;
@@ -149,6 +150,7 @@ pub fn build_router(state: AppState) -> Router {
 
     let public_routes = Router::new()
         .route("/health", get(routes_v1::health))
+        .route("/metrics", get(routes_proxy::proxy_metrics))
         .route("/api/auth/refresh", post(routes_auth::refresh))
         .merge(login_route);
 
@@ -208,6 +210,23 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v2/siem/targets", get(routes_siem::list_targets))
         .route("/api/v2/siem/targets/{id}", get(routes_siem::get_target))
         .route("/api/v2/siem/targets/:id", get(routes_siem::get_target))
+        .route("/api/v2/ldap/groups", get(routes_ldap::list_groups))
+        .route(
+            "/api/v2/ldap/groups/{group}/members",
+            get(routes_ldap::group_members),
+        )
+        .route(
+            "/api/v2/ldap/groups/:group/members",
+            get(routes_ldap::group_members),
+        )
+        .route(
+            "/api/v2/ldap/users/{username}/groups",
+            get(routes_ldap::user_groups),
+        )
+        .route(
+            "/api/v2/ldap/users/:username/groups",
+            get(routes_ldap::user_groups),
+        )
         .route("/api/v2/firewall/stats", get(routes_firewall::firewall_stats))
         .route(
             "/api/v2/firewall/targets",
@@ -364,6 +383,9 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v2/dns/{ip}", delete(routes_dns::delete_dns_ip))
         .route("/api/v2/dns/:ip", delete(routes_dns::delete_dns_ip))
         .route("/api/v2/dns/flush", post(routes_dns::flush_dns_cache))
+        .route("/api/v2/ldap/config", get(routes_ldap::get_ldap_config))
+        .route("/api/v2/ldap/config", put(routes_ldap::update_ldap_config))
+        .route("/api/v2/ldap/sync", post(routes_ldap::force_ldap_sync))
         .route("/api/v2/siem/targets", post(routes_siem::create_target))
         .route(
             "/api/v2/siem/targets/{id}",

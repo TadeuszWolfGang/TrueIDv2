@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::RwLock;
 use tracing::info;
 use trueid_common::db::Db;
@@ -31,6 +32,8 @@ pub struct EngineAdminState {
     pub runtime_env: Arc<RuntimeEnv>,
     /// Shared service token for web↔engine auth. None = unprotected (dev).
     pub service_token: Option<String>,
+    /// Engine process start time used for uptime metrics.
+    pub start_time: Instant,
 }
 
 /// Snapshot of engine environment at startup (read-only diagnostics).
@@ -80,7 +83,8 @@ async fn service_token_guard(
 
 /// Builds the admin API router with all E1-E12 handlers.
 pub fn admin_router(state: EngineAdminState) -> Router {
-    Router::new()
+    let public_routes = Router::new().route("/engine/metrics", get(metrics_handler));
+    let protected_routes = Router::new()
         .route("/engine/status/stats", get(stats))
         .route("/engine/status/adapters", get(adapters_status))
         .route("/engine/status/agents", get(agents_list))
@@ -96,11 +100,29 @@ pub fn admin_router(state: EngineAdminState) -> Router {
         )
         .route("/engine/mappings", post(create_manual_mapping))
         .route("/engine/mappings/{ip}", delete(delete_mapping))
+        .route("/engine/ldap/sync", post(force_ldap_sync))
         .layer(axum_mw::from_fn_with_state(
             state.clone(),
             service_token_guard,
-        ))
+        ));
+    Router::new()
+        .merge(public_routes)
+        .merge(protected_routes)
         .with_state(state)
+}
+
+/// Returns Prometheus metrics in text exposition format.
+async fn metrics_handler(State(s): State<EngineAdminState>) -> impl IntoResponse {
+    let adapters = s.adapter_stats.read().await.clone();
+    let body = crate::metrics::generate_metrics(&adapters, s.db.pool(), s.start_time).await;
+    (
+        StatusCode::OK,
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        )],
+        body,
+    )
 }
 
 // ── E1: Stats ───────────────────────────────────────────────
@@ -364,6 +386,25 @@ async fn delete_mapping(
         }
         Ok(false) => Err(StatusCode::NOT_FOUND),
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
+
+/// Forces immediate LDAP group sync cycle.
+async fn force_ldap_sync(
+    State(s): State<EngineAdminState>,
+) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    match crate::ldap_sync::force_sync_once(s.db.clone()).await {
+        Ok(count) => Ok(Json(serde_json::json!({
+            "status": "ok",
+            "synced_users": count
+        }))),
+        Err(e) => Err((
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({
+                "status": "error",
+                "message": e.to_string()
+            })),
+        )),
     }
 }
 

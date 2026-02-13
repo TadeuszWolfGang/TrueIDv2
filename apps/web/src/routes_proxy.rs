@@ -3,6 +3,7 @@
 use anyhow::Result;
 use axum::{
     extract::{Path, State},
+    http::header::{CONTENT_TYPE, HeaderValue},
     http::StatusCode,
     response::IntoResponse,
     Json,
@@ -41,6 +42,34 @@ pub(crate) async fn proxy_to_engine(
         .await
         .map_err(|_| StatusCode::BAD_GATEWAY)?;
     Ok((status, Json(json_body)))
+}
+
+/// Proxies a request to the engine admin API and returns plain-text response.
+///
+/// Parameters: `state` - shared app state, `method` - HTTP method, `path` - engine path.
+/// Returns: proxied `(status, text)` response or `BAD_GATEWAY` on transport errors.
+pub(crate) async fn proxy_text_to_engine(
+    state: &AppState,
+    method: reqwest::Method,
+    path: &str,
+) -> Result<impl IntoResponse, StatusCode> {
+    let url = format!("{}{}", state.engine_url, path);
+    let mut req = state.http_client.request(method, &url);
+    if let Some(ref token) = state.engine_service_token {
+        req = req.header("X-Service-Token", token);
+    }
+    let resp = req.send().await.map_err(|e| {
+        warn!(error = %e, url = %url, "Engine proxy text request failed");
+        StatusCode::BAD_GATEWAY
+    })?;
+    let status =
+        StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let text = resp.text().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+    Ok((
+        status,
+        [(CONTENT_TYPE, HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8"))],
+        text,
+    ))
 }
 
 /// Proxies adapters status endpoint.
@@ -186,4 +215,14 @@ pub(crate) async fn proxy_delete_mapping(
         None,
     )
     .await
+}
+
+/// Proxies Prometheus metrics endpoint from engine.
+///
+/// Parameters: `s` - shared app state.
+/// Returns: plain-text Prometheus metrics payload.
+pub(crate) async fn proxy_metrics(
+    State(s): State<AppState>,
+) -> Result<impl IntoResponse, StatusCode> {
+    proxy_text_to_engine(&s, reqwest::Method::GET, "/engine/metrics").await
 }

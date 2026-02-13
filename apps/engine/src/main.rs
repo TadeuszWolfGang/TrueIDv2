@@ -12,6 +12,8 @@ mod conflicts;
 mod dns_resolver;
 mod fingerprints;
 mod firewall_push;
+mod ldap_sync;
+mod metrics;
 mod siem_forwarder;
 mod snmp_poller;
 mod subnets;
@@ -290,6 +292,7 @@ fn start_janitor(db: Arc<Db>) {
 /// Starts all adapters, admin HTTP, processes events and waits for Ctrl+C.
 #[tokio::main]
 async fn main() -> Result<()> {
+    let start_time = std::time::Instant::now();
     dotenvy::dotenv().ok();
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt().with_env_filter(env_filter).init();
@@ -405,6 +408,7 @@ async fn main() -> Result<()> {
         adapter_stats: adapter_stats.clone(),
         runtime_env,
         service_token,
+        start_time,
     };
     let admin_router: Router = admin_api::admin_router(admin_state);
     info!(%admin_addr, "Starting admin HTTP API");
@@ -510,6 +514,12 @@ async fn main() -> Result<()> {
     dns_resolver::start_dns_resolver(db.clone());
     snmp_poller::start_snmp_poller(db.clone());
     firewall_push::start_firewall_push(db.clone());
+    {
+        let ldap_db = db.clone();
+        tokio::spawn(async move {
+            ldap_sync::run_ldap_sync(ldap_db).await;
+        });
+    }
 
     // Optional TLS listeners (only started if cert files exist).
     if tls_files_exist {

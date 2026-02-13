@@ -84,6 +84,9 @@ pub struct DeviceMapping {
     /// Whether this IP has multiple concurrent active sessions (terminal server).
     #[serde(default)]
     pub multi_user: bool,
+    /// Optional LDAP/AD groups synced for the mapped user.
+    #[serde(default)]
+    pub groups: Option<Vec<String>>,
 }
 
 impl DeviceMapping {
@@ -108,6 +111,7 @@ impl DeviceMapping {
         let device_type: Option<String> = row.try_get("device_type").ok();
         let multi_user: bool = row.try_get("multi_user").unwrap_or(false);
         let session_users_raw: Option<String> = row.try_get("session_users").ok().flatten();
+        let group_names_raw: Option<String> = row.try_get("group_names").ok().flatten();
         let current_users = match session_users_raw {
             Some(ref csv) if !csv.is_empty() => csv
                 .split(',')
@@ -116,6 +120,18 @@ impl DeviceMapping {
                 .collect::<Vec<_>>(),
             _ => vec![user.clone()],
         };
+        let groups = group_names_raw.and_then(|csv| {
+            let parsed = csv
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>();
+            if parsed.is_empty() {
+                None
+            } else {
+                Some(parsed)
+            }
+        });
 
         Ok(Self {
             ip,
@@ -131,6 +147,7 @@ impl DeviceMapping {
             hostname,
             device_type,
             multi_user,
+            groups,
         })
     }
 }
