@@ -90,6 +90,47 @@ pub(crate) fn parse_tls_syslog_dhcp(msg: &str) -> Result<Option<(IdentityEvent, 
     )))
 }
 
+/// Parses a TLS-transported VPN session message.
+///
+/// Format: `TrueID-Agent: VPN_SESSION ip=X user=X vpn_type=anyconnect|globalprotect|fortinet`.
+///
+/// Parameters: `msg` - raw syslog payload.
+/// Returns: optional VPN identity event.
+pub(crate) fn parse_tls_syslog_vpn(msg: &str) -> Result<Option<IdentityEvent>> {
+    let payload = msg.split("TrueID-Agent: ").nth(1).unwrap_or("");
+    if !payload.starts_with("VPN_SESSION") {
+        return Ok(None);
+    }
+
+    let ip_str = extract_field_value(payload, "ip").unwrap_or_default();
+    let user = extract_field_value(payload, "user").unwrap_or_default();
+    let vpn_type = extract_field_value(payload, "vpn_type").unwrap_or_default();
+    let ip: std::net::IpAddr = match ip_str.parse() {
+        Ok(ip) => ip,
+        Err(_) => return Ok(None),
+    };
+    if user.trim().is_empty() {
+        return Ok(None);
+    }
+
+    let source = match vpn_type.as_str() {
+        "anyconnect" => SourceType::VpnAnyConnect,
+        "globalprotect" => SourceType::VpnGlobalProtect,
+        "fortinet" => SourceType::VpnFortinet,
+        _ => return Ok(None),
+    };
+
+    Ok(Some(IdentityEvent {
+        source,
+        ip,
+        user,
+        timestamp: Utc::now(),
+        raw_data: msg.to_string(),
+        mac: None,
+        confidence_score: 80,
+    }))
+}
+
 /// Parses and persists agent heartbeat from TLS payload.
 ///
 /// Parameters: `msg` - raw syslog payload, `db` - database handle.

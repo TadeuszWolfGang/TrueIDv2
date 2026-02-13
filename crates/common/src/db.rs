@@ -721,6 +721,9 @@ fn source_to_str(source: SourceType) -> &'static str {
         SourceType::AdLog => "AdLog",
         SourceType::DhcpLease => "DhcpLease",
         SourceType::Manual => "Manual",
+        SourceType::VpnAnyConnect => "vpn_anyconnect",
+        SourceType::VpnGlobalProtect => "vpn_globalprotect",
+        SourceType::VpnFortinet => "vpn_fortinet",
     }
 }
 
@@ -735,6 +738,9 @@ fn source_priority(source: &SourceType) -> u8 {
     match source {
         SourceType::Radius => 3,
         SourceType::AdLog => 2,
+        SourceType::VpnAnyConnect => 2,
+        SourceType::VpnGlobalProtect => 2,
+        SourceType::VpnFortinet => 2,
         SourceType::DhcpLease => 1,
         SourceType::Manual => 0,
     }

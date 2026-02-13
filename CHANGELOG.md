@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Changed
+- Added VPN syslog adapter module (`apps/engine/src/vpn_adapters.rs`) for Cisco AnyConnect, Palo Alto GlobalProtect, and Fortinet SSL-VPN on shared `VPN_SYSLOG_BIND` UDP listener.
+- Extended `SourceType` with `VpnAnyConnect`, `VpnGlobalProtect`, and `VpnFortinet`; updated source serialization/parsing and source priority mapping in `crates/common`.
+- Added TLS agent VPN event parsing in `apps/engine/src/tls_parsers.rs` for `TrueID-Agent: VPN_SESSION ...` messages.
+- Updated engine runtime wiring (`apps/engine/src/main.rs`, `apps/engine/src/adapter_status.rs`) to run VPN listener and track `VPN Syslog` adapter status.
+- Updated search source mapping helper in `apps/web/src/routes_search.rs` for new VPN source variants.
 - Added SIEM forwarding foundation: migration `0020_add_siem_targets.sql` with target config, forwarding flags, and delivery status fields.
 - Added engine SIEM forwarder (`apps/engine/src/siem_forwarder.rs`) with CEF/LEEF/JSON formatting, UDP/TCP delivery, TCP reconnect handling, and batched forwarding counters.
 - Integrated SIEM forwarding into engine event loop (`apps/engine/src/main.rs`) for mapping, conflict, and alert events using non-blocking `try_send`.

@@ -16,6 +16,12 @@ pub enum SourceType {
     DhcpLease,
     /// Manually entered records.
     Manual,
+    /// Cisco AnyConnect VPN session logs.
+    VpnAnyConnect,
+    /// Palo Alto GlobalProtect VPN session logs.
+    VpnGlobalProtect,
+    /// Fortinet SSL-VPN session logs.
+    VpnFortinet,
 }
 
 /// Single identity event coming from an ingestion source.
@@ -190,6 +196,9 @@ pub fn source_from_str(value: &str) -> SourceType {
         "AdLog" => SourceType::AdLog,
         "Dhcp" | "DhcpLease" => SourceType::DhcpLease,
         "Manual" => SourceType::Manual,
+        "vpn_anyconnect" => SourceType::VpnAnyConnect,
+        "vpn_globalprotect" => SourceType::VpnGlobalProtect,
+        "vpn_fortinet" => SourceType::VpnFortinet,
         _ => SourceType::Manual,
     }
 }

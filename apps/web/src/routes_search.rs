@@ -373,6 +373,9 @@ fn source_to_str(source: trueid_common::model::SourceType) -> &'static str {
         trueid_common::model::SourceType::AdLog => "AdLog",
         trueid_common::model::SourceType::DhcpLease => "DhcpLease",
         trueid_common::model::SourceType::Manual => "Manual",
+        trueid_common::model::SourceType::VpnAnyConnect => "vpn_anyconnect",
+        trueid_common::model::SourceType::VpnGlobalProtect => "vpn_globalprotect",
+        trueid_common::model::SourceType::VpnFortinet => "vpn_fortinet",
     }
 }
 

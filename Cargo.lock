@@ -3256,6 +3256,8 @@ dependencies = [
  "net-identity-adapter-ad-logs",
  "net-identity-adapter-dhcp-logs",
  "net-identity-adapter-radius",
+ "once_cell",
+ "regex",
  "reqwest",
  "rustls",
  "rustls-pemfile",

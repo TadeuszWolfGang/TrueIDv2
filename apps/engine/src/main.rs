@@ -17,6 +17,7 @@ mod snmp_poller;
 mod subnets;
 mod tls_listener;
 mod tls_parsers;
+mod vpn_adapters;
 mod vendor;
 
 use anyhow::Result;
@@ -45,6 +46,7 @@ const DEFAULT_DB_URL: &str = "sqlite://net-identity.db?mode=rwc";
 const DEFAULT_RADIUS_ADDR: &str = "0.0.0.0:1813";
 const DEFAULT_AD_SYSLOG_ADDR: &str = "0.0.0.0:5514";
 const DEFAULT_DHCP_SYSLOG_ADDR: &str = "0.0.0.0:5516";
+const DEFAULT_VPN_SYSLOG_ADDR: &str = "0.0.0.0:5518";
 const CHANNEL_CAPACITY: usize = 1024;
 const DEFAULT_OUI_PATH: &str = "./data/oui.csv";
 const DEFAULT_AD_TLS_ADDR: &str = "0.0.0.0:5615";
@@ -102,6 +104,9 @@ async fn run_event_loop(
             trueid_common::model::SourceType::Radius => "RADIUS",
             trueid_common::model::SourceType::AdLog => "AD Syslog",
             trueid_common::model::SourceType::DhcpLease => "DHCP Syslog",
+            trueid_common::model::SourceType::VpnAnyConnect
+            | trueid_common::model::SourceType::VpnGlobalProtect
+            | trueid_common::model::SourceType::VpnFortinet => "VPN Syslog",
             trueid_common::model::SourceType::Manual => "Manual",
         };
         {
@@ -299,9 +304,11 @@ async fn main() -> Result<()> {
     let radius_bind_str = env_or_default("RADIUS_BIND", DEFAULT_RADIUS_ADDR);
     let ad_syslog_bind_str = env_or_default("AD_SYSLOG_BIND", DEFAULT_AD_SYSLOG_ADDR);
     let dhcp_syslog_bind_str = env_or_default("DHCP_SYSLOG_BIND", DEFAULT_DHCP_SYSLOG_ADDR);
+    let vpn_syslog_bind_str = env_or_default("VPN_SYSLOG_BIND", DEFAULT_VPN_SYSLOG_ADDR);
     let radius_addr = parse_socket_addr(&radius_bind_str, DEFAULT_RADIUS_ADDR)?;
     let ad_syslog_addr = parse_socket_addr(&ad_syslog_bind_str, DEFAULT_AD_SYSLOG_ADDR)?;
     let dhcp_syslog_addr = parse_socket_addr(&dhcp_syslog_bind_str, DEFAULT_DHCP_SYSLOG_ADDR)?;
+    let vpn_syslog_addr = parse_socket_addr(&vpn_syslog_bind_str, DEFAULT_VPN_SYSLOG_ADDR)?;
     let radius_secret = env_or_default("RADIUS_SECRET", "secret");
     let admin_bind_str = env_or_default("ADMIN_HTTP_BIND", DEFAULT_ADMIN_HTTP_ADDR);
     let admin_addr = parse_socket_addr(&admin_bind_str, DEFAULT_ADMIN_HTTP_ADDR)?;
@@ -360,6 +367,7 @@ async fn main() -> Result<()> {
         &radius_bind_str,
         &ad_syslog_bind_str,
         &dhcp_syslog_bind_str,
+        &vpn_syslog_bind_str,
         &ad_tls_bind_str,
         &dhcp_tls_bind_str,
         tls_files_exist,
@@ -490,6 +498,14 @@ async fn main() -> Result<()> {
     spawn_radius_adapter(radius_addr, radius_secret.as_bytes(), sender.clone());
     spawn_ad_logs_adapter(ad_syslog_addr, sender.clone());
     spawn_dhcp_logs_adapter(dhcp_syslog_addr, sender.clone());
+    {
+        let vpn_sender = sender.clone();
+        tokio::spawn(async move {
+            if let Err(e) = vpn_adapters::run_vpn_listener(vpn_syslog_addr, vpn_sender).await {
+                warn!(error = %e, "VPN syslog adapter stopped");
+            }
+        });
+    }
     start_janitor(db.clone());
     dns_resolver::start_dns_resolver(db.clone());
     snmp_poller::start_snmp_poller(db.clone());
@@ -527,6 +543,14 @@ async fn main() -> Result<()> {
                                 }
                             });
                         }
+                        if let Ok(Some(event)) = tls_parsers::parse_tls_syslog_vpn(msg) {
+                            let s = ad_sender.clone();
+                            tokio::spawn(async move {
+                                if let Err(err) = s.send(event).await {
+                                    warn!(error = %err, "Failed to send TLS VPN event");
+                                }
+                            });
+                        }
                     });
                 tokio::spawn(async move {
                     if let Err(err) = tls_listener::run_tls_listener(
@@ -559,6 +583,14 @@ async fn main() -> Result<()> {
                             tokio::spawn(async move {
                                 if let Err(err) = s.send(event).await {
                                     warn!(error = %err, "Failed to send TLS DHCP event");
+                                }
+                            });
+                        }
+                        if let Ok(Some(event)) = tls_parsers::parse_tls_syslog_vpn(msg) {
+                            let s = dhcp_sender.clone();
+                            tokio::spawn(async move {
+                                if let Err(err) = s.send(event).await {
+                                    warn!(error = %err, "Failed to send TLS VPN event");
                                 }
                             });
                         }
