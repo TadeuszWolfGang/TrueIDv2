@@ -12,6 +12,7 @@ mod conflicts;
 mod dns_resolver;
 mod fingerprints;
 mod firewall_push;
+mod siem_forwarder;
 mod snmp_poller;
 mod subnets;
 mod tls_listener;
@@ -69,6 +70,7 @@ async fn run_event_loop(
     fingerprint_db: Arc<RwLock<fingerprints::FingerprintDb>>,
     alert_rules: Arc<RwLock<Vec<alerts::AlertRule>>>,
     http_client: reqwest::Client,
+    siem_sender: Sender<siem_forwarder::SiemEvent>,
 ) -> Result<()> {
     while let Some(event) = receiver.recv().await {
         let ip_str = event.ip.to_string();
@@ -121,6 +123,14 @@ async fn run_event_loop(
                         user_new = ?c.user_new,
                         "Conflict detected"
                     );
+                    let _ = siem_sender.try_send(siem_forwarder::SiemEvent::Conflict {
+                        ip: c.ip.clone(),
+                        user_old: c.user_old.clone(),
+                        user_new: c.user_new.clone(),
+                        conflict_type: c.conflict_type.clone(),
+                        severity: c.severity.clone(),
+                        timestamp: Utc::now(),
+                    });
                 }
                 detected
             }
@@ -139,6 +149,14 @@ async fn run_event_loop(
             let firings =
                 alerts::evaluate_event(db.pool(), &event, &detected_conflicts, &rules).await;
             for firing in firings {
+                let _ = siem_sender.try_send(siem_forwarder::SiemEvent::Alert {
+                    rule_name: firing.rule_name.clone(),
+                    severity: firing.severity.clone(),
+                    ip: firing.ip.clone(),
+                    user: firing.user_name.clone(),
+                    message: firing.details.clone(),
+                    timestamp: Utc::now(),
+                });
                 let pool = db.pool().clone();
                 let client = http_client.clone();
                 tokio::spawn(async move {
@@ -147,10 +165,21 @@ async fn run_event_loop(
             }
         }
 
+        let siem_mapping_event = siem_forwarder::SiemEvent::Mapping {
+            ip: ip_str.clone(),
+            user: event.user.clone(),
+            mac: event.mac.clone(),
+            source: source_name.to_string(),
+            vendor: vendor.clone(),
+            device_type: None,
+            confidence: event.confidence_score,
+            timestamp: event.timestamp,
+        };
         if let Err(err) = db.upsert_mapping(event, vendor.as_deref()).await {
             warn!(error = %err, "Failed to upsert mapping");
             continue;
         }
+        let _ = siem_sender.try_send(siem_mapping_event);
 
         {
             let subnets = subnet_cache.read().await;
@@ -423,6 +452,13 @@ async fn main() -> Result<()> {
         .timeout(Duration::from_secs(10))
         .build()
         .expect("Failed to build HTTP client");
+    let (siem_sender, siem_receiver) = siem_forwarder::create_siem_channel();
+    {
+        let siem_pool = db.pool().clone();
+        tokio::spawn(async move {
+            siem_forwarder::run_siem_forwarder(siem_receiver, siem_pool).await;
+        });
+    }
 
     let (sender, receiver) = mpsc::channel(CHANNEL_CAPACITY);
     let event_db = db.clone();
@@ -432,6 +468,7 @@ async fn main() -> Result<()> {
     let event_fingerprint_db = fingerprint_db.clone();
     let event_alert_rules = alert_rules.clone();
     let event_http_client = http_client.clone();
+    let event_siem_sender = siem_sender.clone();
     tokio::spawn(async move {
         if let Err(err) = run_event_loop(
             receiver,
@@ -442,6 +479,7 @@ async fn main() -> Result<()> {
             event_fingerprint_db,
             event_alert_rules,
             event_http_client,
+            event_siem_sender,
         )
         .await
         {

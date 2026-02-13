@@ -17,6 +17,7 @@ pub mod routes_firewall;
 pub mod routes_fingerprints;
 pub mod routes_proxy;
 pub mod routes_search;
+pub mod routes_siem;
 pub mod routes_subnets;
 pub mod routes_switches;
 pub mod routes_timeline;
@@ -203,6 +204,10 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v2/dns/stats", get(routes_dns::dns_stats))
         .route("/api/v2/dns/{ip}", get(routes_dns::dns_by_ip))
         .route("/api/v2/dns/:ip", get(routes_dns::dns_by_ip))
+        .route("/api/v2/siem/stats", get(routes_siem::siem_stats))
+        .route("/api/v2/siem/targets", get(routes_siem::list_targets))
+        .route("/api/v2/siem/targets/{id}", get(routes_siem::get_target))
+        .route("/api/v2/siem/targets/:id", get(routes_siem::get_target))
         .route("/api/v2/firewall/stats", get(routes_firewall::firewall_stats))
         .route(
             "/api/v2/firewall/targets",
@@ -359,6 +364,15 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v2/dns/{ip}", delete(routes_dns::delete_dns_ip))
         .route("/api/v2/dns/:ip", delete(routes_dns::delete_dns_ip))
         .route("/api/v2/dns/flush", post(routes_dns::flush_dns_cache))
+        .route("/api/v2/siem/targets", post(routes_siem::create_target))
+        .route(
+            "/api/v2/siem/targets/{id}",
+            put(routes_siem::update_target).delete(routes_siem::delete_target),
+        )
+        .route(
+            "/api/v2/siem/targets/:id",
+            put(routes_siem::update_target).delete(routes_siem::delete_target),
+        )
         .route(
             "/api/v2/firewall/targets",
             post(routes_firewall::create_target),

@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Changed
+- Added SIEM forwarding foundation: migration `0020_add_siem_targets.sql` with target config, forwarding flags, and delivery status fields.
+- Added engine SIEM forwarder (`apps/engine/src/siem_forwarder.rs`) with CEF/LEEF/JSON formatting, UDP/TCP delivery, TCP reconnect handling, and batched forwarding counters.
+- Integrated SIEM forwarding into engine event loop (`apps/engine/src/main.rs`) for mapping, conflict, and alert events using non-blocking `try_send`.
+- Added SIEM target management API (`apps/web/src/routes_siem.rs`) and wired routes in `apps/web/src/lib.rs` for CRUD + stats with validation and audit logging.
 - Added firewall User-ID push foundation: migration `0019_add_firewall_targets.sql` with `firewall_targets` and `firewall_push_history`.
 - Added engine firewall push module (`apps/engine/src/firewall_push.rs`) with PAN-OS/FortiGate push handlers, per-target TLS policy, PAN-OS key cache, and background push loops.
 - Added web firewall API (`apps/web/src/routes_firewall.rs`) for target CRUD, inline force push, connection test, push history, and firewall stats; wired routes in `apps/web/src/lib.rs`.
