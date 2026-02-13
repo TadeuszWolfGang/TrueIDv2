@@ -48,6 +48,30 @@ impl Db {
         self.pepper.as_deref()
     }
 
+    /// Encrypts a value using the configured config encryption key.
+    ///
+    /// Parameters: `plaintext` - value to encrypt.
+    /// Returns: encrypted `enc:...` string.
+    pub fn encrypt_config_value(&self, plaintext: &str) -> Result<String> {
+        let key = self
+            .encryption_key
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("CONFIG_ENCRYPTION_KEY required to encrypt values"))?;
+        encrypt_value(key, plaintext)
+    }
+
+    /// Decrypts an encrypted config value using the configured key.
+    ///
+    /// Parameters: `stored` - persisted `enc:...` value.
+    /// Returns: plaintext string.
+    pub fn decrypt_config_value(&self, stored: &str) -> Result<String> {
+        let key = self
+            .encryption_key
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("CONFIG_ENCRYPTION_KEY required to decrypt values"))?;
+        decrypt_value(key, stored)
+    }
+
     /// Gracefully closes the database connection pool.
     ///
     /// Parameters: none.

@@ -73,13 +73,24 @@ async fn main() -> Result<()> {
                             error!("FATAL: TRUEID_ADMIN_PASS must be at least 12 characters.");
                             std::process::exit(1);
                         }
-                        match d.create_user(&admin_user, &admin_pass, UserRole::Admin).await {
+                        match d
+                            .create_user(&admin_user, &admin_pass, UserRole::Admin)
+                            .await
+                        {
                             Ok(user) => {
                                 let _ = d.set_force_password_change(user.id, true).await;
-                                let _ = d.write_audit_log(
-                                    Some(user.id), &admin_user, "system",
-                                    "bootstrap_admin_created", None, None, None, None,
-                                ).await;
+                                let _ = d
+                                    .write_audit_log(
+                                        Some(user.id),
+                                        &admin_user,
+                                        "system",
+                                        "bootstrap_admin_created",
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                    )
+                                    .await;
                                 info!(
                                     "Bootstrap: Created initial admin user '{}'. Password change required on first login.",
                                     admin_user
@@ -131,14 +142,14 @@ async fn main() -> Result<()> {
 
     let jwt_config = JwtConfig::from_env(dev_mode);
 
-    let engine_service_token = std::env::var("ENGINE_SERVICE_TOKEN").ok().filter(|s| !s.is_empty());
+    let engine_service_token = std::env::var("ENGINE_SERVICE_TOKEN")
+        .ok()
+        .filter(|s| !s.is_empty());
     let login_limiter = Arc::new(rate_limit::RateLimiter::new(10, 60));
     let api_key_limiter = Arc::new(rate_limit::RateLimiter::new(100, 60));
 
     let auth_chain = db.as_ref().map(|d| {
-        Arc::new(trueid_common::auth_provider::AuthProviderChain::default_chain(
-            Arc::clone(d),
-        ))
+        Arc::new(trueid_common::auth_provider::AuthProviderChain::default_chain(Arc::clone(d)))
     });
 
     let state = AppState {
@@ -166,8 +177,10 @@ async fn main() -> Result<()> {
         });
     }
 
-    let app =
-        build_router(state).fallback_service(ServeDir::new(env_or_default("ASSETS_DIR", DEFAULT_ASSETS_DIR)));
+    let app = build_router(state).fallback_service(ServeDir::new(env_or_default(
+        "ASSETS_DIR",
+        DEFAULT_ASSETS_DIR,
+    )));
 
     // ── TLS or plain TCP ──────────────────────────────────
     let tls_cert = std::env::var("TLS_CERT").ok().filter(|s| !s.is_empty());
@@ -176,9 +189,10 @@ async fn main() -> Result<()> {
     match (tls_cert, tls_key) {
         (Some(cert_path), Some(key_path)) => {
             info!(%http_addr, cert = %cert_path, "Starting HTTPS server (native TLS)");
-            let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(&cert_path, &key_path)
-                .await
-                .map_err(|e| anyhow::anyhow!("TLS config error: {e}"))?;
+            let tls_config =
+                axum_server::tls_rustls::RustlsConfig::from_pem_file(&cert_path, &key_path)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("TLS config error: {e}"))?;
             axum_server::bind_rustls(http_addr, tls_config)
                 .serve(app.into_make_service())
                 .await?;
@@ -190,7 +204,9 @@ async fn main() -> Result<()> {
             info!(%http_addr, "Starting HTTP server");
             let listener = tokio::net::TcpListener::bind(http_addr).await?;
             axum::serve(listener, app)
-                .with_graceful_shutdown(async { tokio::signal::ctrl_c().await.ok(); })
+                .with_graceful_shutdown(async {
+                    tokio::signal::ctrl_c().await.ok();
+                })
                 .await?;
         }
     }

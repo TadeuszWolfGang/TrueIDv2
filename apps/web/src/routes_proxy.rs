@@ -70,7 +70,13 @@ pub(crate) async fn proxy_admin_agents(
 pub(crate) async fn proxy_admin_runtime_config(
     State(s): State<AppState>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    proxy_to_engine(&s, reqwest::Method::GET, "/engine/status/runtime-config", None).await
+    proxy_to_engine(
+        &s,
+        reqwest::Method::GET,
+        "/engine/status/runtime-config",
+        None,
+    )
+    .await
 }
 
 /// Proxies TTL config read endpoint.
@@ -145,7 +151,13 @@ pub(crate) async fn proxy_put_sycope(
     State(s): State<AppState>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<impl IntoResponse, StatusCode> {
-    proxy_to_engine(&s, reqwest::Method::PUT, "/engine/config/sycope", Some(body)).await
+    proxy_to_engine(
+        &s,
+        reqwest::Method::PUT,
+        "/engine/config/sycope",
+        Some(body),
+    )
+    .await
 }
 
 /// Proxies mapping create endpoint.

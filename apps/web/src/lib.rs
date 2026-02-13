@@ -15,6 +15,7 @@ pub mod routes_dns;
 pub mod routes_proxy;
 pub mod routes_search;
 pub mod routes_subnets;
+pub mod routes_switches;
 pub mod routes_timeline;
 pub mod routes_users;
 pub mod routes_v1;
@@ -179,6 +180,17 @@ pub fn build_router(state: AppState) -> Router {
             "/api/v2/subnets/{id}/mappings",
             get(routes_subnets::subnet_mappings),
         )
+        .route("/api/v2/switches", get(routes_switches::list_switches))
+        .route("/api/v2/switches/stats", get(routes_switches::switch_stats))
+        .route("/api/v2/switches/{id}", get(routes_switches::get_switch))
+        .route(
+            "/api/v2/switch-ports",
+            get(routes_switches::list_port_mappings),
+        )
+        .route(
+            "/api/v2/switch-ports/by-mac/{mac}",
+            get(routes_switches::port_by_mac),
+        )
         .route("/api/v2/dns", get(routes_dns::list_dns))
         .route("/api/v2/dns/stats", get(routes_dns::dns_stats))
         .route("/api/v2/dns/{ip}", get(routes_dns::dns_by_ip))
@@ -279,6 +291,15 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/v2/subnets/{id}",
             put(routes_subnets::update_subnet).delete(routes_subnets::delete_subnet),
+        )
+        .route("/api/v2/switches", post(routes_switches::create_switch))
+        .route(
+            "/api/v2/switches/{id}",
+            put(routes_switches::update_switch).delete(routes_switches::delete_switch),
+        )
+        .route(
+            "/api/v2/switches/{id}/poll",
+            post(routes_switches::force_poll),
         )
         .route("/api/v2/dns/{ip}", delete(routes_dns::delete_dns_ip))
         .route("/api/v2/dns/flush", post(routes_dns::flush_dns_cache))

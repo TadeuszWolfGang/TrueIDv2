@@ -172,22 +172,22 @@ fn parse_datetime_param(
 ///
 /// Parameters: `q` - timeline query, `request_id` - request correlation ID.
 /// Returns: tuple `(from_dt, to_dt)` in UTC.
-fn resolve_time_range(q: &TimelineQuery, request_id: &str) -> Result<(DateTime<Utc>, DateTime<Utc>), ApiError> {
+fn resolve_time_range(
+    q: &TimelineQuery,
+    request_id: &str,
+) -> Result<(DateTime<Utc>, DateTime<Utc>), ApiError> {
     let now = Utc::now();
     let from_dt = parse_datetime_param(&q.from_ts, "from", request_id)?
         .unwrap_or_else(|| now - Duration::days(7));
-    let to_dt = parse_datetime_param(&q.to_ts, "to", request_id)?
-        .unwrap_or(now);
+    let to_dt = parse_datetime_param(&q.to_ts, "to", request_id)?.unwrap_or(now);
 
     if from_dt > to_dt {
-        return Err(
-            ApiError::new(
-                StatusCode::BAD_REQUEST,
-                error::INVALID_INPUT,
-                "'from' must be earlier than or equal to 'to'",
-            )
-            .with_request_id(request_id),
-        );
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            error::INVALID_INPUT,
+            "'from' must be earlier than or equal to 'to'",
+        )
+        .with_request_id(request_id));
     }
     Ok((from_dt, to_dt))
 }

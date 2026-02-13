@@ -208,43 +208,45 @@ fn validate_rule_values(
     request_id: &str,
 ) -> Result<(), ApiError> {
     if name.trim().is_empty() {
-        return Err(
-            ApiError::new(StatusCode::BAD_REQUEST, error::INVALID_INPUT, "Rule name cannot be empty")
-                .with_request_id(request_id),
-        );
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            error::INVALID_INPUT,
+            "Rule name cannot be empty",
+        )
+        .with_request_id(request_id));
     }
     if !RULE_TYPES.contains(&rule_type) {
-        return Err(
-            ApiError::new(StatusCode::BAD_REQUEST, error::INVALID_INPUT, "Invalid rule_type")
-                .with_request_id(request_id),
-        );
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            error::INVALID_INPUT,
+            "Invalid rule_type",
+        )
+        .with_request_id(request_id));
     }
     if !SEVERITIES.contains(&severity) {
-        return Err(
-            ApiError::new(StatusCode::BAD_REQUEST, error::INVALID_INPUT, "Invalid severity")
-                .with_request_id(request_id),
-        );
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            error::INVALID_INPUT,
+            "Invalid severity",
+        )
+        .with_request_id(request_id));
     }
     if !(0..=86_400).contains(&cooldown_seconds) {
-        return Err(
-            ApiError::new(
-                StatusCode::BAD_REQUEST,
-                error::INVALID_INPUT,
-                "cooldown_seconds must be in 0..=86400",
-            )
-            .with_request_id(request_id),
-        );
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            error::INVALID_INPUT,
+            "cooldown_seconds must be in 0..=86400",
+        )
+        .with_request_id(request_id));
     }
     if let Some(url) = webhook {
         if !url.starts_with("http://") && !url.starts_with("https://") {
-            return Err(
-                ApiError::new(
-                    StatusCode::BAD_REQUEST,
-                    error::INVALID_INPUT,
-                    "action_webhook_url must start with http:// or https://",
-                )
-                .with_request_id(request_id),
-            );
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                error::INVALID_INPUT,
+                "action_webhook_url must start with http:// or https://",
+            )
+            .with_request_id(request_id));
         }
     }
     Ok(())
@@ -260,7 +262,9 @@ fn map_rule_row(row: &sqlx::sqlite::SqliteRow) -> AlertRuleRecord {
         name: row.try_get("name").unwrap_or_default(),
         enabled: row.try_get("enabled").unwrap_or(false),
         rule_type: row.try_get("rule_type").unwrap_or_default(),
-        severity: row.try_get("severity").unwrap_or_else(|_| "warning".to_string()),
+        severity: row
+            .try_get("severity")
+            .unwrap_or_else(|_| "warning".to_string()),
         conditions: row.try_get("conditions").ok(),
         action_webhook_url: row.try_get("action_webhook_url").ok(),
         action_webhook_headers: row.try_get("action_webhook_headers").ok(),
@@ -275,7 +279,10 @@ fn map_rule_row(row: &sqlx::sqlite::SqliteRow) -> AlertRuleRecord {
 ///
 /// Parameters: `auth` - authenticated admin, `state` - app state.
 /// Returns: rule list response.
-pub async fn list_rules(auth: AuthUser, State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
+pub async fn list_rules(
+    auth: AuthUser,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, ApiError> {
     let db = state.db.as_ref().ok_or_else(|| {
         ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -357,20 +364,20 @@ pub async fn create_rule(
         Err(e) => {
             let message = e.to_string();
             if message.contains("UNIQUE") || message.contains("unique") {
-                return Err(
-                    ApiError::new(StatusCode::CONFLICT, error::CONFLICT, "Rule name already exists")
-                        .with_request_id(&auth.request_id),
-                );
+                return Err(ApiError::new(
+                    StatusCode::CONFLICT,
+                    error::CONFLICT,
+                    "Rule name already exists",
+                )
+                .with_request_id(&auth.request_id));
             }
             warn!(error = %e, "Failed to create alert rule");
-            return Err(
-                ApiError::new(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    error::INTERNAL_ERROR,
-                    "Failed to create alert rule",
-                )
-                .with_request_id(&auth.request_id),
-            );
+            return Err(ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error::INTERNAL_ERROR,
+                "Failed to create alert rule",
+            )
+            .with_request_id(&auth.request_id));
         }
     };
 
@@ -403,7 +410,10 @@ pub async fn create_rule(
             &auth.principal_type,
             "create_alert_rule",
             Some(&id.to_string()),
-            Some(&format!("rule_type={}, severity={}", created.rule_type, created.severity)),
+            Some(&format!(
+                "rule_type={}, severity={}",
+                created.rule_type, created.severity
+            )),
             None,
             Some(&auth.request_id),
         )
@@ -451,19 +461,27 @@ pub async fn update_rule(
         .with_request_id(&auth.request_id)
     })?;
     let Some(existing_row) = existing else {
-        return Err(
-            ApiError::new(StatusCode::NOT_FOUND, error::NOT_FOUND, "Alert rule not found")
-                .with_request_id(&auth.request_id),
-        );
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            error::NOT_FOUND,
+            "Alert rule not found",
+        )
+        .with_request_id(&auth.request_id));
     };
 
     let current_name: String = existing_row.try_get("name").unwrap_or_default();
     let current_rule_type: String = existing_row.try_get("rule_type").unwrap_or_default();
-    let current_severity: String = existing_row.try_get("severity").unwrap_or_else(|_| "warning".to_string());
+    let current_severity: String = existing_row
+        .try_get("severity")
+        .unwrap_or_else(|_| "warning".to_string());
     let current_cooldown: i64 = existing_row.try_get("cooldown_seconds").unwrap_or(300);
     let current_webhook: Option<String> = existing_row.try_get("action_webhook_url").ok();
 
-    let next_name = body.name.as_deref().unwrap_or(current_name.as_str()).to_string();
+    let next_name = body
+        .name
+        .as_deref()
+        .unwrap_or(current_name.as_str())
+        .to_string();
     let next_rule_type = body
         .rule_type
         .as_deref()
@@ -532,10 +550,12 @@ pub async fn update_rule(
     sets.push("updated_at = datetime('now')".to_string());
 
     if sets.len() == 1 {
-        return Err(
-            ApiError::new(StatusCode::BAD_REQUEST, error::INVALID_INPUT, "No fields to update")
-                .with_request_id(&auth.request_id),
-        );
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            error::INVALID_INPUT,
+            "No fields to update",
+        )
+        .with_request_id(&auth.request_id));
     }
 
     let sql = format!("UPDATE alert_rules SET {} WHERE id = ?", sets.join(", "));
@@ -622,10 +642,12 @@ pub async fn delete_rule(
             .with_request_id(&auth.request_id)
         })?;
     if res.rows_affected() == 0 {
-        return Err(
-            ApiError::new(StatusCode::NOT_FOUND, error::NOT_FOUND, "Alert rule not found")
-                .with_request_id(&auth.request_id),
-        );
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            error::NOT_FOUND,
+            "Alert rule not found",
+        )
+        .with_request_id(&auth.request_id));
     }
 
     let _ = db
@@ -770,7 +792,10 @@ pub async fn alert_history(
 ///
 /// Parameters: `auth` - authenticated principal, `state` - app state.
 /// Returns: alert statistics payload.
-pub async fn alert_stats(auth: AuthUser, State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
+pub async fn alert_stats(
+    auth: AuthUser,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, ApiError> {
     let db = state.db.as_ref().ok_or_else(|| {
         ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -792,18 +817,19 @@ pub async fn alert_stats(auth: AuthUser, State(state): State<AppState>) -> Resul
             )
             .with_request_id(&auth.request_id)
         })?;
-    let enabled_rules: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM alert_rules WHERE enabled = true")
-        .fetch_one(db.pool())
-        .await
-        .map_err(|e| {
-            warn!(error = %e, "Failed to query alert stats enabled_rules");
-            ApiError::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                error::INTERNAL_ERROR,
-                "Failed to query alert stats",
-            )
-            .with_request_id(&auth.request_id)
-        })?;
+    let enabled_rules: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM alert_rules WHERE enabled = true")
+            .fetch_one(db.pool())
+            .await
+            .map_err(|e| {
+                warn!(error = %e, "Failed to query alert stats enabled_rules");
+                ApiError::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    error::INTERNAL_ERROR,
+                    "Failed to query alert stats",
+                )
+                .with_request_id(&auth.request_id)
+            })?;
     let total_fired_24h: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM alert_history WHERE fired_at > datetime('now', '-24 hours')",
     )

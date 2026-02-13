@@ -383,22 +383,22 @@ pub async fn resolve_conflict(
         })?;
 
     let Some(existing_row) = existing else {
-        return Err(
-            ApiError::new(StatusCode::NOT_FOUND, error::NOT_FOUND, "Conflict not found")
-                .with_request_id(&auth.request_id),
-        );
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            error::NOT_FOUND,
+            "Conflict not found",
+        )
+        .with_request_id(&auth.request_id));
     };
 
     let already_resolved: Option<DateTime<Utc>> = existing_row.try_get("resolved_at").ok();
     if already_resolved.is_some() {
-        return Err(
-            ApiError::new(
-                StatusCode::CONFLICT,
-                error::CONFLICT,
-                "Conflict already resolved",
-            )
-            .with_request_id(&auth.request_id),
-        );
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            error::CONFLICT,
+            "Conflict already resolved",
+        )
+        .with_request_id(&auth.request_id));
     }
 
     let current_details: Option<String> = existing_row.try_get("details").ok();

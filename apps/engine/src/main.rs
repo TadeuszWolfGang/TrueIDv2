@@ -9,6 +9,7 @@ mod admin_api;
 mod alerts;
 mod conflicts;
 mod dns_resolver;
+mod snmp_poller;
 mod subnets;
 mod tls_listener;
 
@@ -550,6 +551,7 @@ async fn main() -> Result<()> {
     spawn_dhcp_logs_adapter(dhcp_syslog_addr, sender.clone());
     start_janitor(db.clone());
     dns_resolver::start_dns_resolver(db.clone());
+    snmp_poller::start_snmp_poller(db.clone());
 
     // Optional TLS listeners (only started if cert files exist).
     if tls_files_exist {

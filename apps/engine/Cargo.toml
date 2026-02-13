@@ -23,3 +23,4 @@ rustls = { version = "0.23", features = ["ring"] }
 rustls-pemfile = "2"
 tokio-rustls = "0.26"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+snmp = "0.2"

@@ -84,7 +84,9 @@ pub async fn load_rules(pool: &SqlitePool) -> Result<Vec<AlertRule>> {
             name: row.try_get("name").unwrap_or_default(),
             enabled: row.try_get("enabled").unwrap_or(false),
             rule_type: row.try_get("rule_type").unwrap_or_default(),
-            severity: row.try_get("severity").unwrap_or_else(|_| "warning".to_string()),
+            severity: row
+                .try_get("severity")
+                .unwrap_or_else(|_| "warning".to_string()),
             conditions: row.try_get("conditions").ok(),
             action_webhook_url: row.try_get("action_webhook_url").ok(),
             action_webhook_headers: row.try_get("action_webhook_headers").ok(),
@@ -145,17 +147,18 @@ pub async fn evaluate_event(
     if let std::net::IpAddr::V4(v4) = event.ip {
         let octets = v4.octets();
         let prefix = format!("{}.{}.{}.%", octets[0], octets[1], octets[2]);
-        subnet_is_new = match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM mappings WHERE ip LIKE ?")
-            .bind(prefix)
-            .fetch_one(pool)
-            .await
-        {
-            Ok(v) => Some(v == 0),
-            Err(e) => {
-                warn!(error = %e, ip = %ip, "Alert evaluate: failed subnet query");
-                None
-            }
-        };
+        subnet_is_new =
+            match sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM mappings WHERE ip LIKE ?")
+                .bind(prefix)
+                .fetch_one(pool)
+                .await
+            {
+                Ok(v) => Some(v == 0),
+                Err(e) => {
+                    warn!(error = %e, ip = %ip, "Alert evaluate: failed subnet query");
+                    None
+                }
+            };
     }
 
     for rule in rules {

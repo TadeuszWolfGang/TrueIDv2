@@ -41,7 +41,10 @@ struct NewConflict {
 ///
 /// Parameters: `pool` - SQLite connection pool, `event` - incoming identity event.
 /// Returns: vector of inserted conflict records for logging/observability.
-pub async fn detect_conflicts(pool: &SqlitePool, event: &IdentityEvent) -> Result<Vec<ConflictRecord>> {
+pub async fn detect_conflicts(
+    pool: &SqlitePool,
+    event: &IdentityEvent,
+) -> Result<Vec<ConflictRecord>> {
     let mut detected = Vec::new();
     let event_ip = event.ip.to_string();
     let event_source = format!("{:?}", event.source);
@@ -83,11 +86,12 @@ pub async fn detect_conflicts(pool: &SqlitePool, event: &IdentityEvent) -> Resul
     }
 
     if let Some(event_mac) = event.mac.clone() {
-        let rows = sqlx::query("SELECT ip FROM mappings WHERE mac = ? AND ip != ? AND is_active = true")
-            .bind(&event_mac)
-            .bind(&event_ip)
-            .fetch_all(pool)
-            .await?;
+        let rows =
+            sqlx::query("SELECT ip FROM mappings WHERE mac = ? AND ip != ? AND is_active = true")
+                .bind(&event_mac)
+                .bind(&event_ip)
+                .fetch_all(pool)
+                .await?;
 
         if !rows.is_empty() {
             let mut other_ips = Vec::with_capacity(rows.len());
