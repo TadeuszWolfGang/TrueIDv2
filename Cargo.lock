@@ -3290,7 +3290,7 @@ dependencies = [
 
 [[package]]
 name = "trueid-common"
-version = "0.1.0"
+version = "0.6.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -3308,7 +3308,7 @@ dependencies = [
 
 [[package]]
 name = "trueid-engine"
-version = "0.1.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -3349,7 +3349,7 @@ dependencies = [
 
 [[package]]
 name = "trueid-web"
-version = "0.1.0"
+version = "0.6.0"
 dependencies = [
  "anyhow",
  "async-trait",

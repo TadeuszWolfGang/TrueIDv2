@@ -8,13 +8,14 @@ pub mod helpers;
 pub mod middleware;
 pub mod rate_limit;
 pub mod routes_alerts;
+pub mod routes_analytics;
 pub mod routes_api_keys;
 pub mod routes_audit;
 pub mod routes_auth;
 pub mod routes_conflicts;
 pub mod routes_dns;
-pub mod routes_firewall;
 pub mod routes_fingerprints;
+pub mod routes_firewall;
 pub mod routes_ldap;
 pub mod routes_proxy;
 pub mod routes_search;
@@ -227,7 +228,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/v2/ldap/users/:username/groups",
             get(routes_ldap::user_groups),
         )
-        .route("/api/v2/firewall/stats", get(routes_firewall::firewall_stats))
+        .route(
+            "/api/v2/firewall/stats",
+            get(routes_firewall::firewall_stats),
+        )
         .route(
             "/api/v2/firewall/targets",
             get(routes_firewall::list_targets),
@@ -262,6 +266,25 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/v2/alerts/history", get(routes_alerts::alert_history))
         .route("/api/v2/alerts/stats", get(routes_alerts::alert_stats))
+        .route("/api/v2/analytics/trends", get(routes_analytics::trends))
+        .route("/api/v2/analytics/top", get(routes_analytics::top_n))
+        .route(
+            "/api/v2/analytics/sources",
+            get(routes_analytics::source_distribution),
+        )
+        .route(
+            "/api/v2/analytics/compliance",
+            get(routes_analytics::compliance),
+        )
+        .route("/api/v2/analytics/reports", get(routes_analytics::list_reports))
+        .route(
+            "/api/v2/analytics/reports/{id}",
+            get(routes_analytics::get_report),
+        )
+        .route(
+            "/api/v2/analytics/reports/:id",
+            get(routes_analytics::get_report),
+        )
         .route("/api/v1/stats", get(routes_v1::api_v1_stats))
         .route("/lookup/{ip}", get(routes_v1::lookup))
         .route("/lookup/:ip", get(routes_v1::lookup))
@@ -441,6 +464,10 @@ pub fn build_router(state: AppState) -> Router {
         )
         .route("/api/v1/audit-logs", get(routes_audit::list_audit_logs))
         .route("/api/v1/audit-logs/stats", get(routes_audit::audit_stats))
+        .route(
+            "/api/v2/analytics/reports/generate",
+            post(routes_analytics::generate_report),
+        )
         .layer(axum_mw::from_fn_with_state(
             state.clone(),
             middleware::require_admin_layer,

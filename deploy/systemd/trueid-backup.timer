@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily TrueID backup
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

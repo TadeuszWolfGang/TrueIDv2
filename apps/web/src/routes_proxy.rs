@@ -3,7 +3,7 @@
 use anyhow::Result;
 use axum::{
     extract::{Path, State},
-    http::header::{CONTENT_TYPE, HeaderValue},
+    http::header::{HeaderValue, CONTENT_TYPE},
     http::StatusCode,
     response::IntoResponse,
     Json,
@@ -67,7 +67,10 @@ pub(crate) async fn proxy_text_to_engine(
     let text = resp.text().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
     Ok((
         status,
-        [(CONTENT_TYPE, HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8"))],
+        [(
+            CONTENT_TYPE,
+            HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8"),
+        )],
         text,
     ))
 }

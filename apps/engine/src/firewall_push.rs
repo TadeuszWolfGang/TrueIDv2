@@ -4,6 +4,7 @@ use anyhow::{anyhow, Context, Result};
 use reqwest::StatusCode;
 use sqlx::Row;
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
@@ -39,6 +40,17 @@ pub struct FirewallTarget {
     pub enabled: bool,
     pub push_interval_secs: u64,
     pub subnet_filter: Option<Vec<i64>>,
+}
+
+/// Global firewall push shutdown flag.
+static FIREWALL_SHUTDOWN: AtomicBool = AtomicBool::new(false);
+
+/// Sets shutdown state for firewall manager and loops.
+///
+/// Parameters: `value` - shutdown flag state.
+/// Returns: nothing.
+pub fn set_shutdown(value: bool) {
+    FIREWALL_SHUTDOWN.store(value, Ordering::SeqCst);
 }
 
 /// Returns global PAN-OS API key cache (target_id -> key).
@@ -237,9 +249,8 @@ async fn panos_keygen(
 /// Parameters: `entries` - chunk entries.
 /// Returns: XML payload string.
 fn panos_xml_payload(entries: &[PushEntry]) -> String {
-    let mut body = String::from(
-        "<uid-message><version>2.0</version><type>update</type><payload><login>",
-    );
+    let mut body =
+        String::from("<uid-message><version>2.0</version><type>update</type><payload><login>");
     for entry in entries {
         body.push_str(&format!(
             "<entry name=\"{}\" ip=\"{}\" timeout=\"{}\"/>",
@@ -457,6 +468,9 @@ async fn run_push_once(db: &Db, target: &FirewallTarget) -> Result<u32> {
 /// Returns: none.
 pub async fn run_push_loop(db: Arc<Db>, target_id: i64) {
     loop {
+        if FIREWALL_SHUTDOWN.load(Ordering::SeqCst) {
+            break;
+        }
         let target = match load_target(&db, target_id).await {
             Ok(Some(t)) if t.enabled => t,
             Ok(_) => break,
@@ -470,14 +484,20 @@ pub async fn run_push_loop(db: Arc<Db>, target_id: i64) {
         match run_push_once(&db, &target).await {
             Ok(count) => {
                 let duration_ms = started.elapsed().as_millis() as i64;
-                if let Err(e) =
-                    insert_history(db.pool(), target.id, i64::from(count), "ok", None, duration_ms)
-                        .await
+                if let Err(e) = insert_history(
+                    db.pool(),
+                    target.id,
+                    i64::from(count),
+                    "ok",
+                    None,
+                    duration_ms,
+                )
+                .await
                 {
                     warn!(error = %e, target_id, "Failed to write firewall push history");
                 }
-                if let Err(e) = update_target_status(db.pool(), target.id, "ok", i64::from(count), None)
-                    .await
+                if let Err(e) =
+                    update_target_status(db.pool(), target.id, "ok", i64::from(count), None).await
                 {
                     warn!(error = %e, target_id, "Failed to update firewall target push status");
                 }
@@ -486,15 +506,8 @@ pub async fn run_push_loop(db: Arc<Db>, target_id: i64) {
             Err(e) => {
                 let duration_ms = started.elapsed().as_millis() as i64;
                 let msg = e.to_string();
-                if let Err(write_err) = insert_history(
-                    db.pool(),
-                    target.id,
-                    0,
-                    "error",
-                    Some(&msg),
-                    duration_ms,
-                )
-                .await
+                if let Err(write_err) =
+                    insert_history(db.pool(), target.id, 0, "error", Some(&msg), duration_ms).await
                 {
                     warn!(error = %write_err, target_id, "Failed to write firewall push error history");
                 }
@@ -507,6 +520,9 @@ pub async fn run_push_loop(db: Arc<Db>, target_id: i64) {
             }
         }
 
+        if FIREWALL_SHUTDOWN.load(Ordering::SeqCst) {
+            break;
+        }
         tokio::time::sleep(Duration::from_secs(target.push_interval_secs)).await;
     }
 }
@@ -516,16 +532,24 @@ pub async fn run_push_loop(db: Arc<Db>, target_id: i64) {
 /// Parameters: `db` - database handle.
 /// Returns: nothing; spawns detached manager task.
 pub fn start_firewall_push(db: Arc<Db>) {
+    FIREWALL_SHUTDOWN.store(false, Ordering::SeqCst);
     tokio::spawn(async move {
         let mut running: HashMap<i64, tokio::task::JoinHandle<()>> = HashMap::new();
         loop {
+            if FIREWALL_SHUTDOWN.load(Ordering::SeqCst) {
+                for (_, handle) in running.drain() {
+                    handle.abort();
+                }
+                break;
+            }
             match load_enabled_target_ids(&db).await {
                 Ok(target_ids) => {
                     for target_id in &target_ids {
                         if !running.contains_key(target_id) {
                             let loop_db = db.clone();
                             let id = *target_id;
-                            let handle = tokio::spawn(async move { run_push_loop(loop_db, id).await });
+                            let handle =
+                                tokio::spawn(async move { run_push_loop(loop_db, id).await });
                             running.insert(id, handle);
                         }
                     }

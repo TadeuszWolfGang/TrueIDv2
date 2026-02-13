@@ -1,0 +1,2341 @@
+openapi: 3.1.0
+info:
+  title: TrueID API
+  description: Real-time Identity Correlation Engine
+  version: 0.6.0
+  license:
+    name: Proprietary
+servers:
+  - url: http://localhost:3000
+    description: Local development
+tags:
+  - name: auth
+    description: Authentication & session management
+  - name: mappings
+    description: IP↔User↔MAC identity mappings
+  - name: search
+    description: Universal search across mappings & events
+  - name: conflicts
+    description: Identity conflict detection & resolution
+  - name: alerts
+    description: Alert rules & history
+  - name: subnets
+    description: Subnet definitions & auto-tagging
+  - name: switches
+    description: SNMP switch management & port mapping
+  - name: fingerprints
+    description: DHCP fingerprint database & observations
+  - name: dns
+    description: Reverse DNS cache
+  - name: timeline
+    description: IP/User/MAC activity timeline
+  - name: firewall
+    description: Firewall User-ID push targets
+  - name: siem
+    description: SIEM event forwarding targets
+  - name: ldap
+    description: LDAP group sync configuration
+  - name: admin
+    description: User management, API keys, audit
+  - name: system
+    description: Health, metrics, adapters
+
+paths:
+  /api/auth/login:
+    post:
+      tags: [auth]
+      summary: Login
+      description: Authenticates user and sets session cookies.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/auth/logout:
+    post:
+      tags: [auth]
+      summary: Logout
+      description: Invalidates current session.
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/auth/logout-all:
+    post:
+      tags: [auth]
+      summary: Logout all sessions
+      description: Invalidates all active sessions for current user.
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/auth/me:
+    get:
+      tags: [auth]
+      summary: Current user info
+      security:
+        - cookieAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/User'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/auth/refresh:
+    post:
+      tags: [auth]
+      summary: Refresh access token
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/auth/sessions:
+    get:
+      tags: [auth]
+      summary: List active sessions
+      security:
+        - cookieAuth: []
+      responses:
+        '200':
+          description: Sessions list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Session'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/auth/sessions/{id}:
+    delete:
+      tags: [auth]
+      summary: Revoke specific session
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/SessionId'
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/auth/change-password:
+    post:
+      tags: [auth]
+      summary: Change password
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/mappings:
+    get:
+      tags: [mappings]
+      summary: List mappings
+      description: Paginates identity mappings with filters and sorting.
+      security:
+        - cookieAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Source'
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/Active'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/Order'
+      responses:
+        '200':
+          description: Paginated mappings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MappingsPage'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/mappings/{ip}:
+    delete:
+      tags: [mappings]
+      summary: Delete mapping by IP
+      security:
+        - cookieAuth: []
+          csrfToken: []
+        - apiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Ip'
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/events:
+    post:
+      tags: [mappings]
+      summary: Submit manual mapping event
+      security:
+        - cookieAuth: []
+          csrfToken: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManualEventRequest'
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/stats:
+    get:
+      tags: [system]
+      summary: Global stats
+      security:
+        - cookieAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Engine stats
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/users:
+    get:
+      tags: [admin]
+      summary: List users
+      security:
+        - cookieAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Users list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  users:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/User'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    post:
+      tags: [admin]
+      summary: Create user
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '200':
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/users/{id}:
+    get:
+      tags: [admin]
+      summary: Get user
+      security:
+        - cookieAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: User
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    delete:
+      tags: [admin]
+      summary: Delete user
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/users/{id}/role:
+    put:
+      tags: [admin]
+      summary: Change role
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role:
+                  $ref: '#/components/schemas/UserRole'
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/users/{id}/reset-password:
+    post:
+      tags: [admin]
+      summary: Reset password
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password:
+                  type: string
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/users/{id}/unlock:
+    post:
+      tags: [admin]
+      summary: Unlock account
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/api-keys:
+    get:
+      tags: [admin]
+      summary: List API keys
+      security:
+        - cookieAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: API keys
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ApiKey'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    post:
+      tags: [admin]
+      summary: Create API key
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateApiKeyRequest'
+      responses:
+        '200':
+          description: API key created (raw key visible once)
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ApiKey'
+                  - type: object
+                    properties:
+                      key:
+                        type: string
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/api-keys/{id}:
+    delete:
+      tags: [admin]
+      summary: Revoke API key
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/audit-logs:
+    get:
+      tags: [admin]
+      summary: List audit logs
+      security:
+        - cookieAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - in: query
+          name: action
+          schema: { type: string }
+        - in: query
+          name: username
+          schema: { type: string }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200':
+          description: Paginated audit log entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AuditEntry'
+                  total:
+                    type: integer
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/audit-logs/stats:
+    get:
+      tags: [admin]
+      summary: Audit stats
+      security:
+        - cookieAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Audit stats
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total: { type: integer }
+                  last_24h: { type: integer }
+                  last_7d: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/admin/adapters:
+    get:
+      tags: [system]
+      summary: Adapter status
+      security:
+        - cookieAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Adapter status list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/admin/runtime-config:
+    get:
+      tags: [system]
+      summary: Runtime environment config
+      security:
+        - cookieAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Runtime config
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/admin/config/ttl:
+    get:
+      tags: [system]
+      summary: Get TTL config
+      security:
+        - cookieAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: TTL configuration
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    put:
+      tags: [system]
+      summary: Update TTL config
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v1/admin/config/source-priority:
+    get:
+      tags: [system]
+      summary: Get source priority config
+      security:
+        - cookieAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Source priority configuration
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    put:
+      tags: [system]
+      summary: Update source priority config
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/search:
+    get:
+      tags: [search]
+      summary: Universal search
+      security:
+        - cookieAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - in: query
+          name: q
+          schema: { type: string }
+        - in: query
+          name: ip
+          schema: { type: string }
+        - in: query
+          name: user
+          schema: { type: string }
+        - in: query
+          name: mac
+          schema: { type: string }
+        - in: query
+          name: source
+          schema: { type: string }
+        - in: query
+          name: scope
+          schema: { type: string, enum: [all, mappings, events] }
+        - in: query
+          name: active
+          schema: { type: boolean }
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/Order'
+        - $ref: '#/components/parameters/Page'
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200 }
+      responses:
+        '200':
+          description: Search result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/export/mappings:
+    get:
+      tags: [search]
+      summary: Export mappings
+      security:
+        - cookieAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - in: query
+          name: format
+          schema: { type: string, enum: [json, csv], default: json }
+        - in: query
+          name: ip
+          schema: { type: string }
+        - in: query
+          name: user
+          schema: { type: string }
+        - in: query
+          name: mac
+          schema: { type: string }
+        - in: query
+          name: source
+          schema: { type: string }
+        - in: query
+          name: active
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: Export data
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/DeviceMapping' }
+            text/csv:
+              schema:
+                type: string
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/export/events:
+    get:
+      tags: [search]
+      summary: Export events
+      security:
+        - cookieAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - in: query
+          name: format
+          schema: { type: string, enum: [json, csv], default: json }
+        - in: query
+          name: ip
+          schema: { type: string }
+        - in: query
+          name: user
+          schema: { type: string }
+        - in: query
+          name: source
+          schema: { type: string }
+      responses:
+        '200':
+          description: Export data
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: object, additionalProperties: true }
+            text/csv:
+              schema:
+                type: string
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/conflicts:
+    get:
+      tags: [conflicts]
+      summary: List conflicts
+      security:
+        - cookieAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - in: query
+          name: type
+          schema: { type: string }
+        - in: query
+          name: severity
+          schema: { type: string }
+        - in: query
+          name: resolved
+          schema: { type: boolean }
+        - $ref: '#/components/parameters/Page'
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200 }
+      responses:
+        '200':
+          description: Paginated conflicts
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Conflict'
+                  total: { type: integer }
+                  page: { type: integer }
+                  limit: { type: integer }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/conflicts/stats:
+    get:
+      tags: [conflicts]
+      summary: Conflict stats
+      security:
+        - cookieAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Conflict statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total_unresolved: { type: integer }
+                  by_type:
+                    type: object
+                    additionalProperties: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/conflicts/{id}/resolve:
+    post:
+      tags: [conflicts]
+      summary: Resolve conflict
+      security:
+        - cookieAuth: []
+          csrfToken: []
+        - apiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/alerts/rules:
+    get:
+      tags: [alerts]
+      summary: List alert rules
+      security:
+        - cookieAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Alert rules
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rules:
+                    type: array
+                    items: { $ref: '#/components/schemas/AlertRule' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    post:
+      tags: [alerts]
+      summary: Create alert rule
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AlertRule'
+      responses:
+        '200':
+          description: Rule created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlertRule' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/alerts/rules/{id}:
+    put:
+      tags: [alerts]
+      summary: Update alert rule
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AlertRule' }
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    delete:
+      tags: [alerts]
+      summary: Delete alert rule
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/alerts/history:
+    get:
+      tags: [alerts]
+      summary: Alert firing history
+      security:
+        - cookieAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - in: query
+          name: severity
+          schema: { type: string }
+        - in: query
+          name: rule_type
+          schema: { type: string }
+        - $ref: '#/components/parameters/Page'
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200 }
+      responses:
+        '200':
+          description: Alert history
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/AlertFiring' }
+                  total: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/alerts/stats:
+    get:
+      tags: [alerts]
+      summary: Alert stats
+      security:
+        - cookieAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200':
+          description: Alert stats
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/subnets:
+    get:
+      tags: [subnets]
+      summary: List subnets
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      responses:
+        '200':
+          description: Subnet list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Subnet' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    post:
+      tags: [subnets]
+      summary: Create subnet
+      security:
+        - cookieAuth: []
+          csrfToken: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Subnet' }
+      responses:
+        '200':
+          description: Subnet created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Subnet' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/subnets/{id}:
+    put:
+      tags: [subnets]
+      summary: Update subnet
+      security:
+        - cookieAuth: []
+          csrfToken: []
+        - apiKeyAuth: []
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Subnet' }
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    delete:
+      tags: [subnets]
+      summary: Delete subnet
+      security:
+        - cookieAuth: []
+          csrfToken: []
+        - apiKeyAuth: []
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/subnets/stats:
+    get:
+      tags: [subnets]
+      summary: Subnet stats
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      responses:
+        '200':
+          description: Subnet statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/subnets/{id}/mappings:
+    get:
+      tags: [subnets]
+      summary: List mappings inside subnet
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200':
+          description: Mappings in subnet
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/DeviceMapping' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/switches:
+    get:
+      tags: [switches]
+      summary: List switches
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      responses:
+        '200':
+          description: Switch list
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Switch' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    post:
+      tags: [switches]
+      summary: Create switch
+      security:
+        - cookieAuth: []
+          csrfToken: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SwitchCreateRequest' }
+      responses:
+        '200':
+          description: Switch created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Switch' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/switches/{id}:
+    put:
+      tags: [switches]
+      summary: Update switch
+      security:
+        - cookieAuth: []
+          csrfToken: []
+        - apiKeyAuth: []
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SwitchCreateRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    delete:
+      tags: [switches]
+      summary: Delete switch
+      security:
+        - cookieAuth: []
+          csrfToken: []
+        - apiKeyAuth: []
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/switches/{id}/poll:
+    post:
+      tags: [switches]
+      summary: Trigger switch poll
+      security:
+        - cookieAuth: []
+          csrfToken: []
+        - apiKeyAuth: []
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/switches/stats:
+    get:
+      tags: [switches]
+      summary: Switch stats
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      responses:
+        '200':
+          description: Switch statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/switch-ports:
+    get:
+      tags: [switches]
+      summary: List switch port mappings
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      parameters:
+        - in: query
+          name: switch_id
+          schema: { type: integer }
+      responses:
+        '200':
+          description: Port mapping list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/switch-ports/by-mac/{mac}:
+    get:
+      tags: [switches]
+      summary: Find port by MAC
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/Mac'
+      responses:
+        '200':
+          description: Port mapping
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/fingerprints:
+    get:
+      tags: [fingerprints]
+      summary: List fingerprints
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      responses:
+        '200':
+          description: Fingerprint list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: integer }
+                    fingerprint: { type: string }
+                    device_type: { type: string }
+                    os_family: { type: string, nullable: true }
+                    description: { type: string, nullable: true }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    post:
+      tags: [fingerprints]
+      summary: Create fingerprint
+      security:
+        - cookieAuth: []
+          csrfToken: []
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fingerprint, device_type]
+              properties:
+                fingerprint: { type: string }
+                device_type: { type: string }
+                os_family: { type: string, nullable: true }
+                description: { type: string, nullable: true }
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/fingerprints/{id}:
+    delete:
+      tags: [fingerprints]
+      summary: Delete fingerprint
+      security:
+        - cookieAuth: []
+          csrfToken: []
+        - apiKeyAuth: []
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/fingerprints/stats:
+    get:
+      tags: [fingerprints]
+      summary: Fingerprint stats
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      responses:
+        '200':
+          description: Fingerprint statistics
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/fingerprints/observations:
+    get:
+      tags: [fingerprints]
+      summary: List fingerprint observations
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200 }
+      responses:
+        '200':
+          description: Observations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/fingerprints/backfill:
+    post:
+      tags: [fingerprints]
+      summary: Backfill fingerprint observations
+      security:
+        - cookieAuth: []
+          csrfToken: []
+        - apiKeyAuth: []
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/dns:
+    get:
+      tags: [dns]
+      summary: List DNS cache
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      responses:
+        '200':
+          description: DNS cache records
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    ip: { type: string }
+                    hostname: { type: string }
+                    resolved_at: { type: string, format: date-time }
+                    ttl: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/dns/{ip}:
+    get:
+      tags: [dns]
+      summary: DNS lookup by IP
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Ip' } ]
+      responses:
+        '200':
+          description: DNS cache record
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/dns/stats:
+    get:
+      tags: [dns]
+      summary: DNS cache stats
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      responses:
+        '200':
+          description: DNS stats
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/dns/flush:
+    post:
+      tags: [dns]
+      summary: Flush DNS cache
+      security:
+        - cookieAuth: []
+          csrfToken: []
+        - apiKeyAuth: []
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/timeline/ip/{ip}:
+    get:
+      tags: [timeline]
+      summary: IP timeline
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Ip' } ]
+      responses:
+        '200':
+          description: IP timeline
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/timeline/user/{user}:
+    get:
+      tags: [timeline]
+      summary: User timeline
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      parameters:
+        - in: path
+          name: user
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: User timeline
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/timeline/mac/{mac}:
+    get:
+      tags: [timeline]
+      summary: MAC timeline
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Mac' } ]
+      responses:
+        '200':
+          description: MAC timeline
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/firewall/targets:
+    get:
+      tags: [firewall]
+      summary: List firewall targets
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      responses:
+        '200':
+          description: Firewall targets
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/FirewallTarget' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    post:
+      tags: [firewall]
+      summary: Create firewall target
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FirewallTarget' }
+      responses:
+        '200':
+          description: Target created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FirewallTarget' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/firewall/targets/{id}:
+    get:
+      tags: [firewall]
+      summary: Get firewall target
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200':
+          description: Target
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FirewallTarget' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    put:
+      tags: [firewall]
+      summary: Update firewall target
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FirewallTarget' }
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    delete:
+      tags: [firewall]
+      summary: Delete firewall target
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/firewall/targets/{id}/push:
+    post:
+      tags: [firewall]
+      summary: Force firewall push
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/firewall/targets/{id}/test:
+    post:
+      tags: [firewall]
+      summary: Test firewall connectivity
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200':
+          description: Test result
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/firewall/targets/{id}/history:
+    get:
+      tags: [firewall]
+      summary: Firewall push history
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200':
+          description: Push history
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/firewall/stats:
+    get:
+      tags: [firewall]
+      summary: Firewall stats
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      responses:
+        '200':
+          description: Firewall target stats
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/siem/targets:
+    get:
+      tags: [siem]
+      summary: List SIEM targets
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      responses:
+        '200':
+          description: SIEM targets
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SiemTarget' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    post:
+      tags: [siem]
+      summary: Create SIEM target
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SiemTarget' }
+      responses:
+        '200':
+          description: SIEM target created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SiemTarget' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/ConflictError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/siem/targets/{id}:
+    get:
+      tags: [siem]
+      summary: Get SIEM target
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200':
+          description: SIEM target
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SiemTarget' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    put:
+      tags: [siem]
+      summary: Update SIEM target
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SiemTarget' }
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    delete:
+      tags: [siem]
+      summary: Delete SIEM target
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/siem/stats:
+    get:
+      tags: [siem]
+      summary: SIEM stats
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      responses:
+        '200':
+          description: SIEM stats
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/ldap/config:
+    get:
+      tags: [ldap]
+      summary: Get LDAP config
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      responses:
+        '200':
+          description: LDAP config
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LdapConfig' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    put:
+      tags: [ldap]
+      summary: Update LDAP config
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LdapConfigUpdateRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/ldap/sync:
+    post:
+      tags: [ldap]
+      summary: Force LDAP sync
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/ldap/groups:
+    get:
+      tags: [ldap]
+      summary: List LDAP groups
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      responses:
+        '200':
+          description: Group names
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  groups:
+                    type: array
+                    items: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/ldap/groups/{group}/members:
+    get:
+      tags: [ldap]
+      summary: Group members
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      parameters:
+        - in: path
+          name: group
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Group members
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  members:
+                    type: array
+                    items: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/ldap/users/{username}/groups:
+    get:
+      tags: [ldap]
+      summary: User groups
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      parameters:
+        - in: path
+          name: username
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: User groups
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  groups:
+                    type: array
+                    items: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /lookup/{ip}:
+    get:
+      tags: [system]
+      summary: Quick IP lookup
+      description: Public endpoint. API key auth is optional.
+      security:
+        - apiKeyAuth: []
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/Ip'
+      responses:
+        '200':
+          description: Mapping result
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /health:
+    get:
+      tags: [system]
+      summary: Health check
+      security: []
+      responses:
+        '200':
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /metrics:
+    get:
+      tags: [system]
+      summary: Prometheus metrics
+      security: []
+      responses:
+        '200':
+          description: Metrics in Prometheus exposition format
+          content:
+            text/plain:
+              schema:
+                type: string
+        '500': { $ref: '#/components/responses/InternalError' }
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: trueid_access_token
+    csrfToken:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+  parameters:
+    Id:
+      in: path
+      name: id
+      required: true
+      schema: { type: integer }
+    SessionId:
+      in: path
+      name: id
+      required: true
+      schema: { type: string }
+    Ip:
+      in: path
+      name: ip
+      required: true
+      schema: { type: string }
+    Mac:
+      in: path
+      name: mac
+      required: true
+      schema: { type: string }
+    Source:
+      in: query
+      name: source
+      schema: { type: string }
+    Search:
+      in: query
+      name: search
+      schema: { type: string }
+    Active:
+      in: query
+      name: active
+      schema: { type: boolean }
+    Page:
+      in: query
+      name: page
+      schema: { type: integer, minimum: 1, default: 1 }
+    PerPage:
+      in: query
+      name: per_page
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    Sort:
+      in: query
+      name: sort
+      schema: { type: string }
+    Order:
+      in: query
+      name: order
+      schema: { type: string, enum: [asc, desc], default: desc }
+  responses:
+    OkMessage:
+      description: Operation successful
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              ok: { type: boolean, example: true }
+              message: { type: string }
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Unauthorized:
+      description: Authentication required or invalid
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    ConflictError:
+      description: Conflict with current state
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        code: { type: string }
+        message: { type: string }
+        request_id: { type: string, nullable: true }
+    UserRole:
+      type: string
+      enum: [Admin, Operator, Viewer]
+    User:
+      type: object
+      properties:
+        id: { type: integer }
+        username: { type: string }
+        role: { $ref: '#/components/schemas/UserRole' }
+        created_at: { type: string, format: date-time, nullable: true }
+        locked_at: { type: string, format: date-time, nullable: true }
+    Session:
+      type: object
+      properties:
+        id: { type: string }
+        created_at: { type: string, format: date-time, nullable: true }
+        last_seen_at: { type: string, format: date-time, nullable: true }
+        ip: { type: string, nullable: true }
+        user_agent: { type: string, nullable: true }
+    ApiKey:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        role: { $ref: '#/components/schemas/UserRole' }
+        prefix: { type: string }
+        created_at: { type: string, format: date-time, nullable: true }
+        expires_at: { type: string, format: date-time, nullable: true }
+        last_used_at: { type: string, format: date-time, nullable: true }
+    DeviceMapping:
+      type: object
+      properties:
+        ip: { type: string }
+        user: { type: string }
+        mac: { type: string, nullable: true }
+        source: { type: string }
+        last_seen: { type: string, format: date-time }
+        confidence_score: { type: number, format: double, nullable: true }
+        is_active: { type: boolean }
+        vendor: { type: string, nullable: true }
+        subnet_id: { type: integer, nullable: true }
+        subnet_name: { type: string, nullable: true }
+        hostname: { type: string, nullable: true }
+        device_type: { type: string, nullable: true }
+        multi_user: { type: boolean, nullable: true }
+        current_users:
+          type: array
+          items: { type: string }
+        groups:
+          type: array
+          items: { type: string }
+    MappingsPage:
+      type: object
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/DeviceMapping' }
+        total: { type: integer }
+        page: { type: integer }
+        per_page: { type: integer }
+    Conflict:
+      type: object
+      properties:
+        id: { type: integer }
+        conflict_type: { type: string }
+        severity: { type: string }
+        ip: { type: string, nullable: true }
+        mac: { type: string, nullable: true }
+        user_old: { type: string, nullable: true }
+        user_new: { type: string, nullable: true }
+        source: { type: string, nullable: true }
+        details: { type: string, nullable: true }
+        detected_at: { type: string, format: date-time }
+        resolved_at: { type: string, format: date-time, nullable: true }
+        resolved_by: { type: string, nullable: true }
+        resolution_note: { type: string, nullable: true }
+    AlertRule:
+      type: object
+      properties:
+        id: { type: integer, nullable: true }
+        name: { type: string }
+        enabled: { type: boolean }
+        rule_type: { type: string }
+        severity: { type: string }
+        conditions:
+          type: object
+          additionalProperties: true
+        action_webhook_url: { type: string, nullable: true }
+        action_log: { type: boolean }
+        cooldown_seconds: { type: integer, nullable: true }
+    AlertFiring:
+      type: object
+      properties:
+        id: { type: integer }
+        rule_name: { type: string }
+        rule_type: { type: string }
+        severity: { type: string }
+        ip: { type: string, nullable: true }
+        user_name: { type: string, nullable: true }
+        details: { type: string, nullable: true }
+        webhook_status: { type: string, nullable: true }
+        fired_at: { type: string, format: date-time }
+    Subnet:
+      type: object
+      properties:
+        id: { type: integer, nullable: true }
+        cidr: { type: string }
+        name: { type: string }
+        vlan_id: { type: integer, nullable: true }
+        location: { type: string, nullable: true }
+        description: { type: string, nullable: true }
+        gateway: { type: string, nullable: true }
+    Switch:
+      type: object
+      properties:
+        id: { type: integer, nullable: true }
+        name: { type: string }
+        ip: { type: string }
+        snmp_version: { type: string, nullable: true }
+        port: { type: integer, nullable: true }
+        poll_interval_secs: { type: integer, nullable: true }
+        enabled: { type: boolean }
+        last_poll_at: { type: string, format: date-time, nullable: true }
+        last_poll_status: { type: string, nullable: true }
+    SwitchCreateRequest:
+      type: object
+      required: [ip, name, community]
+      properties:
+        ip: { type: string }
+        name: { type: string }
+        community: { type: string }
+        snmp_version: { type: string, nullable: true }
+        port: { type: integer, nullable: true }
+        poll_interval_secs: { type: integer, nullable: true }
+        enabled: { type: boolean, default: true }
+        subnet_id: { type: integer, nullable: true }
+        location: { type: string, nullable: true }
+    FirewallTarget:
+      type: object
+      properties:
+        id: { type: integer, nullable: true }
+        name: { type: string }
+        firewall_type: { type: string, enum: [panos, fortigate] }
+        host: { type: string }
+        port: { type: integer }
+        username: { type: string, nullable: true }
+        verify_tls: { type: boolean }
+        push_interval_secs: { type: integer }
+        enabled: { type: boolean }
+        subnet_filter: { type: string, nullable: true }
+        last_push_at: { type: string, format: date-time, nullable: true }
+        last_push_status: { type: string, nullable: true }
+    SiemTarget:
+      type: object
+      properties:
+        id: { type: integer, nullable: true }
+        name: { type: string }
+        format: { type: string, enum: [cef, leef, json] }
+        transport: { type: string, enum: [udp, tcp] }
+        host: { type: string }
+        port: { type: integer }
+        forward_mappings: { type: boolean }
+        forward_conflicts: { type: boolean }
+        forward_alerts: { type: boolean }
+        enabled: { type: boolean }
+    LdapConfig:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        ldap_url: { type: string, nullable: true }
+        bind_dn: { type: string, nullable: true }
+        password_set: { type: boolean }
+        search_base: { type: string, nullable: true }
+        search_filter: { type: string, nullable: true }
+        sync_interval_secs: { type: integer, nullable: true }
+    LdapConfigUpdateRequest:
+      type: object
+      properties:
+        enabled: { type: boolean }
+        ldap_url: { type: string }
+        bind_dn: { type: string }
+        bind_password: { type: string, nullable: true }
+        search_base: { type: string }
+        search_filter: { type: string }
+        sync_interval_secs: { type: integer }
+    AuditEntry:
+      type: object
+      properties:
+        id: { type: integer }
+        timestamp: { type: string, format: date-time }
+        user_id: { type: integer, nullable: true }
+        username: { type: string, nullable: true }
+        principal_type: { type: string, nullable: true }
+        action: { type: string }
+        target: { type: string, nullable: true }
+        details: { type: string, nullable: true }
+        ip_address: { type: string, nullable: true }
+        request_id: { type: string, nullable: true }
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string }
+        password: { type: string }
+    LoginResponse:
+      type: object
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        force_password_change: { type: boolean }
+        active_sessions_count: { type: integer }
+    ChangePasswordRequest:
+      type: object
+      required: [current_password, new_password]
+      properties:
+        current_password: { type: string }
+        new_password: { type: string }
+    CreateUserRequest:
+      type: object
+      required: [username, password, role]
+      properties:
+        username: { type: string }
+        password: { type: string }
+        role: { $ref: '#/components/schemas/UserRole' }
+    CreateApiKeyRequest:
+      type: object
+      required: [name, role]
+      properties:
+        name: { type: string }
+        role: { $ref: '#/components/schemas/UserRole' }
+        expires_at: { type: string, format: date-time, nullable: true }
+    ManualEventRequest:
+      type: object
+      required: [ip, user]
+      properties:
+        ip: { type: string }
+        user: { type: string }
+        mac: { type: string, nullable: true }
+        source: { type: string, nullable: true }
+    SearchResponse:
+      type: object
+      properties:
+        mappings:
+          type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: '#/components/schemas/DeviceMapping' }
+            total: { type: integer }
+        events:
+          type: object
+          properties:
+            data:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+            total: { type: integer }
+        page: { type: integer }
+        limit: { type: integer }
+        query_time_ms: { type: integer }

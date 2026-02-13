@@ -1,0 +1,31 @@
+[Unit]
+Description=TrueID Web Dashboard & API
+After=trueid-engine.service
+Requires=trueid-engine.service
+
+[Service]
+Type=simple
+User=trueid
+Group=trueid
+WorkingDirectory=/opt/trueid
+EnvironmentFile=/opt/trueid/.env
+ExecStart=/opt/trueid/bin/trueid-web
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/trueid/data
+PrivateTmp=yes
+
+LimitNOFILE=65536
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=trueid-web
+
+[Install]
+WantedBy=multi-user.target

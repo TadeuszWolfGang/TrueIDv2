@@ -1,0 +1,33 @@
+[Unit]
+Description=TrueID Identity Correlation Engine
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=trueid
+Group=trueid
+WorkingDirectory=/opt/trueid
+EnvironmentFile=/opt/trueid/.env
+ExecStart=/opt/trueid/bin/trueid-engine
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/trueid/data
+PrivateTmp=yes
+
+# Resource limits
+LimitNOFILE=65536
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=trueid-engine
+
+[Install]
+WantedBy=multi-user.target

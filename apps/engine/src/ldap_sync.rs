@@ -28,7 +28,11 @@ struct LdapSyncConfig {
 /// Returns: optional CN value.
 fn extract_cn(dn: &str) -> Option<String> {
     dn.split(',')
-        .find_map(|part| part.trim().strip_prefix("CN=").map(|v| v.trim().to_string()))
+        .find_map(|part| {
+            part.trim()
+                .strip_prefix("CN=")
+                .map(|v| v.trim().to_string())
+        })
         .filter(|v| !v.is_empty())
 }
 
@@ -113,7 +117,12 @@ async fn sync_once(pool: &sqlx::SqlitePool, config: &LdapSyncConfig) -> Result<u
 
     let attrs = vec!["sAMAccountName", "memberOf", "displayName", "department"];
     let (entries, _res) = ldap
-        .search(&config.base_dn, Scope::Subtree, &config.search_filter, attrs)
+        .search(
+            &config.base_dn,
+            Scope::Subtree,
+            &config.search_filter,
+            attrs,
+        )
         .await?
         .success()?;
 

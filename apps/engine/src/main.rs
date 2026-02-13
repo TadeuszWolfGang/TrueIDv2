@@ -14,6 +14,7 @@ mod fingerprints;
 mod firewall_push;
 mod ldap_sync;
 mod metrics;
+mod report_generator;
 mod siem_forwarder;
 mod snmp_poller;
 mod subnets;
@@ -30,10 +31,12 @@ use net_identity_adapter_dhcp_logs::DhcpLogsAdapter;
 use net_identity_adapter_radius::RadiusAdapter;
 use std::net::SocketAddr;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::sync::RwLock;
+use tokio::task::JoinHandle;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 use trueid_common::db::Db;
@@ -57,6 +60,7 @@ const DEFAULT_TLS_CA: &str = "./certs/ca.pem";
 const DEFAULT_TLS_CERT: &str = "./certs/server.pem";
 const DEFAULT_TLS_KEY: &str = "./certs/server-key.pem";
 const DEFAULT_ADMIN_HTTP_ADDR: &str = "127.0.0.1:8080";
+static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
 /// Shared context for the event processing loop.
 struct EventLoopCtx {
@@ -234,40 +238,47 @@ async fn run_event_loop(mut receiver: Receiver<IdentityEvent>, ctx: EventLoopCtx
 ///
 /// Parameters: `bind_addr` - UDP bind address, `secret` - shared secret,
 /// `sender` - event channel.
-fn spawn_radius_adapter(bind_addr: SocketAddr, secret: &[u8], sender: Sender<IdentityEvent>) {
+fn spawn_radius_adapter(
+    bind_addr: SocketAddr,
+    secret: &[u8],
+    sender: Sender<IdentityEvent>,
+) -> JoinHandle<()> {
     let adapter = RadiusAdapter::new(bind_addr, secret, sender);
     info!(%bind_addr, "Starting RADIUS adapter");
     tokio::spawn(async move {
         if let Err(err) = adapter.run().await {
             warn!(error = %err, "RADIUS adapter stopped");
         }
-    });
+    })
 }
 
 /// Spawns the AD syslog adapter task.
 ///
 /// Parameters: `bind_addr` - UDP/TCP bind address, `sender` - event channel.
-fn spawn_ad_logs_adapter(bind_addr: SocketAddr, sender: Sender<IdentityEvent>) {
+fn spawn_ad_logs_adapter(bind_addr: SocketAddr, sender: Sender<IdentityEvent>) -> JoinHandle<()> {
     let adapter = AdLogsAdapter::new(bind_addr, sender);
     info!(%bind_addr, "Starting AD syslog adapter");
     tokio::spawn(async move {
         if let Err(err) = adapter.run().await {
             warn!(error = %err, "AD syslog adapter stopped");
         }
-    });
+    })
 }
 
 /// Spawns the DHCP syslog adapter task.
 ///
 /// Parameters: `bind_addr` - UDP bind address, `sender` - event channel.
-fn spawn_dhcp_logs_adapter(bind_addr: SocketAddr, sender: Sender<IdentityEvent>) {
+fn spawn_dhcp_logs_adapter(
+    bind_addr: SocketAddr,
+    sender: Sender<IdentityEvent>,
+) -> JoinHandle<()> {
     let adapter = DhcpLogsAdapter::new(bind_addr, sender);
     info!(%bind_addr, "Starting DHCP syslog adapter");
     tokio::spawn(async move {
         if let Err(err) = adapter.run().await {
             warn!(error = %err, "DHCP adapter stopped");
         }
-    });
+    })
 }
 
 /// Periodically deactivates mappings not seen within the TTL.
@@ -476,12 +487,12 @@ async fn main() -> Result<()> {
         .build()
         .expect("Failed to build HTTP client");
     let (siem_sender, siem_receiver) = siem_forwarder::create_siem_channel();
-    {
+    let siem_forwarder_handle = {
         let siem_pool = db.pool().clone();
         tokio::spawn(async move {
             siem_forwarder::run_siem_forwarder(siem_receiver, siem_pool).await;
-        });
-    }
+        })
+    };
 
     let (sender, receiver) = mpsc::channel(CHANNEL_CAPACITY);
     let event_db = db.clone();
@@ -502,27 +513,28 @@ async fn main() -> Result<()> {
         http_client: event_http_client,
         siem_sender: event_siem_sender,
     };
-    tokio::spawn(async move {
+    let event_loop_handle = tokio::spawn(async move {
         if let Err(err) = run_event_loop(receiver, event_ctx).await {
             warn!(error = %err, "Event loop stopped");
         }
     });
 
-    spawn_radius_adapter(radius_addr, radius_secret.as_bytes(), sender.clone());
-    spawn_ad_logs_adapter(ad_syslog_addr, sender.clone());
-    spawn_dhcp_logs_adapter(dhcp_syslog_addr, sender.clone());
-    {
+    let radius_handle = spawn_radius_adapter(radius_addr, radius_secret.as_bytes(), sender.clone());
+    let ad_handle = spawn_ad_logs_adapter(ad_syslog_addr, sender.clone());
+    let dhcp_handle = spawn_dhcp_logs_adapter(dhcp_syslog_addr, sender.clone());
+    let vpn_handle = {
         let vpn_sender = sender.clone();
         tokio::spawn(async move {
             if let Err(e) = vpn_adapters::run_vpn_listener(vpn_syslog_addr, vpn_sender).await {
                 warn!(error = %e, "VPN syslog adapter stopped");
             }
-        });
-    }
+        })
+    };
     start_janitor(db.clone());
     dns_resolver::start_dns_resolver(db.clone());
     snmp_poller::start_snmp_poller(db.clone());
     firewall_push::start_firewall_push(db.clone());
+    report_generator::start_report_generator(db.clone());
     {
         let ldap_db = db.clone();
         tokio::spawn(async move {
@@ -642,8 +654,26 @@ async fn main() -> Result<()> {
 
     info!("Engine running — press Ctrl+C to stop");
     tokio::signal::ctrl_c().await?;
-    info!("Shutting down...");
+    info!("Shutting down gracefully...");
+    SHUTDOWN.store(true, Ordering::SeqCst);
+    firewall_push::set_shutdown(true);
+
+    // Stop listeners first to avoid ingesting new events during drain.
+    radius_handle.abort();
+    ad_handle.abort();
+    dhcp_handle.abort();
+    vpn_handle.abort();
+
+    // Close event channel and let in-flight events drain.
+    drop(sender);
+    let _ = tokio::time::timeout(Duration::from_secs(5), event_loop_handle).await;
+
+    // Close SIEM sender and give forwarder loop a chance to flush counters.
+    drop(siem_sender);
+    let _ = tokio::time::timeout(Duration::from_secs(5), siem_forwarder_handle).await;
+
     db.close().await;
+    info!("Shutdown complete.");
 
     Ok(())
 }

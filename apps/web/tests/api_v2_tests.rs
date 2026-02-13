@@ -1357,6 +1357,41 @@ async fn test_phase2_no_auth_rejected() {
 }
 
 #[tokio::test]
+async fn test_analytics_trends() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/analytics/trends?metric=events&days=7").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["metric"], "events");
+    assert_eq!(body["interval"], "day");
+    assert!(body["data"].is_array());
+}
+
+#[tokio::test]
+async fn test_analytics_compliance() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/analytics/compliance").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["generated_at"].is_string());
+    assert!(body["mappings"].is_object());
+    assert!(body["conflicts"].is_object());
+    assert!(body["coverage"].is_object());
+    assert!(body["integrations"].is_object());
+    assert!(body["alerts"].is_object());
+}
+
+#[tokio::test]
+async fn test_analytics_reports_empty() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/analytics/reports").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"].as_i64().unwrap_or(-1), 0);
+    assert_eq!(body["data"].as_array().map(|a| a.len()).unwrap_or(99), 0);
+}
+
+#[tokio::test]
 async fn test_firewall_create_target() {
     let (app, _) = build_test_app().await;
     let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;

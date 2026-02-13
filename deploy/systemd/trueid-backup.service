@@ -1,0 +1,8 @@
+[Unit]
+Description=TrueID Database Backup
+
+[Service]
+Type=oneshot
+User=trueid
+WorkingDirectory=/opt/trueid
+ExecStart=/opt/trueid/scripts/backup.sh /opt/trueid/backups

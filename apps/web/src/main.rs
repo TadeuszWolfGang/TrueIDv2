@@ -13,6 +13,15 @@ const DEFAULT_DB_URL: &str = "sqlite://net-identity.db?mode=rwc";
 const DEFAULT_HTTP_ADDR: &str = "0.0.0.0:3000";
 const DEFAULT_ASSETS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets");
 
+/// Waits for Ctrl+C and logs graceful shutdown message.
+///
+/// Parameters: none.
+/// Returns: completes when shutdown signal is received.
+async fn shutdown_signal() {
+    tokio::signal::ctrl_c().await.ok();
+    info!("Web server shutting down...");
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
@@ -193,7 +202,14 @@ async fn main() -> Result<()> {
                 axum_server::tls_rustls::RustlsConfig::from_pem_file(&cert_path, &key_path)
                     .await
                     .map_err(|e| anyhow::anyhow!("TLS config error: {e}"))?;
+            let handle = axum_server::Handle::new();
+            let handle_for_signal = handle.clone();
+            tokio::spawn(async move {
+                shutdown_signal().await;
+                handle_for_signal.graceful_shutdown(Some(std::time::Duration::from_secs(15)));
+            });
             axum_server::bind_rustls(http_addr, tls_config)
+                .handle(handle)
                 .serve(app.into_make_service())
                 .await?;
         }
@@ -204,9 +220,7 @@ async fn main() -> Result<()> {
             info!(%http_addr, "Starting HTTP server");
             let listener = tokio::net::TcpListener::bind(http_addr).await?;
             axum::serve(listener, app)
-                .with_graceful_shutdown(async {
-                    tokio::signal::ctrl_c().await.ok();
-                })
+                .with_graceful_shutdown(shutdown_signal())
                 .await?;
         }
     }

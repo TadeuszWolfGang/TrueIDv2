@@ -43,10 +43,11 @@ pub async fn generate_metrics(
     pool: &sqlx::SqlitePool,
     start_time: Instant,
 ) -> String {
-    let active_mappings: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM mappings WHERE is_active = 1")
-        .fetch_one(pool)
-        .await
-        .unwrap_or(0);
+    let active_mappings: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM mappings WHERE is_active = 1")
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0);
     let conflicts_total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM conflicts")
         .fetch_one(pool)
         .await
@@ -55,12 +56,13 @@ pub async fn generate_metrics(
         .fetch_one(pool)
         .await
         .unwrap_or(0);
-    let ldap_sync_users: i64 = sqlx::query_scalar("SELECT COALESCE(last_sync_count, 0) FROM ldap_config WHERE id = 1")
-        .fetch_optional(pool)
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or(0);
+    let ldap_sync_users: i64 =
+        sqlx::query_scalar("SELECT COALESCE(last_sync_count, 0) FROM ldap_config WHERE id = 1")
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or(0);
 
     let firewall_rows = sqlx::query(
         "SELECT t.name AS target_name, h.status AS status, COUNT(*) AS c
@@ -106,11 +108,7 @@ pub async fn generate_metrics(
     );
     out.push_str(&format!("trueid_conflicts_total {conflicts_total}\n"));
 
-    add_counter_header(
-        &mut out,
-        "trueid_alerts_fired_total",
-        "Total alerts fired",
-    );
+    add_counter_header(&mut out, "trueid_alerts_fired_total", "Total alerts fired");
     out.push_str(&format!("trueid_alerts_fired_total {alerts_total}\n"));
 
     add_counter_header(
@@ -120,7 +118,9 @@ pub async fn generate_metrics(
     );
     for row in firewall_rows {
         let target_name: String = row.try_get("target_name").unwrap_or_default();
-        let status: String = row.try_get("status").unwrap_or_else(|_| "unknown".to_string());
+        let status: String = row
+            .try_get("status")
+            .unwrap_or_else(|_| "unknown".to_string());
         let count: i64 = row.try_get("c").unwrap_or(0);
         out.push_str(&format!(
             "trueid_firewall_push_total{{target=\"{}\",status=\"{}\"}} {}\n",
@@ -152,7 +152,11 @@ pub async fn generate_metrics(
     );
     out.push_str(&format!("trueid_ldap_sync_users {ldap_sync_users}\n"));
 
-    add_gauge_header(&mut out, "trueid_db_pool_size", "SQLite connection pool size");
+    add_gauge_header(
+        &mut out,
+        "trueid_db_pool_size",
+        "SQLite connection pool size",
+    );
     out.push_str(&format!("trueid_db_pool_size {}\n", pool.size()));
 
     add_gauge_header(&mut out, "trueid_uptime_seconds", "Engine uptime");

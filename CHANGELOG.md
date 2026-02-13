@@ -1,176 +1,60 @@
 # Changelog
 
-## Unreleased
+All notable changes to TrueID are documented here.  
+Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
-### Changed
-- Updated container build/runtime hardening in `Dockerfile`: dependency caching layers, non-root `trueid` runtime user, `/app/tls` directory, and expanded exposed ports including VPN syslog `5518/udp`.
-- Updated `docker-compose.yml` for production deployment: named volume `trueid-data`, healthchecks, engine->web startup dependency (`service_healthy`), TLS/OUI mounts, and full env-driven port/config wiring.
-- Updated `Makefile` with deployment operations (`secrets`, `docker-*`, `test*`, `lint`) and fixed `docker-backup` to use a deterministic in-container filename (`backup.db`) with host-side timestamped copies.
-- Expanded `.env.example` and `README.md` to document Phase 3 deployment, Docker workflow, API summary, and Prometheus monitoring; added root `prometheus.yml` scraper config.
-- Added dashboard Network Management tabs in `apps/web/assets/index.html`: Subnets, Switches (SNMP), Fingerprints, and DNS with stats banners, paginated tables, and role-aware actions.
-- Added subnet CRUD UI + inline subnet mappings drill-down; added switch CRUD/poll UI + inline switch-port drill-down; added fingerprint CRUD/backfill UI + observations browser; added DNS cache list/lookup/flush UI.
-- Extended dashboard RBAC visibility rules to support `.role-operator` and `.role-admin`, keeping read-only access for Viewer and mutation controls for Operator/Admin as configured.
-- Added Phase 3 test coverage: 21 new API v2 E2E tests in `apps/web/tests/api_v2_tests.rs` for firewall, SIEM, and LDAP flows.
-- Added 13 engine unit tests for VPN parsing and SIEM formatting in `apps/engine/src/vpn_adapters.rs` and `apps/engine/src/siem_forwarder.rs`.
-- Refactored web handlers to enrich `groups` in v1/v2 mapping SQL, append `groups` column in mappings CSV export, and reuse `helpers::require_db(...)`/`helpers::audit(...)` in Phase 3 route modules.
-- Refactored engine event processing to use `EventLoopCtx` in `apps/engine/src/main.rs` to reduce `run_event_loop` parameter arity without behavior change.
-- Added LDAP/AD group sync foundation with migration `0021_add_ldap_groups.sql` (`user_groups`, `ldap_config`) and default disabled LDAP config row.
-- Added engine LDAP sync task (`apps/engine/src/ldap_sync.rs`) with periodic sync loop, force-sync path, CN extraction, stale cleanup, and sync status updates.
-- Added Prometheus metrics generator (`apps/engine/src/metrics.rs`) and public engine metrics endpoint `GET /engine/metrics` plus web proxy `GET /metrics`.
-- Added LDAP web API (`apps/web/src/routes_ldap.rs`) for config management, force sync, and group membership queries; password is encrypted at rest and never returned.
-- Extended mapping enrichment with LDAP groups by adding `groups` to `DeviceMapping` and loading `group_names` from `user_groups` in DB queries.
-- Added `ldap3 = "0.11"` dependency in `apps/engine` for async LDAP integration.
-- Added VPN syslog adapter module (`apps/engine/src/vpn_adapters.rs`) for Cisco AnyConnect, Palo Alto GlobalProtect, and Fortinet SSL-VPN on shared `VPN_SYSLOG_BIND` UDP listener.
-- Extended `SourceType` with `VpnAnyConnect`, `VpnGlobalProtect`, and `VpnFortinet`; updated source serialization/parsing and source priority mapping in `crates/common`.
-- Added TLS agent VPN event parsing in `apps/engine/src/tls_parsers.rs` for `TrueID-Agent: VPN_SESSION ...` messages.
-- Updated engine runtime wiring (`apps/engine/src/main.rs`, `apps/engine/src/adapter_status.rs`) to run VPN listener and track `VPN Syslog` adapter status.
-- Updated search source mapping helper in `apps/web/src/routes_search.rs` for new VPN source variants.
-- Added SIEM forwarding foundation: migration `0020_add_siem_targets.sql` with target config, forwarding flags, and delivery status fields.
-- Added engine SIEM forwarder (`apps/engine/src/siem_forwarder.rs`) with CEF/LEEF/JSON formatting, UDP/TCP delivery, TCP reconnect handling, and batched forwarding counters.
-- Integrated SIEM forwarding into engine event loop (`apps/engine/src/main.rs`) for mapping, conflict, and alert events using non-blocking `try_send`.
-- Added SIEM target management API (`apps/web/src/routes_siem.rs`) and wired routes in `apps/web/src/lib.rs` for CRUD + stats with validation and audit logging.
-- Added firewall User-ID push foundation: migration `0019_add_firewall_targets.sql` with `firewall_targets` and `firewall_push_history`.
-- Added engine firewall push module (`apps/engine/src/firewall_push.rs`) with PAN-OS/FortiGate push handlers, per-target TLS policy, PAN-OS key cache, and background push loops.
-- Added web firewall API (`apps/web/src/routes_firewall.rs`) for target CRUD, inline force push, connection test, push history, and firewall stats; wired routes in `apps/web/src/lib.rs`.
-- Added multi-user IP session support (`ip_sessions`) with `mappings.multi_user` and `current_users` populated from active sessions.
-- Extended subnet matching foundation to dual-stack (IPv4 + IPv6 CIDR) and updated v1/v2 mapping queries/exports with `multi_user` and `current_users`.
-- Updated web E2E tests for new mappings CSV schema and added coverage for multi-user sessions and IPv6 mapping flow.
-- Refactored web handlers to use shared `helpers::require_db(...)` and reduced repeated `DeviceMapping` row mapping via `DeviceMapping::from_row()`.
-- Extracted engine `main.rs` responsibilities into `vendor.rs`, `tls_parsers.rs`, and `adapter_status.rs`; unified MAC normalization in `trueid_common::model::normalize_mac`.
-- Added DNS reverse lookup cache foundation (`0014_add_dns_cache.sql`), engine background resolver loop with TTL/interval config + 3s timeout, new `/api/v2/dns*` endpoints, and `hostname` propagation in v1/v2 mappings/search/export responses.
-- Added subnet/VLAN awareness foundation (migration `0013_add_subnets.sql`, engine subnet cache + post-upsert subnet tagging, and new `/api/v2/subnets*` API endpoints).
-- Extended `DeviceMapping` with `subnet_id` and `subnet_name`, and updated v1/v2 mappings queries + exports to include subnet context (CSV header now includes `subnet_id,subnet_name`).
-- Updated web integration test `test_export_mappings_csv` to expect the new mappings export header with subnet columns.
-- Refactored web route organization: extracted legacy handlers to `apps/web/src/routes_v1.rs` and engine proxy handlers to `apps/web/src/routes_proxy.rs`, leaving `apps/web/src/lib.rs` as a router orchestrator.
-- Updated `build_router()` to use module-qualified handler wiring and kept lookup route behavior for existing clients/tests.
-- Refactored `trueid-web` into library + binary split: moved router/app state/handlers to `apps/web/src/lib.rs`, kept startup/bootstrap/server bind in `apps/web/src/main.rs`.
-- Added explicit Cargo targets for web crate (`[lib] trueid_web`, `[[bin]] trueid-web`) and kept static assets fallback only in binary startup.
-- Reworked API v2 in-process tests to import `trueid_web` directly (removed `#[path]` include hack) and run against in-memory SQLite.
-- Marked external integration tests in `tests/auth_integration.rs` and `tests/rbac_matrix.rs` as opt-in (`#[ignore]`) with explicit run instructions.
-
-### Fixed
-- **Route authorization hardening** — moved `DELETE /api/auth/sessions/{id}` back to `operator_routes` (Operator+), removed accidental exposure from `viewer_routes`.
-- **CSRF on token refresh** — dashboard refresh timer (10 min) now sends `X-CSRF-Token` header, preventing 403 and forced logout.
-- **CSRF in smoke-test.sh** — refresh and logout curl calls now extract CSRF token from cookie jar and send header.
-- **request_id in login/refresh** — handlers read `RequestId` from Axum extensions (not request headers), fixing empty `request_id` in audit logs and error responses.
-- **Session revoke accessible to Viewer** — `DELETE /api/auth/sessions/{id}` moved from `operator_routes` to `viewer_routes` so all logged-in users can manage their own sessions.
-- **locked_until in 423 response** — login now returns `locked_until` (ISO 8601) in the JSON body so the frontend can display a countdown.
-- **Deduplicated `extract_cookie`** — single `pub fn` in `auth.rs`, removed duplicates from `middleware.rs` and `routes_auth.rs`.
-- **Removed unused `cookie` crate** dependency from `apps/web/Cargo.toml`.
+## [0.6.0] — 2026-02-13
 
 ### Added
-- **Dashboard v1.5 refresh (frontend):**
-  - Reworked `index.html` tabs and navigation: Mappings, Search, Conflicts, Alerts, Status, Sycope, Audit.
-  - Upgraded Mappings tab to `/api/v2/search` with filters, paging, exports, and 30s refresh cadence.
-  - Added Search tab (unified v2 search), Conflicts tab (stats/filter/resolve), and Alerts tab (stats/history + admin rule CRUD UI).
-  - Added timeline slide-in panel with cross-navigation from clickable IP/user links.
-- **Alerts & webhooks (v2):**
-  - Added migration `0012_add_alerts_tables.sql` with `alert_rules` and `alert_history`.
-  - Added engine alert module (`apps/engine/src/alerts.rs`) with rule loading, event evaluation, cooldown checks, and async webhook delivery.
-  - Integrated alert processing into engine event loop with rule cache reload every 60 seconds.
-  - Added web alert API (`apps/web/src/routes_alerts.rs`) for admin rule CRUD and viewer alert history/stats.
-  - Wired alert routes in `apps/web/src/main.rs` (viewer + admin groups).
-- **Timeline API (v2):**
-  - Added `routes_timeline.rs` with investigation endpoints:
-    - `GET /api/v2/timeline/ip/{ip}` (current mapping, paginated events, user transitions, unresolved conflicts count).
-    - `GET /api/v2/timeline/user/{user}` (active mappings, paginated events, distinct IP list).
-    - `GET /api/v2/timeline/mac/{mac}` (current mappings and mapping-based IP history).
-  - Wired timeline routes in `viewer_routes` for authenticated read access.
-- **Conflict detection foundation (v2):**
-  - Added migration `0011_add_conflicts_table.sql` with `conflicts` table and indexes.
-  - Added engine conflict detection module (`apps/engine/src/conflicts.rs`) for `ip_user_change`, `mac_ip_conflict`, and `duplicate_mac` with 5-minute dedup.
-  - Added web conflict API (`apps/web/src/routes_conflicts.rs`): list, stats, and resolve endpoints.
-  - Wired routes in `apps/web/src/main.rs` for Viewer+ read and Operator+ resolve actions.
-- **API v2 search foundation**:
-  - New module `apps/web/src/routes_search.rs` with:
-    - `GET /api/v2/search` (unified mappings + events query, filters, pagination, sorting, scope, timing).
-    - `GET /api/v2/export/mappings` (JSON/CSV export with filters).
-    - `GET /api/v2/export/events` (JSON/CSV export, 100k safety cap, truncation header).
-  - New migration `0010_add_search_indexes.sql` adding search/time indexes for `events` and `mappings`.
-  - Router wiring in `viewer_routes` for new v2 endpoints.
-- **RBAC & Authentication system** (17-step plan fully implemented):
-  - Database migration `0009_add_auth_tables.sql`: `users`, `sessions`, `api_keys`, `audit_log` tables with indexes and triggers.
-  - Domain models: `UserRole` (Admin/Operator/Viewer), `User`, `UserPublic`, `Session`, `ApiKeyRecord`, `AuditEntry`.
-  - DB layer (`db_auth.rs`): full CRUD for users, sessions, API keys, audit log with Argon2id password hashing, SHA-256 token hashing, account lockout (5 attempts → 30 min lock).
-  - JWT auth (`auth.rs`): HS256 tokens in HttpOnly/Secure/SameSite=Strict cookies, CSRF double-submit cookie, refresh token rotation with replay detection.
-  - Unified error format (`error.rs`): `ApiError` with status, code, message, request_id.
-  - Auth middleware (`middleware.rs`): `AuthUser`/`OptionalAuthUser` extractors (cookie JWT + X-API-Key), CSRF guard, role-based route layers (Viewer/Operator/Admin).
-  - Auth endpoints (`routes_auth.rs`): login, logout, logout-all, refresh, /me, change-password, session listing/revocation.
-  - User management (`routes_users.rs`): Admin-only CRUD — create, list, get, change role, reset password, unlock, delete (with last-admin protection).
-  - API key management (`routes_api_keys.rs`): Admin-only create/list/revoke, raw key shown only at creation.
-  - Engine service token (`admin_api.rs`): `X-Service-Token` middleware on engine admin API, web proxy sends token automatically.
-  - Config encryption (`db.rs`): AES-256-GCM encryption for sensitive config values (`sycope_pass`, `sycope_login`), auto-migration of plaintext on startup.
-  - Login page (`login.html`): matching dashboard style, force-password-change flow.
-  - Dashboard auth integration (`index.html`): auth check → redirect, CSRF in fetch, token refresh every 10 min, role-based tab visibility, user bar + logout.
-  - Security headers middleware: CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy.
-  - Rate limiting (`rate_limit.rs`): DashMap-based sliding window — login (10/60s per IP), API keys (100/60s per prefix).
-  - AuthProvider trait (`auth_provider.rs`): `LocalAuthProvider`, `LdapAuthProvider` stub, `AuthProviderChain` — login/change-password routed by `auth_source`.
-  - Audit log endpoints (`routes_audit.rs`): paginated list with filters (action, username, since, until), stats (total, 24h, 7d, top actions). Append-only by design.
-  - Audit Log tab in dashboard: Admin-only, filterable, paginated, auto-refresh 30s.
-  - Native TLS support: optional `TLS_CERT`/`TLS_KEY` env vars → HTTPS via axum-server + rustls.
-  - Production startup validation: fail-fast on missing `JWT_SECRET`, `ENGINE_SERVICE_TOKEN`, `CONFIG_ENCRYPTION_KEY` (bypass with `TRUEID_DEV_MODE=true`).
-  - Admin bootstrap: auto-create admin user from `TRUEID_ADMIN_USER`/`TRUEID_ADMIN_PASS` on first run with `force_password_change=true`.
-  - Background tasks: session cleanup (hourly), rate limiter cleanup (5 min).
-  - Integration tests (`tests/`): auth flows (12 tests), RBAC matrix (role × endpoint), API key auth, CSRF protection.
-  - Smoke test script (`scripts/smoke-test.sh`): 11 curl-based checks.
-  - `docker-compose.tls.yml`: Traefik + Let's Encrypt example overlay.
-- **Documentation:** Security section in README (TLS, env vars, roles, secret generation), API key auth section in INTEGRATION_GUIDE.md.
+- **Reporting & Analytics**: `/api/v2/analytics/*` endpoints, compliance summary, daily `report_snapshots` generator, dashboard Analytics tab (SVG charts + report history)
+- **Production Operations**: backup/restore/install scripts, Nginx/Caddy reverse-proxy templates, systemd services + backup timer, HA architecture guide (`docs/HA.md`)
+- **VPN Adapters**: AnyConnect, GlobalProtect, Fortinet syslog parsing (UDP :5518 + TLS)
+- **Firewall User-ID Push**: PAN-OS (XML API, batch 1000) and FortiGate (REST API) integration
+- **SIEM Forwarding**: CEF, LEEF, JSON syslog event forwarding over UDP/TCP
+- **LDAP Group Sync**: Active Directory group membership sync with user enrichment
+- **Prometheus Metrics**: `/metrics` endpoint with 8 metric families
+- **Multi-user Sessions**: Terminal server support with concurrent session tracking per IP
+- **IPv6 Foundation**: Dual-stack subnet matching (v4+v6 CIDR), IPv6-safe alert formatting
+- **Dashboard Extensions**: Firewall, SIEM, LDAP, Subnets, Switches, Fingerprints, DNS, Status tabs
+- **Docker Production**: Dependency-cached Dockerfile, healthchecks, non-root runtime
+- **OpenAPI 3.1**: Complete API specification (`docs/openapi.yaml`)
+- `helpers::audit()` — reduced audit log boilerplate
+- `EventLoopCtx` struct — cleaner event loop parameter passing
+- 34 new tests (21 E2E + 13 unit) covering Phase 3 handlers and parsers
+
+### Fixed
+- `group_names` subquery missing in routes_v1, routes_search, routes_subnets (groups always null)
+- CSV export missing `groups` column
+- VPN dispatcher not matching `Username = ..., IP = ...` format
 
 ### Changed
-- `docker-compose.yml`: added auth-related env vars (`ENGINE_SERVICE_TOKEN`, `JWT_SECRET`, `CONFIG_ENCRYPTION_KEY`, `ARGON2_PEPPER`, `TRUEID_ADMIN_*`, `TRUEID_DEV_MODE`).
-- Router refactored into role-grouped layers: public, viewer, operator, admin routes.
-- `Db` struct extended with `pepper` and `encryption_key` fields.
-- `Makefile`: added `test-integration` and `smoke-test` targets.
+- Graceful shutdown flow for engine/web (drain window, controlled loop stop, graceful server termination)
+- `parse_vpn_syslog` now public for testability
+- 6 call sites migrated from inline `ok_or_else` to `helpers::require_db()`
+- 10 audit calls in Phase 3 routes migrated to `helpers::audit()`
 
-### Dependencies
-- `crates/common`: +aes-gcm, argon2, async-trait, base64, rand, sha2.
-- `apps/web`: +async-trait, axum-server (tls-rustls), cookie, dashmap, jsonwebtoken, rand, uuid.
-- `apps/engine`: +sqlx (workspace dependency) for conflict detection queries.
+## [0.5.0] — 2026-02-08
 
-### Previous
-- **net-identity-agent:** New Rust-based Windows Event Log agent (`crates/agent/`) with TCP+TLS transport (mTLS), ring buffer, exponential-backoff reconnect, heartbeat, and `--dry-run` mode.
-- **TLS listeners on engine:** Dual-protocol support — existing UDP (NXLog) preserved, new TCP+TLS listeners (AD:5615, DHCP:5617) activated when cert files are present.
-- **PKI tooling:** `scripts/gen-certs.sh` generates CA + server + agent certificates for mTLS.
-- **Unit tests:** 8 tests for XML event parsers (4768, 4624, DHCP 10) and syslog octet-counting framing.
-- **Sycope connector:** Python integration (`integrations/sycope/`) — CSV Lookup enrichment (Pattern A) and Custom Index event injection (Pattern B) following official SycopeSolutions/Integrations SDK patterns.
-- **Sycope SDK:** Vendored `sycope/` package from SycopeSolutions/Integrations for API auth, lookups, indexes.
-- **Web API v1:** `GET /api/v1/mappings` (active only) and `GET /api/v1/events?since=<ts>` endpoints on `trueid-web`.
-- **Migration:** `0005_add_vendor_to_mappings.sql` — ensures `vendor` column exists on fresh deployments.
+### Added
+- **Alert Engine**: 5 rule types (new_mac, ip_conflict, user_change, new_subnet, source_down), webhook + cooldown
+- **Subnet Management**: CIDR definitions, auto-tagging, VLAN + location metadata
+- **DNS Reverse Lookup**: Background PTR resolution with configurable cache
+- **DHCP Fingerprinting**: Option 55 parsing, device type classification, OUI vendor database
+- **SNMP Switch Polling**: MAC-to-port mapping via SNMP v2c/v3
+- **Conflict Detection**: ip_user_change, mac_ip_conflict, duplicate_mac with severity levels
+- **Timeline API**: IP/User/MAC history with user transitions
+- **Search API v2**: Universal search across mappings + events, CSV/JSON export
+- **TLS/mTLS Listeners**: Agent certificate authentication
+- Dashboard: Conflicts tab, Alerts tab (rules + history), Search tab, Timeline panel
+- 56 E2E integration tests
 
-### Changed
-- **Architectural Overhaul:** Split monolithic `net-identity-server` into two separate applications:
-  - `trueid-engine`: Headless service for passive ingestion (UDP/Syslog) and DB writing.
-  - `trueid-web`: HTTP service for API and Dashboard visualization.
-- **Refactor:** Extracted shared logic (models, DB pool, migrations) to `trueid-common`.
-- **Removed:** Legacy `crates/core` and `crates/db` (merged into common).
-- **Docs:** Updated README with ASCII architecture diagram and Engine/Web split.
-- **Feature:** `is_active` TTL flag on mappings — janitor task deactivates stale entries every 60s (5 min TTL).
-- **UI:** Dashboard shows online/offline status (green/grey dot, dimmed rows, relative time in Last Seen).
-- **Docker:** Multi-stage Dockerfile + docker-compose.yml (engine + web services with shared SQLite volume).
-- **Feature:** OUI vendor lookup — engine loads IEEE `oui.csv` at startup for MAC-to-vendor resolution.
-- **Feature:** Vendor name persisted to DB (`vendor` column) and exposed via API.
-- Set up Rust workspace and crate structure.
-- Add core domain models and ingestion trait.
-- Scaffold Axum server and data/access crates.
-- Add SQLite db layer with migrations and mapping queries.
-- Add RADIUS adapter with UDP listener and event parsing.
-- Add AD syslog adapter for event 4768/4624.
-- Integrate adapters, DB, and HTTP server in main app.
-- Add events history table and source-priority mapping logic.
-- Debug endpoint `POST /api/debug/event` for manual ingest.
-- Public API `GET /api/recent` for dashboard data.
-- Verified End-to-End data flow (API -> DB -> API).
-- Minimalist HTML/JS Dashboard served from `/`.
-- Static file serving via `tower-http`.
-- Auto-refresh logic for realtime-like experience.
-- Verified End-to-End flow with UI visualization.
-- Include `source` in mapping responses (PascalCase).
-- Add RADIUS accounting test client utility.
-- `dotenvy` support: Server now automatically loads `.env` file on startup.
-- `ad_client` utility: Verified payload format to match server parser regex.
-- Verified End-to-End AD Syslog ingestion (User -> Syslog -> DB -> API).
-- Fixed port binding issue on macOS (respecting `AD_SYSLOG_BIND` from env).
-- DHCP Syslog Adapter: listening for `DHCPACK` logs to map non-802.1x devices.
-- Hostname extraction: DHCP adapter now parses hostnames (e.g., `(Printer-HP)`) into the User field.
-- `dhcp_client` utility: Tool for simulating DHCP syslog traffic.
-- Full multi-protocol ingest support (RADIUS + AD + DHCP).
+## [0.4.0] — 2026-01-25
+
+### Added
+- **Core Engine**: RADIUS, AD Syslog, DHCP Syslog adapters
+- **Web Dashboard**: Login, mappings table, basic search, Sycope integration tab
+- **Auth System**: JWT sessions, API keys, RBAC (Admin/Operator/Viewer), CSRF protection
+- **Audit Logging**: All admin actions recorded with request correlation
+- Source priority scoring with configurable weights
+- Rate limiting and account lockout
+- 24 E2E tests

@@ -270,5 +270,5 @@ scrape_configs:
 
 ## Integration Guide
 
-See [INTEGRATION_GUIDE.md](INTEGRATION_GUIDE.md) for source-specific integration steps
+See [docs/INTEGRATION_GUIDE.md](docs/INTEGRATION_GUIDE.md) for source-specific integration steps
 (TrueID Agent, NXLog, FreeRADIUS, NPS, DHCP variants, VPN syslog inputs, and more).
