@@ -258,18 +258,15 @@ pub(crate) async fn create_fingerprint(
         .with_request_id(&auth.request_id)
     })?;
 
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "fingerprint_create",
-            Some(&id.to_string()),
-            Some(&normalized),
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    let target_id = id.to_string();
+    helpers::audit(
+        db,
+        &auth,
+        "fingerprint_create",
+        Some(&target_id),
+        Some(&normalized),
+    )
+    .await;
 
     Ok((
         StatusCode::CREATED,
@@ -344,18 +341,15 @@ pub(crate) async fn delete_fingerprint(
             .with_request_id(&auth.request_id)
         })?;
 
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "fingerprint_delete",
-            Some(&id.to_string()),
-            Some(&fp_value),
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    let target_id = id.to_string();
+    helpers::audit(
+        db,
+        &auth,
+        "fingerprint_delete",
+        Some(&target_id),
+        Some(&fp_value),
+    )
+    .await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -605,18 +599,8 @@ pub(crate) async fn backfill(
         .with_request_id(&auth.request_id)
     })?;
 
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "fingerprint_backfill",
-            None,
-            Some(&format!("updated={updated}")),
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    let details = format!("updated={updated}");
+    helpers::audit(db, &auth, "fingerprint_backfill", None, Some(&details)).await;
 
     Ok((StatusCode::OK, Json(BackfillResponse { updated })))
 }

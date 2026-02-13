@@ -352,18 +352,8 @@ pub(crate) async fn create_switch(
     })?;
 
     let created_id = result.last_insert_rowid();
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "switch_create",
-            Some(&created_id.to_string()),
-            Some(&req.name),
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    let target_id = created_id.to_string();
+    helpers::audit(db, &auth, "switch_create", Some(&target_id), Some(&req.name)).await;
 
     get_switch(auth, Path(created_id), State(state)).await
 }
@@ -466,18 +456,8 @@ pub(crate) async fn update_switch(
         }
     })?;
 
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "switch_update",
-            Some(&id.to_string()),
-            None,
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    let target_id = id.to_string();
+    helpers::audit(db, &auth, "switch_update", Some(&target_id), None).await;
 
     get_switch(auth, Path(id), State(state)).await
 }
@@ -513,18 +493,8 @@ pub(crate) async fn delete_switch(
         );
     }
 
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "switch_delete",
-            Some(&id.to_string()),
-            None,
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    let target_id = id.to_string();
+    helpers::audit(db, &auth, "switch_delete", Some(&target_id), None).await;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -565,18 +535,8 @@ pub(crate) async fn force_poll(
         );
     }
 
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "switch_force_poll",
-            Some(&id.to_string()),
-            None,
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    let target_id = id.to_string();
+    helpers::audit(db, &auth, "switch_force_poll", Some(&target_id), None).await;
 
     Ok((
         StatusCode::OK,

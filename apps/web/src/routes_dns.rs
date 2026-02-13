@@ -340,18 +340,7 @@ pub(crate) async fn delete_dns_ip(
         .with_request_id(&auth.request_id));
     }
 
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "dns_cache_delete_ip",
-            Some(&ip),
-            None,
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    helpers::audit(db, &auth, "dns_cache_delete_ip", Some(&ip), None).await;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -380,18 +369,8 @@ pub(crate) async fn flush_dns_cache(
         })?;
 
     let deleted = result.rows_affected();
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "dns_cache_flush",
-            None,
-            Some(&format!("deleted={deleted}")),
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    let details = format!("deleted={deleted}");
+    helpers::audit(db, &auth, "dns_cache_flush", None, Some(&details)).await;
 
     Ok((StatusCode::OK, Json(FlushResponse { deleted })))
 }

@@ -19,8 +19,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - **Docker Production**: Dependency-cached Dockerfile, healthchecks, non-root runtime
 - **OpenAPI 3.1**: Complete API specification (`docs/openapi.yaml`)
 - `helpers::audit()` — reduced audit log boilerplate
+- `helpers::audit_system()` and `helpers::audit_principal()` for non-auth/system audit flows
 - `EventLoopCtx` struct — cleaner event loop parameter passing
 - 34 new tests (21 E2E + 13 unit) covering Phase 3 handlers and parsers
+- Phase 4 test coverage: +10 analytics E2E tests and +2 report generator unit tests (totals: 93 E2E, 15 unit)
 
 ### Fixed
 - `group_names` subquery missing in routes_v1, routes_search, routes_subnets (groups always null)
@@ -32,6 +34,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - `parse_vpn_syslog` now public for testability
 - 6 call sites migrated from inline `ok_or_else` to `helpers::require_db()`
 - 10 audit calls in Phase 3 routes migrated to `helpers::audit()`
+- Mapping SQL projection unified via `MAPPING_SELECT` constant across API and DB queries (removed 7 duplicates)
+- Analytics/report SQL extracted from `db.rs` to new `db_analytics.rs` module (`db.rs` reduced to ~754 LOC)
+- Remaining direct web audit writes migrated to helpers; direct `.write_audit_log(...)` calls now centralized in `helpers.rs`
 
 ## [0.5.0] — 2026-02-08
 

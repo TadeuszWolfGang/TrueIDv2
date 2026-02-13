@@ -390,21 +390,19 @@ pub async fn create_rule(
     })?;
     let created = map_rule_row(&row);
 
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "create_alert_rule",
-            Some(&id.to_string()),
-            Some(&format!(
-                "rule_type={}, severity={}",
-                created.rule_type, created.severity
-            )),
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    let target_id = id.to_string();
+    let details = format!(
+        "rule_type={}, severity={}",
+        created.rule_type, created.severity
+    );
+    helpers::audit(
+        db,
+        &auth,
+        "create_alert_rule",
+        Some(&target_id),
+        Some(&details),
+    )
+    .await;
 
     Ok((StatusCode::CREATED, Json(created)))
 }
@@ -574,18 +572,15 @@ pub async fn update_rule(
     })?;
     let updated = map_rule_row(&row);
 
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "update_alert_rule",
-            Some(&id.to_string()),
-            Some("rule updated"),
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    let target_id = id.to_string();
+    helpers::audit(
+        db,
+        &auth,
+        "update_alert_rule",
+        Some(&target_id),
+        Some("rule updated"),
+    )
+    .await;
 
     Ok(Json(updated))
 }
@@ -623,18 +618,8 @@ pub async fn delete_rule(
         .with_request_id(&auth.request_id));
     }
 
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "delete_alert_rule",
-            Some(&id.to_string()),
-            None,
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    let target_id = id.to_string();
+    helpers::audit(db, &auth, "delete_alert_rule", Some(&target_id), None).await;
 
     Ok(StatusCode::NO_CONTENT)
 }

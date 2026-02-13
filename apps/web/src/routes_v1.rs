@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use std::sync::Arc;
 use tracing::warn;
-use trueid_common::db::Db;
+use trueid_common::db::{Db, MAPPING_SELECT};
 use trueid_common::model::DeviceMapping;
 
 use crate::routes_proxy::proxy_to_engine;
@@ -133,19 +133,11 @@ pub(crate) async fn api_v1_mappings(
 
     let count_sql = format!("SELECT COUNT(*) as c FROM mappings m {}", where_clause);
     let data_sql = format!(
-        "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
-                m.subnet_id, s.name as subnet_name, d.hostname, m.device_type, m.multi_user,
-                (SELECT GROUP_CONCAT(DISTINCT ug.group_name)
-                 FROM user_groups ug
-                 WHERE lower(ug.username) = lower(m.user)) as group_names,
-                (SELECT GROUP_CONCAT(DISTINCT sess.user)
-                 FROM ip_sessions sess
-                 WHERE sess.ip = m.ip AND sess.is_active = 1) as session_users
+        "{MAPPING_SELECT}
          FROM mappings m
          LEFT JOIN subnets s ON m.subnet_id = s.id
          LEFT JOIN dns_cache d ON m.ip = d.ip
-         {} ORDER BY {} {} LIMIT ? OFFSET ?",
-        where_clause, sort_col, order,
+         {where_clause} ORDER BY {sort_col} {order} LIMIT ? OFFSET ?",
     );
 
     let pool = db.pool();

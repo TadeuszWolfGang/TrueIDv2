@@ -416,18 +416,9 @@ pub async fn resolve_conflict(
             .with_request_id(&auth.request_id)
         })?;
 
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "resolve_conflict",
-            Some(&id.to_string()),
-            Some(&format!("note={:?}", body.note)),
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    let target_id = id.to_string();
+    let details = format!("note={:?}", body.note);
+    helpers::audit(db, &auth, "resolve_conflict", Some(&target_id), Some(&details)).await;
 
     Ok(Json(json!({
         "id": id,

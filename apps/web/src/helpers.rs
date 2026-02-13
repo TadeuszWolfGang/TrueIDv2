@@ -29,6 +29,35 @@ pub(crate) fn require_db<'a>(
 ///
 /// Parameters: `db` - database handle, `auth` - authenticated user, `action` - audit action name, `target_id` - optional target resource id, `details` - optional additional details.
 /// Returns: none.
+pub async fn audit_principal(
+    db: &Db,
+    user_id: Option<i64>,
+    username: &str,
+    principal_type: &str,
+    action: &str,
+    target_id: Option<&str>,
+    details: Option<&str>,
+    ip: Option<&str>,
+    request_id: Option<&str>,
+) {
+    let _ = db
+        .write_audit_log(
+            user_id,
+            username,
+            principal_type,
+            action,
+            target_id,
+            details,
+            ip,
+            request_id,
+        )
+        .await;
+}
+
+/// Writes audit log entry for the authenticated user's action.
+///
+/// Parameters: `db` - database handle, `auth` - authenticated user, `action` - audit action name, `target_id` - optional target resource id, `details` - optional additional details.
+/// Returns: none.
 pub(crate) async fn audit(
     db: &Db,
     auth: &crate::middleware::AuthUser,
@@ -36,16 +65,43 @@ pub(crate) async fn audit(
     target_id: Option<&str>,
     details: Option<&str>,
 ) {
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            action,
-            target_id,
-            details,
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    audit_principal(
+        db,
+        Some(auth.user_id),
+        &auth.username,
+        &auth.principal_type,
+        action,
+        target_id,
+        details,
+        None,
+        Some(&auth.request_id),
+    )
+    .await;
+}
+
+/// Audit helper for system-level actions (no authenticated user).
+///
+/// Parameters: `db` - database handle, `username` - actor identifier, `action` - audit action name, `target_id` - optional target resource id, `details` - optional additional details, `ip` - optional client IP, `request_id` - optional request correlation id.
+/// Returns: none.
+pub(crate) async fn audit_system(
+    db: &Db,
+    username: &str,
+    action: &str,
+    target_id: Option<&str>,
+    details: Option<&str>,
+    ip: Option<&str>,
+    request_id: Option<&str>,
+) {
+    audit_principal(
+        db,
+        None,
+        username,
+        "system",
+        action,
+        target_id,
+        details,
+        ip,
+        request_id,
+    )
+    .await;
 }

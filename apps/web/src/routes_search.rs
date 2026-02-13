@@ -19,6 +19,7 @@ use crate::error::{self, ApiError};
 use crate::helpers;
 use crate::middleware::AuthUser;
 use crate::AppState;
+use trueid_common::db::MAPPING_SELECT;
 use trueid_common::model::{DeviceMapping, StoredEvent};
 
 const DEFAULT_PAGE: u32 = 1;
@@ -453,14 +454,7 @@ pub async fn search(
         };
         let count_sql = format!("SELECT COUNT(*) as c FROM mappings m {where_clause}");
         let data_sql = format!(
-            "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
-                    m.subnet_id, s.name as subnet_name, d.hostname, m.device_type, m.multi_user,
-                    (SELECT GROUP_CONCAT(DISTINCT ug.group_name)
-                     FROM user_groups ug
-                     WHERE lower(ug.username) = lower(m.user)) as group_names,
-                    (SELECT GROUP_CONCAT(DISTINCT sess.user)
-                     FROM ip_sessions sess
-                     WHERE sess.ip = m.ip AND sess.is_active = 1) as session_users
+            "{MAPPING_SELECT}
              FROM mappings m
              LEFT JOIN subnets s ON m.subnet_id = s.id
              LEFT JOIN dns_cache d ON m.ip = d.ip
@@ -623,14 +617,7 @@ pub async fn export_mappings(
         format!("WHERE {}", conditions.join(" AND "))
     };
     let sql = format!(
-        "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
-                m.subnet_id, s.name as subnet_name, d.hostname, m.device_type, m.multi_user,
-                (SELECT GROUP_CONCAT(DISTINCT ug.group_name)
-                 FROM user_groups ug
-                 WHERE lower(ug.username) = lower(m.user)) as group_names,
-                (SELECT GROUP_CONCAT(DISTINCT sess.user)
-                 FROM ip_sessions sess
-                 WHERE sess.ip = m.ip AND sess.is_active = 1) as session_users
+        "{MAPPING_SELECT}
          FROM mappings m
          LEFT JOIN subnets s ON m.subnet_id = s.id
          LEFT JOIN dns_cache d ON m.ip = d.ip
@@ -664,20 +651,8 @@ pub async fn export_mappings(
         data.push(mapping);
     }
 
-    if let Some(db) = &state.db {
-        let _ = db
-            .write_audit_log(
-                Some(auth.user_id),
-                &auth.username,
-                &auth.principal_type,
-                "export_mappings",
-                None,
-                Some(&format!("format={format}, filters={q:?}")),
-                None,
-                Some(&auth.request_id),
-            )
-            .await;
-    }
+    let details = format!("format={format}, filters={q:?}");
+    helpers::audit(db, &auth, "export_mappings", None, Some(&details)).await;
 
     let date = Utc::now().format("%Y%m%d").to_string();
     if format == "json" {
@@ -821,20 +796,8 @@ pub async fn export_events(
         });
     }
 
-    if let Some(db) = &state.db {
-        let _ = db
-            .write_audit_log(
-                Some(auth.user_id),
-                &auth.username,
-                &auth.principal_type,
-                "export_events",
-                None,
-                Some(&format!("format={format}, filters={q:?}")),
-                None,
-                Some(&auth.request_id),
-            )
-            .await;
-    }
+    let details = format!("format={format}, filters={q:?}");
+    helpers::audit(db, &auth, "export_events", None, Some(&details)).await;
 
     let date = Utc::now().format("%Y%m%d").to_string();
     if format == "json" {

@@ -410,6 +410,41 @@ fn ensure_test_encryption_key() {
     });
 }
 
+/// Seeds additional events for analytics top/source tests.
+///
+/// Parameters: `db` - initialized in-memory DB handle.
+/// Returns: none.
+async fn seed_analytics_events(db: &trueid_common::db::Db) {
+    for idx in 0..3 {
+        let event = IdentityEvent {
+            source: SourceType::Radius,
+            ip: "10.9.0.10".parse::<IpAddr>().expect("ip parse failed"),
+            user: "alice".to_string(),
+            timestamp: Utc::now() - Duration::minutes(idx),
+            raw_data: format!("alice event #{idx}"),
+            mac: Some("AA:BB:CC:DD:FA:01".to_string()),
+            confidence_score: 90,
+        };
+        db.upsert_mapping(event, Some("TestVendor"))
+            .await
+            .expect("alice seed failed");
+    }
+    for idx in 0..2 {
+        let event = IdentityEvent {
+            source: SourceType::AdLog,
+            ip: "10.9.0.20".parse::<IpAddr>().expect("ip parse failed"),
+            user: "bob".to_string(),
+            timestamp: Utc::now() - Duration::minutes(idx),
+            raw_data: format!("bob event #{idx}"),
+            mac: Some("AA:BB:CC:DD:FA:02".to_string()),
+            confidence_score: 85,
+        };
+        db.upsert_mapping(event, Some("TestVendor"))
+            .await
+            .expect("bob seed failed");
+    }
+}
+
 #[tokio::test]
 async fn test_search_requires_auth() {
     let (app, _) = build_test_app().await;
@@ -1389,6 +1424,149 @@ async fn test_analytics_reports_empty() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["total"].as_i64().unwrap_or(-1), 0);
     assert_eq!(body["data"].as_array().map(|a| a.len()).unwrap_or(99), 0);
+}
+
+#[tokio::test]
+async fn test_analytics_top_users() {
+    let (app, db) = build_test_app().await;
+    seed_analytics_events(&db).await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(
+        &app,
+        &cookie,
+        "/api/v2/analytics/top?dimension=users&metric=events&days=7&limit=5",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["dimension"], "users");
+    let rows = body["data"].as_array().cloned().unwrap_or_default();
+    assert!(!rows.is_empty());
+    let first = &rows[0];
+    assert!(first["label"].is_string());
+    assert!(first["count"].as_i64().unwrap_or(0) > 0);
+}
+
+#[tokio::test]
+async fn test_analytics_top_invalid_dimension() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, _) = auth_get(
+        &app,
+        &cookie,
+        "/api/v2/analytics/top?dimension=nonexistent&metric=events",
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_analytics_source_distribution() {
+    let (app, db) = build_test_app().await;
+    seed_analytics_events(&db).await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/analytics/sources?days=7").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["total_events"].is_number());
+    let rows = body["sources"].as_array().cloned().unwrap_or_default();
+    assert!(!rows.is_empty());
+    let first = &rows[0];
+    assert!(first["source"].is_string());
+    assert!(first["count"].is_number());
+    assert!(first["percentage"].is_number());
+}
+
+#[tokio::test]
+async fn test_analytics_generate_report() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_post(&app, &cookie, "/api/v2/analytics/reports/generate", &json!({}))
+        .await;
+    assert!(status == StatusCode::OK || status == StatusCode::CREATED);
+    assert!(body["id"].as_i64().unwrap_or(0) > 0);
+}
+
+#[tokio::test]
+async fn test_analytics_get_report() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (create_status, created) =
+        auth_post(&app, &cookie, "/api/v2/analytics/reports/generate", &json!({})).await;
+    assert!(create_status == StatusCode::OK || create_status == StatusCode::CREATED);
+    let id = created["id"].as_i64().unwrap_or(0);
+    assert!(id > 0);
+
+    let (status, body) = auth_get(&app, &cookie, &format!("/api/v2/analytics/reports/{id}")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["data"].is_object() || body["data"].is_string());
+    assert!(body["report_type"].is_string());
+    assert!(body["generated_at"].is_string());
+}
+
+#[tokio::test]
+async fn test_analytics_reports_list_after_generate() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (create_status, _) =
+        auth_post(&app, &cookie, "/api/v2/analytics/reports/generate", &json!({})).await;
+    assert!(create_status == StatusCode::OK || create_status == StatusCode::CREATED);
+
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/analytics/reports").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["total"].as_i64().unwrap_or(0) >= 1);
+    assert!(body["data"].as_array().map(|v| v.len()).unwrap_or(0) >= 1);
+}
+
+#[tokio::test]
+async fn test_analytics_trends_hourly() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) =
+        auth_get(&app, &cookie, "/api/v2/analytics/trends?metric=events&interval=hour&days=1")
+            .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["interval"], "hour");
+    assert!(body["data"].is_array());
+}
+
+#[tokio::test]
+async fn test_analytics_trends_invalid_metric() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, _) = auth_get(&app, &cookie, "/api/v2/analytics/trends?metric=nonexistent").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_analytics_viewer_can_read() {
+    let (app, db) = build_test_app().await;
+    let viewer = db
+        .create_user("analytics_viewer", "testpassword123", UserRole::Viewer)
+        .await
+        .expect("create viewer failed");
+    db.set_force_password_change(viewer.id, false)
+        .await
+        .expect("set force password failed");
+    let cookie = login_and_get_cookie(&app, "analytics_viewer", "testpassword123").await;
+
+    let (status, _) = auth_get(&app, &cookie, "/api/v2/analytics/trends?metric=events&days=7").await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_analytics_viewer_cannot_generate() {
+    let (app, db) = build_test_app().await;
+    let viewer = db
+        .create_user("analytics_viewer2", "testpassword123", UserRole::Viewer)
+        .await
+        .expect("create viewer failed");
+    db.set_force_password_change(viewer.id, false)
+        .await
+        .expect("set force password failed");
+    let cookie = login_and_get_cookie(&app, "analytics_viewer2", "testpassword123").await;
+
+    let (status, _) = auth_post(&app, &cookie, "/api/v2/analytics/reports/generate", &json!({}))
+        .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
 }
 
 #[tokio::test]

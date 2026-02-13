@@ -87,12 +87,11 @@ pub async fn create_key(
             )
         })?;
 
-    let _ = db.write_audit_log(
-        Some(auth.user_id), &auth.username, &auth.principal_type,
-        "api_key_created", Some(&format!("api_key:{}", record.id)),
-        Some(&serde_json::json!({"role": body.role.to_string(), "description": body.description}).to_string()),
-        None, Some(&auth.request_id),
-    ).await;
+    let target_id = format!("api_key:{}", record.id);
+    let details =
+        serde_json::json!({"role": body.role.to_string(), "description": body.description})
+            .to_string();
+    helpers::audit(db, &auth, "api_key_created", Some(&target_id), Some(&details)).await;
 
     Ok((
         StatusCode::CREATED,
@@ -130,18 +129,8 @@ pub async fn revoke_key(
         );
     }
 
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "api_key_revoked",
-            Some(&format!("api_key:{id}")),
-            None,
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    let target_id = format!("api_key:{id}");
+    helpers::audit(db, &auth, "api_key_revoked", Some(&target_id), None).await;
 
     Ok(StatusCode::OK)
 }

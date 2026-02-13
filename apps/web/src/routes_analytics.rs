@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::Row;
 use tracing::warn;
-use trueid_common::db;
+use trueid_common::db_analytics;
 
 use crate::error::{self, ApiError};
 use crate::helpers;
@@ -476,8 +476,8 @@ async fn generate_report_now(db_ref: &trueid_common::db::Db) -> Result<(i64, Str
             .fetch_one(db_ref.pool())
             .await?;
 
-    let top_users = db::top_n_users(db_ref.pool(), 1, "events", 5).await?;
-    let top_sources = db::source_distribution(db_ref.pool(), 1).await?;
+    let top_users = db_analytics::top_n_users(db_ref.pool(), 1, "events", 5).await?;
+    let top_sources = db_analytics::source_distribution(db_ref.pool(), 1).await?;
     let compliance = build_compliance(db_ref.pool()).await?;
     let report = DailyReport {
         period,
@@ -497,7 +497,7 @@ async fn generate_report_now(db_ref: &trueid_common::db::Db) -> Result<(i64, Str
         "events={}, conflicts={}, alerts={}",
         report.events_total, report.conflicts_detected, report.alerts_fired
     );
-    let id = db::save_report_snapshot(
+    let id = db_analytics::save_report_snapshot(
         db_ref.pool(),
         "daily",
         &period_start,
@@ -506,7 +506,7 @@ async fn generate_report_now(db_ref: &trueid_common::db::Db) -> Result<(i64, Str
         Some(&summary),
     )
     .await?;
-    let _ = db::cleanup_old_reports(db_ref.pool(), 90).await;
+    let _ = db_analytics::cleanup_old_reports(db_ref.pool(), 90).await;
     Ok((id, summary))
 }
 
@@ -533,13 +533,24 @@ pub(crate) async fn trends(
     let metric = q.metric.to_lowercase();
     let raw_rows = match metric.as_str() {
         "mappings" | "events" => {
-            db::count_events_by_period(db_ref.pool(), start, end, &interval, q.source.as_deref())
-                .await
+            db_analytics::count_events_by_period(
+                db_ref.pool(),
+                start,
+                end,
+                &interval,
+                q.source.as_deref(),
+            )
+            .await
         }
-        "conflicts" => db::count_conflicts_by_period(db_ref.pool(), start, end, &interval).await,
-        "alerts" => db::count_alerts_by_period(db_ref.pool(), start, end, &interval).await,
+        "conflicts" => {
+            db_analytics::count_conflicts_by_period(db_ref.pool(), start, end, &interval).await
+        }
+        "alerts" => {
+            db_analytics::count_alerts_by_period(db_ref.pool(), start, end, &interval).await
+        }
         "firewall_pushes" => {
-            db::count_firewall_pushes_by_period(db_ref.pool(), start, end, &interval).await
+            db_analytics::count_firewall_pushes_by_period(db_ref.pool(), start, end, &interval)
+                .await
         }
         _ => Err(anyhow::anyhow!(
             "metric must be one of: mappings, events, conflicts, alerts, firewall_pushes"
@@ -595,8 +606,8 @@ pub(crate) async fn top_n(
     let dimension = q.dimension.to_lowercase();
 
     let rows: Vec<(String, i64)> = match dimension.as_str() {
-        "users" => db::top_n_users(db_ref.pool(), days, &metric, limit).await,
-        "ips" => db::top_n_ips(db_ref.pool(), days, &metric, limit).await,
+        "users" => db_analytics::top_n_users(db_ref.pool(), days, &metric, limit).await,
+        "ips" => db_analytics::top_n_ips(db_ref.pool(), days, &metric, limit).await,
         "sources" => {
             let sql = match metric.as_str() {
                 "events" => {
@@ -706,7 +717,7 @@ pub(crate) async fn source_distribution(
 ) -> Result<impl IntoResponse, ApiError> {
     let db_ref = helpers::require_db(&state, &auth.request_id)?;
     let days = q.days.unwrap_or(7).clamp(1, 365);
-    let rows = db::source_distribution(db_ref.pool(), days)
+    let rows = db_analytics::source_distribution(db_ref.pool(), days)
         .await
         .map_err(|e| {
             warn!(error = %e, "Failed to compute source distribution");
@@ -760,7 +771,7 @@ pub(crate) async fn list_reports(
 ) -> Result<impl IntoResponse, ApiError> {
     let db_ref = helpers::require_db(&state, &auth.request_id)?;
     let limit = q.limit.unwrap_or(30).clamp(1, 200);
-    let rows = db::list_report_snapshots(db_ref.pool(), q.report_type.as_deref(), limit)
+    let rows = db_analytics::list_report_snapshots(db_ref.pool(), q.report_type.as_deref(), limit)
         .await
         .map_err(|e| {
             warn!(error = %e, "Failed to list report snapshots");
@@ -796,7 +807,7 @@ pub(crate) async fn get_report(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
     let db_ref = helpers::require_db(&state, &auth.request_id)?;
-    let row = db::get_report_snapshot(db_ref.pool(), id)
+    let row = db_analytics::get_report_snapshot(db_ref.pool(), id)
         .await
         .map_err(|e| {
             warn!(error = %e, report_id = id, "Failed to get report snapshot");

@@ -10,6 +10,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use tracing::warn;
+use trueid_common::db::MAPPING_SELECT;
 use trueid_common::model::DeviceMapping;
 
 use crate::error::{self, ApiError};
@@ -278,21 +279,16 @@ pub(crate) async fn create_subnet(
         .with_request_id(&auth.request_id)
     })?;
 
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "create_subnet",
-            Some(&format!("subnet:{subnet_id}")),
-            Some(&format!(
-                "cidr={}",
-                row.try_get::<String, _>("cidr").unwrap_or_default()
-            )),
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    let target_id = format!("subnet:{subnet_id}");
+    let details = format!("cidr={}", row.try_get::<String, _>("cidr").unwrap_or_default());
+    helpers::audit(
+        db,
+        &auth,
+        "create_subnet",
+        Some(&target_id),
+        Some(&details),
+    )
+    .await;
 
     Ok((StatusCode::CREATED, Json(map_subnet_row(&row))))
 }
@@ -420,18 +416,15 @@ pub(crate) async fn update_subnet(
         .with_request_id(&auth.request_id)
     })?;
 
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "update_subnet",
-            Some(&format!("subnet:{id}")),
-            Some("subnet updated"),
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    let target_id = format!("subnet:{id}");
+    helpers::audit(
+        db,
+        &auth,
+        "update_subnet",
+        Some(&target_id),
+        Some("subnet updated"),
+    )
+    .await;
 
     Ok(Json(map_subnet_row(&row)))
 }
@@ -495,18 +488,8 @@ pub(crate) async fn delete_subnet(
             .with_request_id(&auth.request_id)
         })?;
 
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "delete_subnet",
-            Some(&format!("subnet:{id}")),
-            None,
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    let target_id = format!("subnet:{id}");
+    helpers::audit(db, &auth, "delete_subnet", Some(&target_id), None).await;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -652,22 +635,16 @@ pub(crate) async fn subnet_mappings(
             .with_request_id(&auth.request_id)
         })?;
 
-    let rows = sqlx::query(
-        "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
-                m.subnet_id, s.name as subnet_name, d.hostname, m.device_type, m.multi_user,
-                (SELECT GROUP_CONCAT(DISTINCT ug.group_name)
-                 FROM user_groups ug
-                 WHERE lower(ug.username) = lower(m.user)) as group_names,
-                (SELECT GROUP_CONCAT(DISTINCT sess.user)
-                 FROM ip_sessions sess
-                 WHERE sess.ip = m.ip AND sess.is_active = 1) as session_users
+    let sql = format!(
+        "{MAPPING_SELECT}
          FROM mappings m
          LEFT JOIN subnets s ON m.subnet_id = s.id
          LEFT JOIN dns_cache d ON m.ip = d.ip
          WHERE m.subnet_id = ?
          ORDER BY m.last_seen DESC
-         LIMIT ? OFFSET ?",
-    )
+         LIMIT ? OFFSET ?"
+    );
+    let rows = sqlx::query(&sql)
     .bind(id)
     .bind(per_page)
     .bind(offset)

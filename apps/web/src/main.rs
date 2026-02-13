@@ -7,7 +7,9 @@ use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 use trueid_common::model::UserRole;
 use trueid_common::{env_or_default, parse_socket_addr};
-use trueid_web::{auth::JwtConfig, build_router, rate_limit, AppState, DEFAULT_ENGINE_URL};
+use trueid_web::{
+    auth::JwtConfig, build_router, helpers, rate_limit, AppState, DEFAULT_ENGINE_URL,
+};
 
 const DEFAULT_DB_URL: &str = "sqlite://net-identity.db?mode=rwc";
 const DEFAULT_HTTP_ADDR: &str = "0.0.0.0:3000";
@@ -88,18 +90,18 @@ async fn main() -> Result<()> {
                         {
                             Ok(user) => {
                                 let _ = d.set_force_password_change(user.id, true).await;
-                                let _ = d
-                                    .write_audit_log(
-                                        Some(user.id),
-                                        &admin_user,
-                                        "system",
-                                        "bootstrap_admin_created",
-                                        None,
-                                        None,
-                                        None,
-                                        None,
-                                    )
-                                    .await;
+                                helpers::audit_principal(
+                                    &d,
+                                    Some(user.id),
+                                    &admin_user,
+                                    "system",
+                                    "bootstrap_admin_created",
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                )
+                                .await;
                                 info!(
                                     "Bootstrap: Created initial admin user '{}'. Password change required on first login.",
                                     admin_user

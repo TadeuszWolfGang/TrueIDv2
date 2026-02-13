@@ -150,18 +150,8 @@ pub async fn create_user(
     let _ = db.set_force_password_change(user.id, true).await;
 
     let details = serde_json::json!({"role": body.role.to_string()}).to_string();
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "user_created",
-            Some(&format!("user:{}", user.id)),
-            Some(&details),
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    let target_id = format!("user:{}", user.id);
+    helpers::audit(db, &auth, "user_created", Some(&target_id), Some(&details)).await;
 
     Ok((StatusCode::CREATED, Json(UserPublic::from(user))))
 }
@@ -221,18 +211,8 @@ pub async fn change_role(
 
     let details =
         serde_json::json!({"old_role": old_role, "new_role": body.role.to_string()}).to_string();
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "role_changed",
-            Some(&format!("user:{id}")),
-            Some(&details),
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    let target_id = format!("user:{id}");
+    helpers::audit(db, &auth, "role_changed", Some(&target_id), Some(&details)).await;
 
     let updated = db.get_user_by_id(id).await.ok().flatten().ok_or_else(|| {
         ApiError::new(
@@ -282,18 +262,8 @@ pub async fn reset_password(
         })?;
     let _ = db.set_force_password_change(id, true).await;
 
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "password_reset_by_admin",
-            Some(&format!("user:{id}")),
-            None,
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    let target_id = format!("user:{id}");
+    helpers::audit(db, &auth, "password_reset_by_admin", Some(&target_id), None).await;
 
     Ok(StatusCode::OK)
 }
@@ -322,18 +292,8 @@ pub async fn unlock_account(
         )
     })?;
 
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "account_unlocked",
-            Some(&format!("user:{id}")),
-            None,
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    let target_id = format!("user:{id}");
+    helpers::audit(db, &auth, "account_unlocked", Some(&target_id), None).await;
 
     Ok(StatusCode::OK)
 }
@@ -392,18 +352,8 @@ pub async fn delete_user(
         "deleted_role": user.role.to_string()
     })
     .to_string();
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "user_deleted",
-            Some(&format!("user:{id}")),
-            Some(&details),
-            None,
-            Some(&auth.request_id),
-        )
-        .await;
+    let target_id = format!("user:{id}");
+    helpers::audit(db, &auth, "user_deleted", Some(&target_id), Some(&details)).await;
 
     Ok(StatusCode::NO_CONTENT)
 }

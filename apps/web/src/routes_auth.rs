@@ -148,18 +148,16 @@ pub async fn login(
     {
         AuthResult::Success(u) => u,
         AuthResult::InvalidCredentials => {
-            let _ = db
-                .write_audit_log(
-                    None,
-                    &body.username,
-                    "system",
-                    "login_failed",
-                    None,
-                    None,
-                    ip.as_deref(),
-                    Some(&rid),
-                )
-                .await;
+            helpers::audit_system(
+                db,
+                &body.username,
+                "login_failed",
+                None,
+                None,
+                ip.as_deref(),
+                Some(&rid),
+            )
+            .await;
             return Err(ApiError::new(
                 StatusCode::UNAUTHORIZED,
                 error::INVALID_CREDENTIALS,
@@ -168,18 +166,16 @@ pub async fn login(
             .with_request_id(&rid));
         }
         AuthResult::AccountLocked { until } => {
-            let _ = db
-                .write_audit_log(
-                    None,
-                    &body.username,
-                    "system",
-                    "login_failed_locked",
-                    None,
-                    None,
-                    ip.as_deref(),
-                    Some(&rid),
-                )
-                .await;
+            helpers::audit_system(
+                db,
+                &body.username,
+                "login_failed_locked",
+                None,
+                None,
+                ip.as_deref(),
+                Some(&rid),
+            )
+            .await;
             let body = serde_json::json!({
                 "error": "Account is locked due to too many failed attempts",
                 "code": error::ACCOUNT_LOCKED,
@@ -226,18 +222,18 @@ pub async fn login(
 
     let csrf_token = generate_csrf_token();
 
-    let _ = db
-        .write_audit_log(
-            Some(user.id),
-            &user.username,
-            "user",
-            "login_success",
-            None,
-            None,
-            ip.as_deref(),
-            Some(&rid),
-        )
-        .await;
+    helpers::audit_principal(
+        db,
+        Some(user.id),
+        &user.username,
+        "user",
+        "login_success",
+        None,
+        None,
+        ip.as_deref(),
+        Some(&rid),
+    )
+    .await;
 
     let cookies = auth_cookies(
         &access_token,
@@ -283,18 +279,18 @@ pub async fn logout(
         }
     }
 
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "logout",
-            None,
-            None,
-            ip.as_deref(),
-            Some(&auth.request_id),
-        )
-        .await;
+    helpers::audit_principal(
+        db,
+        Some(auth.user_id),
+        &auth.username,
+        &auth.principal_type,
+        "logout",
+        None,
+        None,
+        ip.as_deref(),
+        Some(&auth.request_id),
+    )
+    .await;
 
     let cookies = clear_cookies(state.jwt_config.dev_mode);
     let mut resp = StatusCode::OK.into_response();
@@ -320,18 +316,19 @@ pub async fn logout_all(
     let count = db.revoke_all_sessions(auth.user_id).await.unwrap_or(0);
     let _ = db.bump_token_version(auth.user_id).await;
 
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "logout_all",
-            None,
-            Some(&format!("{{\"sessions_revoked\":{count}}}")),
-            ip.as_deref(),
-            Some(&auth.request_id),
-        )
-        .await;
+    let details = format!("{{\"sessions_revoked\":{count}}}");
+    helpers::audit_principal(
+        db,
+        Some(auth.user_id),
+        &auth.username,
+        &auth.principal_type,
+        "logout_all",
+        None,
+        Some(&details),
+        ip.as_deref(),
+        Some(&auth.request_id),
+    )
+    .await;
 
     let cookies = clear_cookies(state.jwt_config.dev_mode);
     let mut resp = StatusCode::OK.into_response();
@@ -608,18 +605,19 @@ pub async fn change_password(
 
     let csrf_token = generate_csrf_token();
 
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "password_changed",
-            Some(&format!("user:{}", auth.user_id)),
-            None,
-            ip.as_deref(),
-            Some(&auth.request_id),
-        )
-        .await;
+    let target_id = format!("user:{}", auth.user_id);
+    helpers::audit_principal(
+        db,
+        Some(auth.user_id),
+        &auth.username,
+        &auth.principal_type,
+        "password_changed",
+        Some(&target_id),
+        None,
+        ip.as_deref(),
+        Some(&auth.request_id),
+    )
+    .await;
 
     let cookies = auth_cookies(
         &access_token,
@@ -731,18 +729,19 @@ pub async fn revoke_session(
         )
     })?;
 
-    let _ = db
-        .write_audit_log(
-            Some(auth.user_id),
-            &auth.username,
-            &auth.principal_type,
-            "session_revoked",
-            Some(&format!("session:{session_id}")),
-            None,
-            ip.as_deref(),
-            Some(&auth.request_id),
-        )
-        .await;
+    let target_id = format!("session:{session_id}");
+    helpers::audit_principal(
+        db,
+        Some(auth.user_id),
+        &auth.username,
+        &auth.principal_type,
+        "session_revoked",
+        Some(&target_id),
+        None,
+        ip.as_deref(),
+        Some(&auth.request_id),
+    )
+    .await;
 
     Ok(StatusCode::OK)
 }

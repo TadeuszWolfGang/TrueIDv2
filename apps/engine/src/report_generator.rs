@@ -5,11 +5,12 @@ use serde::Serialize;
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
 use tracing::warn;
-use trueid_common::db::{self, Db};
+use trueid_common::db::Db;
+use trueid_common::db_analytics;
 
 /// Reduced compliance subset used inside daily snapshots.
 #[derive(Debug, Serialize)]
-struct ComplianceSummary {
+pub(crate) struct ComplianceSummary {
     active_mappings: i64,
     unresolved_conflicts: i64,
     stale_24h: i64,
@@ -35,7 +36,9 @@ struct DailyReport {
 ///
 /// Parameters: `pool` - SQLite connection pool.
 /// Returns: compliance subset.
-async fn build_compliance_subset(pool: &sqlx::SqlitePool) -> anyhow::Result<ComplianceSummary> {
+pub(crate) async fn build_compliance_subset(
+    pool: &sqlx::SqlitePool,
+) -> anyhow::Result<ComplianceSummary> {
     let active_mappings: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM mappings WHERE is_active = 1")
             .fetch_one(pool)
@@ -66,7 +69,7 @@ async fn build_compliance_subset(pool: &sqlx::SqlitePool) -> anyhow::Result<Comp
 ///
 /// Parameters: `db_ref` - shared DB wrapper.
 /// Returns: snapshot id.
-async fn generate_once(db_ref: &Db) -> anyhow::Result<i64> {
+pub(crate) async fn generate_once(db_ref: &Db) -> anyhow::Result<i64> {
     let end = Utc::now();
     let start = end - Duration::days(1);
     let period = start.format("%Y-%m-%d").to_string();
@@ -115,8 +118,8 @@ async fn generate_once(db_ref: &Db) -> anyhow::Result<i64> {
             .fetch_one(db_ref.pool())
             .await?;
 
-    let top_users = db::top_n_users(db_ref.pool(), 1, "events", 5).await?;
-    let top_sources = db::source_distribution(db_ref.pool(), 1).await?;
+    let top_users = db_analytics::top_n_users(db_ref.pool(), 1, "events", 5).await?;
+    let top_sources = db_analytics::source_distribution(db_ref.pool(), 1).await?;
     let compliance = build_compliance_subset(db_ref.pool()).await?;
 
     let payload = DailyReport {
@@ -136,7 +139,7 @@ async fn generate_once(db_ref: &Db) -> anyhow::Result<i64> {
         payload.events_total, payload.conflicts_detected, payload.alerts_fired
     );
     let blob = serde_json::to_string(&payload)?;
-    let id = db::save_report_snapshot(
+    let id = db_analytics::save_report_snapshot(
         db_ref.pool(),
         "daily",
         &period_start,
@@ -145,7 +148,7 @@ async fn generate_once(db_ref: &Db) -> anyhow::Result<i64> {
         Some(&summary),
     )
     .await?;
-    let _ = db::cleanup_old_reports(db_ref.pool(), 90).await;
+    let _ = db_analytics::cleanup_old_reports(db_ref.pool(), 90).await;
     Ok(id)
 }
 
@@ -163,4 +166,43 @@ pub(crate) fn start_report_generator(db: Arc<Db>) {
             tokio::time::sleep(StdDuration::from_secs((hours as u64) * 3600)).await;
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use trueid_common::db::init_db;
+
+    /// Verifies compliance summary returns zeros for an empty database.
+    ///
+    /// Parameters: none.
+    /// Returns: none.
+    #[tokio::test]
+    async fn test_compliance_summary_empty_db() {
+        let db = init_db("sqlite::memory:").await.expect("init_db failed");
+        let summary = build_compliance_subset(db.pool())
+            .await
+            .expect("build_compliance_subset failed");
+        assert_eq!(summary.active_mappings, 0);
+        assert_eq!(summary.unresolved_conflicts, 0);
+        assert_eq!(summary.stale_24h, 0);
+        assert_eq!(summary.ips_without_subnet, 0);
+    }
+
+    /// Verifies daily report generation creates one snapshot row.
+    ///
+    /// Parameters: none.
+    /// Returns: none.
+    #[tokio::test]
+    async fn test_generate_once_creates_snapshot() {
+        let db = init_db("sqlite::memory:").await.expect("init_db failed");
+        let id = generate_once(&db).await.expect("generate_once failed");
+        assert!(id > 0);
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM report_snapshots")
+            .fetch_one(db.pool())
+            .await
+            .expect("snapshot count query failed");
+        assert_eq!(count, 1);
+    }
 }
