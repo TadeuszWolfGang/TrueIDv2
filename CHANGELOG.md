@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Changed
+- Added dashboard Network Management tabs in `apps/web/assets/index.html`: Subnets, Switches (SNMP), Fingerprints, and DNS with stats banners, paginated tables, and role-aware actions.
+- Added subnet CRUD UI + inline subnet mappings drill-down; added switch CRUD/poll UI + inline switch-port drill-down; added fingerprint CRUD/backfill UI + observations browser; added DNS cache list/lookup/flush UI.
+- Extended dashboard RBAC visibility rules to support `.role-operator` and `.role-admin`, keeping read-only access for Viewer and mutation controls for Operator/Admin as configured.
 - Added Phase 3 test coverage: 21 new API v2 E2E tests in `apps/web/tests/api_v2_tests.rs` for firewall, SIEM, and LDAP flows.
 - Added 13 engine unit tests for VPN parsing and SIEM formatting in `apps/engine/src/vpn_adapters.rs` and `apps/engine/src/siem_forwarder.rs`.
 - Refactored web handlers to enrich `groups` in v1/v2 mapping SQL, append `groups` column in mappings CSV export, and reuse `helpers::require_db(...)`/`helpers::audit(...)` in Phase 3 route modules.

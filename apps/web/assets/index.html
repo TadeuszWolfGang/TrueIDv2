@@ -138,6 +138,24 @@
       .badge-critical { background: rgba(239,68,68,0.2); color: #ef4444; }
       .badge-warning { background: rgba(245,158,11,0.2); color: #f59e0b; }
       .badge-info { background: rgba(59,130,246,0.2); color: #3b82f6; }
+      .badge-panos { background: rgba(34,197,94,0.2); color: #22c55e; }
+      .badge-fortigate { background: rgba(59,130,246,0.2); color: #3b82f6; }
+      .badge-cef, .badge-udp { background: rgba(34,197,94,0.2); color: #22c55e; }
+      .badge-leef { background: rgba(245,158,11,0.2); color: #f59e0b; }
+      .badge-json, .badge-tcp { background: rgba(59,130,246,0.2); color: #3b82f6; }
+      .check-yes { color: #22c55e; font-weight: 700; }
+      .check-no { color: #3a3a3a; font-weight: 700; }
+      .expand-row { cursor: pointer; }
+      .expand-row:hover { background: rgba(0,255,128,0.08); }
+      .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+      .multi-badge {
+        font-size: 11px;
+        color: #80ffdb;
+        background: rgba(128,255,219,0.15);
+        padding: 1px 6px;
+        border-radius: 8px;
+        margin-left: 4px;
+      }
 
       /* Clickable IP */
       .ip-link {
@@ -170,7 +188,14 @@
       <button class="tab" id="tab-btn-search" onclick="switchTab('search')">Search</button>
       <button class="tab" id="tab-btn-conflicts" onclick="switchTab('conflicts')">Conflicts</button>
       <button class="tab" id="tab-btn-alerts" onclick="switchTab('alerts')">Alerts</button>
+      <button class="tab" id="tab-btn-subnets" onclick="switchTab('subnets')">Subnets</button>
+      <button class="tab" id="tab-btn-switches" onclick="switchTab('switches')">Switches</button>
+      <button class="tab" id="tab-btn-fingerprints" onclick="switchTab('fingerprints')">Fingerprints</button>
+      <button class="tab" id="tab-btn-dns" onclick="switchTab('dns')">DNS</button>
       <button class="tab" id="tab-btn-status" onclick="switchTab('status')">Status</button>
+      <button class="tab" id="tab-btn-firewall" onclick="switchTab('firewall')" style="display:none;">Firewall</button>
+      <button class="tab" id="tab-btn-siem" onclick="switchTab('siem')" style="display:none;">SIEM</button>
+      <button class="tab" id="tab-btn-ldap" onclick="switchTab('ldap')" style="display:none;">LDAP</button>
       <button class="tab" id="tab-btn-sycope" onclick="switchTab('sycope')">Sycope</button>
       <button class="tab" id="tab-btn-audit" onclick="switchTab('audit')" style="display:none;">Audit Log</button>
     </nav>
@@ -188,6 +213,9 @@
             <option value="AdLog">AdLog</option>
             <option value="DhcpLease">DhcpLease</option>
             <option value="Manual">Manual</option>
+            <option value="VpnAnyConnect">VPN AnyConnect</option>
+            <option value="VpnGlobalProtect">VPN GlobalProtect</option>
+            <option value="VpnFortinet">VPN Fortinet</option>
           </select>
           <select id="mappings-active" class="setting-input" style="width:120px;">
             <option value="">All</option>
@@ -207,6 +235,7 @@
               <th>IP</th>
               <th>MAC</th>
               <th>User</th>
+              <th>Groups</th>
               <th>Last Seen</th>
               <th>Source</th>
               <th>Confidence</th>
@@ -214,7 +243,7 @@
           </thead>
           <tbody id="mappings-body">
             <tr>
-              <td colspan="7" class="muted">Waiting for data...</td>
+              <td colspan="8" class="muted">Waiting for data...</td>
             </tr>
           </tbody>
         </table>
@@ -239,6 +268,9 @@
             <option value="AdLog">AdLog</option>
             <option value="DhcpLease">DhcpLease</option>
             <option value="Manual">Manual</option>
+            <option value="VpnAnyConnect">VPN AnyConnect</option>
+            <option value="VpnGlobalProtect">VPN GlobalProtect</option>
+            <option value="VpnFortinet">VPN Fortinet</option>
           </select>
           <select id="search-scope" class="setting-input" style="width:120px;">
             <option value="all">All</option>
@@ -253,7 +285,7 @@
         <div id="search-mappings-section" style="display:none;">
           <h2 class="section-title">Mappings <span id="search-mappings-count" class="muted" style="font-weight:normal;font-size:13px;"></span></h2>
           <table>
-            <thead><tr><th></th><th>IP</th><th>MAC</th><th>User</th><th>Last Seen</th><th>Source</th><th>Confidence</th></tr></thead>
+            <thead><tr><th></th><th>IP</th><th>MAC</th><th>User</th><th>Groups</th><th>Last Seen</th><th>Source</th><th>Confidence</th></tr></thead>
             <tbody id="search-mappings-body"></tbody>
           </table>
         </div>
@@ -386,11 +418,399 @@
       </div>
     </div>
 
-    <!-- ═══ TAB: Status (placeholder) ═══ -->
+    <!-- ═══ TAB: Subnets ═══ -->
+    <div id="tab-subnets" style="display:none;">
+      <h1>TrueID :: Subnets</h1>
+      <div class="panel">
+        <div id="subnets-stats" style="display:flex;gap:24px;margin-bottom:12px;font-size:13px;color:#6b8579;"></div>
+        <div style="display:flex;gap:8px;margin-bottom:12px;">
+          <button class="btn btn-sm role-operator" onclick="showSubnetForm()">+ Add Subnet</button>
+          <button class="btn btn-sm" onclick="loadSubnets()">Refresh</button>
+        </div>
+        <div id="subnet-form-wrap" style="display:none;margin-bottom:16px;padding:12px;border:1px solid #1e2a24;border-radius:4px;">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+            <input id="subnet-name" class="setting-input" style="width:200px;" placeholder="Name">
+            <input id="subnet-cidr" class="setting-input" style="width:180px;" placeholder="CIDR">
+            <input id="subnet-vlan" class="setting-input" style="width:120px;" type="number" min="1" max="4094" placeholder="VLAN ID">
+            <input id="subnet-location" class="setting-input" style="width:180px;" placeholder="Location">
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+            <input id="subnet-description" class="setting-input" style="width:280px;" placeholder="Description">
+            <input id="subnet-gateway" class="setting-input" style="width:180px;" placeholder="Gateway IP">
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-sm role-operator" onclick="saveSubnet()">Save</button>
+            <button class="btn btn-sm" onclick="hideSubnetForm()">Cancel</button>
+          </div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>CIDR</th>
+              <th>VLAN ID</th>
+              <th>Location</th>
+              <th>Gateway</th>
+              <th>Mappings</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="subnets-body"><tr><td colspan="7" class="muted">Loading...</td></tr></tbody>
+        </table>
+        <div id="subnets-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:#6b8579;"></div>
+      </div>
+    </div>
+
+    <!-- ═══ TAB: Switches ═══ -->
+    <div id="tab-switches" style="display:none;">
+      <h1>TrueID :: SNMP Switches</h1>
+      <div class="panel">
+        <div id="switches-stats" style="display:flex;gap:24px;margin-bottom:12px;font-size:13px;color:#6b8579;"></div>
+        <div style="display:flex;gap:8px;margin-bottom:12px;">
+          <button class="btn btn-sm role-operator" onclick="showSwitchForm()">+ Add Switch</button>
+          <button class="btn btn-sm" onclick="loadSwitches()">Refresh</button>
+        </div>
+        <div id="switch-form-wrap" style="display:none;margin-bottom:16px;padding:12px;border:1px solid #1e2a24;border-radius:4px;">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+            <input id="switch-name" class="setting-input" style="width:220px;" placeholder="Name">
+            <input id="switch-ip" class="setting-input" style="width:160px;" placeholder="IP">
+            <input id="switch-community" class="setting-input" style="width:180px;" type="password" placeholder="SNMP Community">
+            <select id="switch-version" class="setting-input" style="width:110px;">
+              <option value="v2c">v2c</option>
+              <option value="v3">v3</option>
+            </select>
+            <input id="switch-port" class="setting-input" style="width:90px;" type="number" min="1" max="65535" value="161" placeholder="Port">
+            <input id="switch-interval" class="setting-input" style="width:130px;" type="number" min="60" value="300" placeholder="Poll sec">
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+            <select id="switch-subnet" class="setting-input" style="width:240px;">
+              <option value="">No subnet</option>
+            </select>
+            <input id="switch-location" class="setting-input" style="width:220px;" placeholder="Location">
+            <label class="setting-desc" style="display:flex;align-items:center;gap:6px;"><input id="switch-enabled" type="checkbox" checked> Enabled</label>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-sm role-operator" onclick="saveSwitch()">Save</button>
+            <button class="btn btn-sm" onclick="hideSwitchForm()">Cancel</button>
+          </div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>IP</th>
+              <th>SNMP Version</th>
+              <th>Poll Interval</th>
+              <th>Enabled</th>
+              <th>Last Poll</th>
+              <th>Last Poll Status</th>
+              <th>Port Count</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="switches-body"><tr><td colspan="9" class="muted">Loading...</td></tr></tbody>
+        </table>
+        <div id="switches-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:#6b8579;"></div>
+      </div>
+    </div>
+
+    <!-- ═══ TAB: Fingerprints ═══ -->
+    <div id="tab-fingerprints" style="display:none;">
+      <h1>TrueID :: DHCP Fingerprints</h1>
+      <div class="panel">
+        <div id="fp-stats" style="display:flex;gap:24px;margin-bottom:12px;font-size:13px;color:#6b8579;"></div>
+        <div style="display:flex;gap:8px;margin-bottom:12px;">
+          <button class="btn btn-sm role-admin" onclick="showFingerprintForm()">+ Add Fingerprint</button>
+          <button class="btn btn-sm role-admin" onclick="runFingerprintBackfill()">Backfill</button>
+          <button class="btn btn-sm" onclick="loadFingerprintsTab()">Refresh</button>
+        </div>
+        <div id="fp-form-wrap" style="display:none;margin-bottom:16px;padding:12px;border:1px solid #1e2a24;border-radius:4px;">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+            <input id="fp-fingerprint" class="setting-input" style="width:260px;" placeholder="Fingerprint (DHCP option 55)">
+            <input id="fp-device-type" class="setting-input" style="width:220px;" placeholder="Device Type">
+            <input id="fp-os-family" class="setting-input" style="width:180px;" placeholder="OS Family (optional)">
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+            <input id="fp-description" class="setting-input" style="width:420px;" placeholder="Description (optional)">
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-sm role-admin" onclick="saveFingerprint()">Save</button>
+            <button class="btn btn-sm" onclick="hideFingerprintForm()">Cancel</button>
+          </div>
+        </div>
+
+        <h2 class="section-title">Fingerprint Database</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Fingerprint</th>
+              <th>Device Type</th>
+              <th>OS Family</th>
+              <th>Description</th>
+              <th>Observations</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="fp-body"><tr><td colspan="6" class="muted">Loading...</td></tr></tbody>
+        </table>
+        <div id="fp-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:#6b8579;"></div>
+
+        <div class="setting-divider" style="margin:16px 0;"></div>
+
+        <h2 class="section-title">Recent Observations</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>MAC</th>
+              <th>IP</th>
+              <th>Fingerprint</th>
+              <th>Device Type</th>
+              <th>Hostname</th>
+              <th>First Seen</th>
+              <th>Last Seen</th>
+            </tr>
+          </thead>
+          <tbody id="fp-obs-body"><tr><td colspan="7" class="muted">Loading...</td></tr></tbody>
+        </table>
+        <div id="fp-obs-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:#6b8579;"></div>
+      </div>
+    </div>
+
+    <!-- ═══ TAB: DNS ═══ -->
+    <div id="tab-dns" style="display:none;">
+      <h1>TrueID :: DNS Cache</h1>
+      <div class="panel">
+        <div id="dns-stats" style="display:flex;gap:24px;margin-bottom:12px;font-size:13px;color:#6b8579;"></div>
+        <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap;">
+          <input id="dns-lookup-ip" class="setting-input" style="width:180px;" placeholder="IP for lookup" onkeydown="if(event.key==='Enter')dnsLookupIp()">
+          <button class="btn btn-sm" onclick="dnsLookupIp()">Lookup</button>
+          <button class="btn btn-sm role-admin" onclick="flushDnsCache()">Flush cache</button>
+          <button class="btn btn-sm" onclick="loadDnsTab()">Refresh</button>
+          <span id="dns-lookup-result" class="muted"></span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>IP</th>
+              <th>Hostname</th>
+              <th>Resolved At</th>
+              <th>TTL</th>
+            </tr>
+          </thead>
+          <tbody id="dns-body"><tr><td colspan="4" class="muted">Loading...</td></tr></tbody>
+        </table>
+        <div id="dns-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:#6b8579;"></div>
+      </div>
+    </div>
+
+    <!-- ═══ TAB: Status ═══ -->
     <div id="tab-status" style="display:none;">
       <h1>TrueID :: System Status</h1>
       <div class="panel">
-        <p class="muted">Coming soon — adapter status, agent monitoring, and runtime config.</p>
+        <h2 class="section-title">Adapter Status</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Bind Address</th>
+              <th>Status</th>
+              <th>Events Total</th>
+              <th>Last Event</th>
+            </tr>
+          </thead>
+          <tbody id="status-adapters-body">
+            <tr><td colspan="5" class="muted">Loading...</td></tr>
+          </tbody>
+        </table>
+
+        <div class="setting-divider" style="margin:16px 0;"></div>
+
+        <h2 class="section-title">Runtime Environment</h2>
+        <div id="status-runtime" class="sync-status-box">Loading...</div>
+
+        <div class="setting-divider" style="margin:16px 0;"></div>
+
+        <h2 class="section-title">Prometheus</h2>
+        <div class="sync-status-box">
+          <div><a class="ip-link" href="/metrics" target="_blank" rel="noopener noreferrer">Open /metrics endpoint</a></div>
+          <div class="muted" style="margin-top:6px;">Scrape this endpoint with Prometheus. Refresh interval: 15s recommended.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ TAB: Firewall ═══ -->
+    <div id="tab-firewall" style="display:none;">
+      <h1>TrueID :: Firewall Targets</h1>
+      <div class="panel">
+        <div id="firewall-stats" style="display:flex;gap:24px;margin-bottom:12px;font-size:13px;color:#6b8579;"></div>
+        <div style="display:flex;gap:8px;margin-bottom:12px;">
+          <button class="btn btn-sm role-admin" onclick="showFirewallForm()">+ Add Target</button>
+          <button class="btn btn-sm" onclick="loadFirewallTargets()">Refresh</button>
+        </div>
+        <div id="firewall-form-wrap" style="display:none;margin-bottom:16px;padding:12px;border:1px solid #1e2a24;border-radius:4px;">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+            <input id="fw-name" class="setting-input" style="width:220px;" placeholder="Name">
+            <select id="fw-type" class="setting-input" style="width:140px;" onchange="toggleFirewallUsername()">
+              <option value="panos">PAN-OS</option>
+              <option value="fortigate">FortiGate</option>
+            </select>
+            <input id="fw-host" class="setting-input" style="width:180px;" placeholder="Host">
+            <input id="fw-port" class="setting-input" style="width:110px;" type="number" min="1" max="65535" value="443" placeholder="Port">
+            <input id="fw-interval" class="setting-input" style="width:150px;" type="number" min="10" value="60" placeholder="Push interval (s)">
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+            <input id="fw-username" class="setting-input" style="width:220px;" placeholder="Username (PAN-OS)">
+            <input id="fw-password" class="setting-input" style="width:260px;" type="password" placeholder="Password / API Token">
+            <input id="fw-subnet-filter" class="setting-input" style="width:240px;" placeholder="Subnet filter (optional)">
+          </div>
+          <div style="display:flex;gap:16px;align-items:center;margin-bottom:8px;">
+            <label class="setting-desc" style="display:flex;align-items:center;gap:6px;">
+              <input id="fw-verify-tls" type="checkbox"> Verify TLS
+            </label>
+            <label class="setting-desc" style="display:flex;align-items:center;gap:6px;">
+              <input id="fw-enabled" type="checkbox" checked> Enabled
+            </label>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-sm role-admin" onclick="saveFirewallTarget()">Save</button>
+            <button class="btn btn-sm" onclick="hideFirewallForm()">Cancel</button>
+          </div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Type</th>
+              <th>Host:Port</th>
+              <th>Push Interval</th>
+              <th>Last Push Status</th>
+              <th>Last Push At</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="firewall-body"><tr><td colspan="7" class="muted">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ═══ TAB: SIEM ═══ -->
+    <div id="tab-siem" style="display:none;">
+      <h1>TrueID :: SIEM Targets</h1>
+      <div class="panel">
+        <div id="siem-stats" style="display:flex;gap:24px;margin-bottom:12px;font-size:13px;color:#6b8579;"></div>
+        <div style="display:flex;gap:8px;margin-bottom:12px;">
+          <button class="btn btn-sm role-admin" onclick="showSiemForm()">+ Add Target</button>
+          <button class="btn btn-sm" onclick="loadSiemTargets()">Refresh</button>
+        </div>
+        <div id="siem-form-wrap" style="display:none;margin-bottom:16px;padding:12px;border:1px solid #1e2a24;border-radius:4px;">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+            <input id="siem-name" class="setting-input" style="width:220px;" placeholder="Name">
+            <select id="siem-format" class="setting-input" style="width:130px;">
+              <option value="cef">CEF</option>
+              <option value="leef">LEEF</option>
+              <option value="json">JSON</option>
+            </select>
+            <select id="siem-transport" class="setting-input" style="width:130px;">
+              <option value="udp">UDP</option>
+              <option value="tcp">TCP</option>
+            </select>
+            <input id="siem-host" class="setting-input" style="width:200px;" placeholder="Host">
+            <input id="siem-port" class="setting-input" style="width:120px;" type="number" min="1" max="65535" value="514" placeholder="Port">
+          </div>
+          <div style="display:flex;gap:16px;align-items:center;margin-bottom:8px;">
+            <label class="setting-desc" style="display:flex;align-items:center;gap:6px;"><input id="siem-fwd-m" type="checkbox" checked> Forward mappings</label>
+            <label class="setting-desc" style="display:flex;align-items:center;gap:6px;"><input id="siem-fwd-c" type="checkbox" checked> Forward conflicts</label>
+            <label class="setting-desc" style="display:flex;align-items:center;gap:6px;"><input id="siem-fwd-a" type="checkbox"> Forward alerts</label>
+            <label class="setting-desc" style="display:flex;align-items:center;gap:6px;"><input id="siem-enabled" type="checkbox" checked> Enabled</label>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-sm role-admin" onclick="saveSiemTarget()">Save</button>
+            <button class="btn btn-sm" onclick="hideSiemForm()">Cancel</button>
+          </div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Format</th>
+              <th>Transport</th>
+              <th>Host:Port</th>
+              <th>Forward</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="siem-body"><tr><td colspan="6" class="muted">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ═══ TAB: LDAP ═══ -->
+    <div id="tab-ldap" style="display:none;">
+      <h1>TrueID :: LDAP Integration</h1>
+      <div class="panel">
+        <h2 class="section-title">Configuration</h2>
+        <div class="setting-row">
+          <div class="setting-label"><span class="setting-title">Enabled</span></div>
+          <label class="toggle"><input id="ldap-enabled" type="checkbox" onchange="saveLdapField('enabled', this.checked, this)"><span class="toggle-slider"></span></label>
+        </div>
+        <div class="setting-row">
+          <div class="setting-label"><span class="setting-title">LDAP URL</span></div>
+          <input id="ldap-url" class="setting-input" onchange="saveLdapField('ldap_url', this.value, this)">
+        </div>
+        <div class="setting-row">
+          <div class="setting-label"><span class="setting-title">Bind DN</span></div>
+          <input id="ldap-bind-dn" class="setting-input" onchange="saveLdapField('bind_dn', this.value, this)">
+        </div>
+        <div class="setting-row">
+          <div class="setting-label">
+            <span class="setting-title">Bind Password</span>
+            <span id="ldap-pass-status" class="setting-desc">Not set</span>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <input id="ldap-bind-pass" class="setting-input" type="password" autocomplete="new-password" placeholder="••••••••">
+            <button class="btn btn-sm" onclick="saveLdapPassword()">Save</button>
+          </div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-label"><span class="setting-title">Search Base</span></div>
+          <input id="ldap-base-dn" class="setting-input" onchange="saveLdapField('base_dn', this.value, this)">
+        </div>
+        <div class="setting-row">
+          <div class="setting-label"><span class="setting-title">Search Filter</span></div>
+          <input id="ldap-filter" class="setting-input" onchange="saveLdapField('search_filter', this.value, this)">
+        </div>
+        <div class="setting-row">
+          <div class="setting-label"><span class="setting-title">Sync Interval (seconds)</span></div>
+          <input id="ldap-interval" class="setting-input" type="number" min="60" onchange="saveLdapField('sync_interval_secs', parseInt(this.value || '300', 10), this)">
+        </div>
+        <div style="display:flex;gap:8px;margin:12px 0 16px;">
+          <button class="btn btn-sm role-admin" onclick="forceLdapSync()">Force Sync</button>
+          <button class="btn btn-sm" onclick="loadLdapTab()">Refresh</button>
+          <span id="ldap-sync-msg" class="muted"></span>
+        </div>
+
+        <div class="setting-divider"></div>
+
+        <h2 class="section-title">Groups Browser</h2>
+        <div class="two-col">
+          <div>
+            <div class="muted" style="margin-bottom:8px;">Groups</div>
+            <div id="ldap-groups-list" class="sync-status-box">Loading...</div>
+          </div>
+          <div>
+            <div class="muted" style="margin-bottom:8px;">Members</div>
+            <div id="ldap-members-list" class="sync-status-box">Select group...</div>
+          </div>
+        </div>
+
+        <div class="setting-divider" style="margin:16px 0;"></div>
+
+        <h2 class="section-title">User Group Lookup</h2>
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+          <input id="ldap-user-query" class="setting-input" style="width:220px;" placeholder="username" onkeydown="if(event.key==='Enter')lookupLdapUserGroups()">
+          <button class="btn btn-sm" onclick="lookupLdapUserGroups()">Lookup</button>
+        </div>
+        <div id="ldap-user-groups" class="sync-status-box">No query yet.</div>
       </div>
     </div>
 
@@ -572,8 +992,12 @@
     <script>
       var currentUser = null;
       var activeTab = 'mappings';
-      var tabLoaded = { mappings: false, search: false, conflicts: false, alerts: false, sycope: false, audit: false };
-      var tabRefreshTimers = { mappings: null, conflicts: null, alerts: null, audit: null };
+      var tabLoaded = {
+        mappings: false, search: false, conflicts: false, alerts: false, status: false,
+        subnets: false, switches: false, fingerprints: false, dns: false,
+        firewall: false, siem: false, ldap: false, sycope: false, audit: false
+      };
+      var tabRefreshTimers = { mappings: null, conflicts: null, alerts: null, status: null, audit: null };
 
       var mappingsCurrentPage = 1;
       var mappingsPerPage = 50;
@@ -583,6 +1007,26 @@
       var alertHistoryCurrentPage = 1;
       var editingRuleId = null;
       var auditCurrentPage = 1;
+      var firewallEditingId = null;
+      var firewallTargets = [];
+      var firewallHistoryOpen = {};
+      var siemEditingId = null;
+      var siemTargets = [];
+      var subnets = [];
+      var subnetCurrentPage = 1;
+      var subnetPageSize = 50;
+      var subnetMappingOpen = {};
+      var subnetCounts = {};
+      var switches = [];
+      var switchesCurrentPage = 1;
+      var switchesPageSize = 50;
+      var switchPortOpen = {};
+      var switchEditingId = null;
+      var fingerprints = [];
+      var fpCurrentPage = 1;
+      var fpPageSize = 50;
+      var fpObsCurrentPage = 1;
+      var dnsCurrentPage = 1;
 
       function getCsrfToken() {
         var match = document.cookie.match(/trueid_csrf_token=([^;]+)/);
@@ -630,6 +1074,29 @@
         return 'badge badge-info';
       }
 
+      function yesNoBadge(v) {
+        return v ? '<span class="check-yes">Yes</span>' : '<span class="check-no">No</span>';
+      }
+
+      function maskedDbUrl(v) {
+        if (!v) return '-';
+        var s = String(v);
+        if (s.length <= 12) return '********';
+        return s.slice(0, 8) + '********';
+      }
+
+      function statusDotClass(status) {
+        if (status === 'listening') return 'online';
+        if (status === 'starting') return 'badge-warning';
+        return 'offline';
+      }
+
+      function formatGroups(groups) {
+        if (!Array.isArray(groups) || groups.length === 0) return '-';
+        if (groups.length <= 2) return escapeHtml(groups.join(', '));
+        return escapeHtml(groups.slice(0, 2).join(', ')) + ' <span class="muted">+' + (groups.length - 2) + ' more</span>';
+      }
+
       function webhookStatusView(status) {
         if (status === 'sent') return '<span class="wh-sent">✓ sent</span>';
         if (status === 'failed') return '<span class="wh-failed">✕ failed</span>';
@@ -660,8 +1127,19 @@
 
       function applyRoleVisibility(role) {
         var isAdmin = role === 'Admin';
+        var isOperatorOrAdmin = role === 'Operator' || role === 'Admin';
+        document.getElementById('tab-btn-status').style.display = isAdmin ? '' : 'none';
+        document.getElementById('tab-btn-firewall').style.display = isOperatorOrAdmin ? '' : 'none';
+        document.getElementById('tab-btn-siem').style.display = isOperatorOrAdmin ? '' : 'none';
+        document.getElementById('tab-btn-ldap').style.display = isOperatorOrAdmin ? '' : 'none';
         document.getElementById('tab-btn-sycope').style.display = isAdmin ? '' : 'none';
         document.getElementById('tab-btn-audit').style.display = isAdmin ? '' : 'none';
+        document.querySelectorAll('.role-operator').forEach(function (el) {
+          el.style.display = isOperatorOrAdmin ? '' : 'none';
+        });
+        document.querySelectorAll('.role-admin').forEach(function (el) {
+          el.style.display = isAdmin ? '' : 'none';
+        });
         document.getElementById('alerts-rules-section').style.display = isAdmin ? '' : 'none';
       }
 
@@ -694,7 +1172,7 @@
       setInterval(refreshToken, 10 * 60 * 1000);
 
       function clearTabTimers() {
-        ['mappings', 'conflicts', 'alerts', 'audit'].forEach(function (k) {
+        ['mappings', 'conflicts', 'alerts', 'status', 'audit'].forEach(function (k) {
           if (tabRefreshTimers[k]) {
             clearInterval(tabRefreshTimers[k]);
             tabRefreshTimers[k] = null;
@@ -704,7 +1182,7 @@
 
       function switchTab(name) {
         activeTab = name;
-        ['mappings', 'search', 'conflicts', 'alerts', 'status', 'sycope', 'audit'].forEach(function (n) {
+        ['mappings', 'search', 'conflicts', 'alerts', 'subnets', 'switches', 'fingerprints', 'dns', 'status', 'firewall', 'siem', 'ldap', 'sycope', 'audit'].forEach(function (n) {
           var panel = document.getElementById('tab-' + n);
           if (panel) panel.style.display = n === name ? 'block' : 'none';
         });
@@ -755,6 +1233,45 @@
               if (currentUser && currentUser.role === 'Admin') loadAlertRules();
             }
           }, 30000);
+        } else if (name === 'subnets') {
+          if (!tabLoaded.subnets) tabLoaded.subnets = true;
+          clearTabTimers();
+          loadSubnetsTab();
+        } else if (name === 'switches') {
+          if (!tabLoaded.switches) tabLoaded.switches = true;
+          clearTabTimers();
+          loadSwitchesTab();
+        } else if (name === 'fingerprints') {
+          if (!tabLoaded.fingerprints) tabLoaded.fingerprints = true;
+          clearTabTimers();
+          loadFingerprintsTab();
+        } else if (name === 'dns') {
+          if (!tabLoaded.dns) tabLoaded.dns = true;
+          clearTabTimers();
+          loadDnsTab();
+        } else if (name === 'status') {
+          if (!tabLoaded.status) {
+            tabLoaded.status = true;
+            loadSystemStatus();
+          } else {
+            loadSystemStatus();
+          }
+          clearTabTimers();
+          tabRefreshTimers.status = setInterval(function () {
+            if (activeTab === 'status') loadSystemStatus();
+          }, 15000);
+        } else if (name === 'firewall') {
+          if (!tabLoaded.firewall) tabLoaded.firewall = true;
+          clearTabTimers();
+          loadFirewallTab();
+        } else if (name === 'siem') {
+          if (!tabLoaded.siem) tabLoaded.siem = true;
+          clearTabTimers();
+          loadSiemTab();
+        } else if (name === 'ldap') {
+          if (!tabLoaded.ldap) tabLoaded.ldap = true;
+          clearTabTimers();
+          loadLdapTab();
         } else if (name === 'sycope') {
           clearTabTimers();
           loadSycopeConfig();
@@ -811,7 +1328,7 @@
       function renderMappingsTable(items) {
         var body = document.getElementById('mappings-body');
         if (!items || items.length === 0) {
-          body.innerHTML = '<tr><td colspan="7" class="muted">No mappings found.</td></tr>';
+          body.innerHTML = '<tr><td colspan="8" class="muted">No mappings found.</td></tr>';
           return;
         }
         body.innerHTML = items.map(function (item) {
@@ -821,14 +1338,19 @@
           var ip = item.ip || '-';
           var mac = item.mac || '-';
           var vendor = item.vendor ? '<span class="vendor">' + escapeHtml(item.vendor) + '</span>' : '';
-          var user = Array.isArray(item.current_users) ? item.current_users.join(', ') : '-';
+          var users = Array.isArray(item.current_users) ? item.current_users : [];
+          var user = users.length ? users.join(', ') : '-';
+          var userPrimary = users.length ? users[0] : (item.user || '-');
+          var groups = formatGroups(item.groups);
+          var multiBadge = item.multi_user ? '<span class="multi-badge">🖥 multi</span>' : '';
           var source = item.source || '-';
           var confidence = item.confidence_score != null ? item.confidence_score : '-';
           return '<tr class="' + cls + '">' +
             '<td><span class="dot ' + dotCls + '"></span></td>' +
             '<td><a href="#" class="ip-link" onclick="openTimeline(\'ip\', \'' + escJs(ip) + '\');return false;">' + escapeHtml(ip) + '</a></td>' +
             '<td>' + escapeHtml(mac) + vendor + '</td>' +
-            '<td><a href="#" class="ip-link" onclick="openTimeline(\'user\', \'' + escJs(user) + '\');return false;">' + escapeHtml(user) + '</a></td>' +
+            '<td><a href="#" class="ip-link" onclick="openTimeline(\'user\', \'' + escJs(userPrimary) + '\');return false;">' + escapeHtml(user) + '</a>' + multiBadge + '</td>' +
+            '<td>' + groups + '</td>' +
             '<td>' + escapeHtml(timeAgo(item.last_seen)) + '</td>' +
             '<td>' + escapeHtml(source) + '</td>' +
             '<td>' + escapeHtml(confidence) + '</td>' +
@@ -873,7 +1395,7 @@
           loadMappingsStats();
         } catch (err) {
           document.getElementById('mappings-body').innerHTML =
-            '<tr><td colspan="7" style="color:#ef4444;">Failed: ' + escapeHtml(err.message) + '</td></tr>';
+            '<tr><td colspan="8" style="color:#ef4444;">Failed: ' + escapeHtml(err.message) + '</td></tr>';
           status.textContent = 'Last update failed';
         }
       }
@@ -954,17 +1476,22 @@
             var list = mappings.data || [];
             mappingsBody.innerHTML = list.length ? list.map(function (item) {
               var ipVal = item.ip || '-';
-              var userVal = Array.isArray(item.current_users) ? item.current_users.join(', ') : '-';
+              var users = Array.isArray(item.current_users) ? item.current_users : [];
+              var userVal = users.length ? users.join(', ') : '-';
+              var userPrimary = users.length ? users[0] : (item.user || '-');
+              var groups = formatGroups(item.groups);
+              var multiBadge = item.multi_user ? '<span class="multi-badge">🖥 multi</span>' : '';
               return '<tr>' +
                 '<td><span class="dot ' + (item.is_active === false ? 'offline' : 'online') + '"></span></td>' +
                 '<td><a href="#" class="ip-link" onclick="openTimeline(\'ip\', \'' + escJs(ipVal) + '\');return false;">' + escapeHtml(ipVal) + '</a></td>' +
                 '<td>' + escapeHtml(item.mac || '-') + '</td>' +
-                '<td><a href="#" class="ip-link" onclick="openTimeline(\'user\', \'' + escJs(userVal) + '\');return false;">' + escapeHtml(userVal) + '</a></td>' +
+                '<td><a href="#" class="ip-link" onclick="openTimeline(\'user\', \'' + escJs(userPrimary) + '\');return false;">' + escapeHtml(userVal) + '</a>' + multiBadge + '</td>' +
+                '<td>' + groups + '</td>' +
                 '<td>' + escapeHtml(timeAgo(item.last_seen)) + '</td>' +
                 '<td>' + escapeHtml(item.source || '-') + '</td>' +
                 '<td>' + escapeHtml(item.confidence_score != null ? item.confidence_score : '-') + '</td>' +
                 '</tr>';
-            }).join('') : '<tr><td colspan="7" class="muted">No mappings found.</td></tr>';
+            }).join('') : '<tr><td colspan="8" class="muted">No mappings found.</td></tr>';
           } else {
             mappingsSection.style.display = 'none';
           }
@@ -992,7 +1519,7 @@
         } catch (err) {
           mappingsSection.style.display = '';
           eventsSection.style.display = 'none';
-          mappingsBody.innerHTML = '<tr><td colspan="7" style="color:#ef4444;">Search failed: ' + escapeHtml(err.message) + '</td></tr>';
+          mappingsBody.innerHTML = '<tr><td colspan="8" style="color:#ef4444;">Search failed: ' + escapeHtml(err.message) + '</td></tr>';
           document.getElementById('search-meta').textContent = '';
           document.getElementById('search-paging').innerHTML = '';
         }
@@ -1351,6 +1878,1204 @@
 
       function closeTimeline() {
         document.getElementById('timeline-panel').style.display = 'none';
+      }
+
+      function renderPager(elId, page, perPage, total, fnName) {
+        var totalPages = Math.ceil(total / perPage) || 1;
+        var html = 'Page ' + page + ' of ' + totalPages + ' (' + total + ' items) &nbsp;';
+        if (page > 1) html += '<button class="btn btn-sm" onclick="' + fnName + '(' + (page - 1) + ')">← Prev</button> ';
+        if (page < totalPages) html += '<button class="btn btn-sm" onclick="' + fnName + '(' + (page + 1) + ')">Next →</button>';
+        document.getElementById(elId).innerHTML = html;
+      }
+
+      function trimFingerprint(v) {
+        if (!v) return '-';
+        var s = String(v);
+        return s.length > 30 ? escapeHtml(s.slice(0, 30)) + '…' : escapeHtml(s);
+      }
+
+      async function loadSubnetsTab() {
+        await loadSubnetsStats();
+        await loadSubnets(1);
+      }
+
+      async function loadSubnetsStats() {
+        try {
+          var res = await fetch('/api/v2/subnets/stats', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var s = await res.json();
+          subnetCounts = {};
+          (s.per_subnet || []).forEach(function (r) {
+            subnetCounts[r.id] = r.total_mappings || 0;
+          });
+          var totalMappings = (s.total_tagged_mappings || 0) + (s.untagged_mappings || 0);
+          var cov = totalMappings > 0 ? Math.round((s.total_tagged_mappings || 0) * 100 / totalMappings) : 0;
+          document.getElementById('subnets-stats').innerHTML =
+            '<span>Total subnets: <strong>' + (s.total_subnets || 0) + '</strong></span>' +
+            '<span>Total mappings tagged: <strong>' + (s.total_tagged_mappings || 0) + '</strong></span>' +
+            '<span>Coverage: <strong>' + cov + '%</strong></span>';
+        } catch (e) {
+          document.getElementById('subnets-stats').innerHTML = '<span class="muted">No stats available.</span>';
+        }
+      }
+
+      async function loadSubnets(page) {
+        subnetCurrentPage = page || 1;
+        try {
+          var res = await fetch('/api/v2/subnets', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var all = await res.json();
+          subnets = Array.isArray(all) ? all : [];
+          var start = (subnetCurrentPage - 1) * subnetPageSize;
+          var rows = subnets.slice(start, start + subnetPageSize);
+          var body = document.getElementById('subnets-body');
+          if (!rows.length) {
+            body.innerHTML = '<tr><td colspan="7" class="muted">No subnets configured.</td></tr>';
+            renderPager('subnets-paging', subnetCurrentPage, subnetPageSize, subnets.length, 'loadSubnets');
+            return;
+          }
+          body.innerHTML = rows.map(function (s) {
+            var actions =
+              '<button class="btn btn-sm role-operator" onclick="event.stopPropagation();editSubnet(' + s.id + ')">Edit</button> ' +
+              '<button class="btn btn-sm role-operator" onclick="event.stopPropagation();deleteSubnet(' + s.id + ')">Delete</button>';
+            return '<tr class="expand-row" onclick="toggleSubnetMappings(' + s.id + ')">' +
+              '<td>' + escapeHtml(s.name || '-') + '</td>' +
+              '<td>' + escapeHtml(s.cidr || '-') + '</td>' +
+              '<td>' + escapeHtml(s.vlan_id != null ? s.vlan_id : '-') + '</td>' +
+              '<td>' + escapeHtml(s.location || '-') + '</td>' +
+              '<td>' + escapeHtml(s.gateway || '-') + '</td>' +
+              '<td><a class="ip-link" href="#" onclick="event.preventDefault();event.stopPropagation();toggleSubnetMappings(' + s.id + ')">' + escapeHtml(subnetCounts[s.id] != null ? subnetCounts[s.id] : 0) + ' mappings</a></td>' +
+              '<td>' + actions + '</td>' +
+              '</tr>' +
+              '<tr id="subnet-map-row-' + s.id + '" style="display:' + (subnetMappingOpen[s.id] ? '' : 'none') + ';"><td colspan="7"><div id="subnet-map-' + s.id + '" class="muted">Loading mappings...</div></td></tr>';
+          }).join('');
+          renderPager('subnets-paging', subnetCurrentPage, subnetPageSize, subnets.length, 'loadSubnets');
+          applyRoleVisibility(currentUser.role);
+        } catch (e) {
+          document.getElementById('subnets-body').innerHTML =
+            '<tr><td colspan="7" style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+        }
+      }
+
+      function showSubnetForm(item) {
+        document.getElementById('subnet-form-wrap').style.display = '';
+        document.getElementById('subnet-form-wrap').setAttribute('data-edit-id', item && item.id ? String(item.id) : '');
+        document.getElementById('subnet-name').value = item ? (item.name || '') : '';
+        document.getElementById('subnet-cidr').value = item ? (item.cidr || '') : '';
+        document.getElementById('subnet-vlan').value = item && item.vlan_id != null ? item.vlan_id : '';
+        document.getElementById('subnet-location').value = item ? (item.location || '') : '';
+        document.getElementById('subnet-description').value = item ? (item.description || '') : '';
+        document.getElementById('subnet-gateway').value = item ? (item.gateway || '') : '';
+      }
+
+      function hideSubnetForm() {
+        document.getElementById('subnet-form-wrap').style.display = 'none';
+        document.getElementById('subnet-form-wrap').setAttribute('data-edit-id', '');
+      }
+
+      function editSubnet(id) {
+        var item = subnets.find(function (s) { return s.id === id; });
+        if (item) showSubnetForm(item);
+      }
+
+      async function saveSubnet() {
+        var editId = document.getElementById('subnet-form-wrap').getAttribute('data-edit-id');
+        var payload = {
+          name: document.getElementById('subnet-name').value.trim(),
+          cidr: document.getElementById('subnet-cidr').value.trim(),
+          vlan_id: document.getElementById('subnet-vlan').value ? parseInt(document.getElementById('subnet-vlan').value, 10) : null,
+          location: document.getElementById('subnet-location').value.trim() || null,
+          description: document.getElementById('subnet-description').value.trim() || null,
+          gateway: document.getElementById('subnet-gateway').value.trim() || null
+        };
+        var method = editId ? 'PUT' : 'POST';
+        var url = editId ? '/api/v2/subnets/' + encodeURIComponent(editId) : '/api/v2/subnets';
+        try {
+          var res = await fetch(url, {
+            method: method,
+            headers: mutHeaders(),
+            credentials: 'include',
+            body: JSON.stringify(payload)
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          hideSubnetForm();
+          loadSubnetsStats();
+          loadSubnets(subnetCurrentPage);
+        } catch (e) {
+          alert('Save failed: ' + e.message);
+        }
+      }
+
+      async function deleteSubnet(id) {
+        if (!confirm('Delete subnet #' + id + '?')) return;
+        try {
+          var res = await fetch('/api/v2/subnets/' + encodeURIComponent(id), {
+            method: 'DELETE',
+            headers: mutHeaders(),
+            credentials: 'include'
+          });
+          if (!res.ok && res.status !== 204) throw new Error('HTTP ' + res.status);
+          loadSubnetsStats();
+          loadSubnets(subnetCurrentPage);
+        } catch (e) {
+          alert('Delete failed: ' + e.message);
+        }
+      }
+
+      function toggleSubnetMappings(id) {
+        subnetMappingOpen[id] = !subnetMappingOpen[id];
+        var row = document.getElementById('subnet-map-row-' + id);
+        if (!row) return;
+        row.style.display = subnetMappingOpen[id] ? '' : 'none';
+        if (subnetMappingOpen[id]) loadSubnetMappings(id, 1);
+      }
+
+      async function loadSubnetMappings(id, page) {
+        try {
+          var res = await fetch('/api/v2/subnets/' + encodeURIComponent(id) + '/mappings?page=' + (page || 1) + '&per_page=50', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var data = await res.json();
+          var rows = data.data || [];
+          var box = document.getElementById('subnet-map-' + id);
+          if (!rows.length) {
+            box.innerHTML = '<span class="muted">No mappings for this subnet.</span>';
+            return;
+          }
+          box.innerHTML = '<table><thead><tr><th>IP</th><th>User</th><th>MAC</th><th>Source</th><th>Last Seen</th></tr></thead><tbody>' +
+            rows.map(function (m) {
+              var user = Array.isArray(m.current_users) && m.current_users.length ? m.current_users.join(', ') : (m.user || '-');
+              var primary = Array.isArray(m.current_users) && m.current_users.length ? m.current_users[0] : (m.user || '');
+              return '<tr>' +
+                '<td><a href="#" class="ip-link" onclick="openTimeline(\'ip\', \'' + escJs(m.ip || '') + '\');return false;">' + escapeHtml(m.ip || '-') + '</a></td>' +
+                '<td><a href="#" class="ip-link" onclick="openTimeline(\'user\', \'' + escJs(primary) + '\');return false;">' + escapeHtml(user) + '</a></td>' +
+                '<td>' + escapeHtml(m.mac || '-') + '</td>' +
+                '<td>' + escapeHtml(m.source || '-') + '</td>' +
+                '<td>' + escapeHtml(timeAgo(m.last_seen)) + '</td>' +
+                '</tr>';
+            }).join('') + '</tbody></table>';
+        } catch (e) {
+          document.getElementById('subnet-map-' + id).innerHTML = '<span style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</span>';
+        }
+      }
+
+      async function loadSwitchesTab() {
+        await loadSwitchesStats();
+        await loadSwitches(1);
+      }
+
+      async function loadSwitchesStats() {
+        try {
+          var res = await fetch('/api/v2/switches/stats', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var s = await res.json();
+          document.getElementById('switches-stats').innerHTML =
+            '<span>Total switches: <strong>' + (s.total_switches || 0) + '</strong></span>' +
+            '<span>Enabled: <strong>' + (s.enabled_switches || 0) + '</strong></span>' +
+            '<span>Total ports mapped: <strong>' + (s.total_mac_entries || 0) + '</strong></span>' +
+            '<span>Last poll: <strong>' + escapeHtml(timeAgo(s.last_poll_time)) + '</strong></span>';
+        } catch (e) {
+          document.getElementById('switches-stats').innerHTML = '<span class="muted">No stats available.</span>';
+        }
+      }
+
+      async function loadSwitches(page) {
+        switchesCurrentPage = page || 1;
+        try {
+          var res = await fetch('/api/v2/switches', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var all = await res.json();
+          switches = Array.isArray(all) ? all : [];
+          var start = (switchesCurrentPage - 1) * switchesPageSize;
+          var rows = switches.slice(start, start + switchesPageSize);
+          var body = document.getElementById('switches-body');
+          if (!rows.length) {
+            body.innerHTML = '<tr><td colspan="9" class="muted">No switches configured.</td></tr>';
+            renderPager('switches-paging', switchesCurrentPage, switchesPageSize, switches.length, 'loadSwitches');
+            return;
+          }
+          body.innerHTML = rows.map(function (s) {
+            var actions =
+              '<button class="btn btn-sm role-operator" onclick="event.stopPropagation();pollSwitch(' + s.id + ')">Poll Now</button> ' +
+              '<button class="btn btn-sm role-operator" onclick="event.stopPropagation();editSwitch(' + s.id + ')">Edit</button> ' +
+              '<button class="btn btn-sm role-operator" onclick="event.stopPropagation();deleteSwitch(' + s.id + ')">Delete</button>';
+            return '<tr class="expand-row" onclick="toggleSwitchPorts(' + s.id + ')">' +
+              '<td>' + escapeHtml(s.name || '-') + '<div id="sw-msg-' + s.id + '" class="muted" style="font-size:11px;"></div></td>' +
+              '<td>' + escapeHtml(s.ip || '-') + '</td>' +
+              '<td>' + escapeHtml(s.snmp_version || '-') + '</td>' +
+              '<td>' + escapeHtml((s.poll_interval_secs || '-') + 's') + '</td>' +
+              '<td><span class="dot ' + (s.enabled ? 'online' : 'offline') + '"></span></td>' +
+              '<td>' + escapeHtml(timeAgo(s.last_polled_at)) + '</td>' +
+              '<td>' + escapeHtml(s.last_poll_status || '-') + '</td>' +
+              '<td>' + escapeHtml(s.mac_count != null ? s.mac_count : 0) + '</td>' +
+              '<td>' + actions + '</td>' +
+              '</tr>' +
+              '<tr id="sw-ports-row-' + s.id + '" style="display:' + (switchPortOpen[s.id] ? '' : 'none') + ';"><td colspan="9"><div id="sw-ports-' + s.id + '" class="muted">Loading ports...</div></td></tr>';
+          }).join('');
+          renderPager('switches-paging', switchesCurrentPage, switchesPageSize, switches.length, 'loadSwitches');
+          applyRoleVisibility(currentUser.role);
+        } catch (e) {
+          document.getElementById('switches-body').innerHTML =
+            '<tr><td colspan="9" style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+        }
+      }
+
+      async function loadSubnetSelect(targetId, selectedId) {
+        try {
+          var res = await fetch('/api/v2/subnets', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var rows = await res.json();
+          var sel = document.getElementById(targetId);
+          sel.innerHTML = '<option value="">No subnet</option>' + (rows || []).map(function (s) {
+            var selected = selectedId != null && Number(selectedId) === Number(s.id) ? ' selected' : '';
+            return '<option value="' + s.id + '"' + selected + '>' + escapeHtml(s.name + ' (' + s.cidr + ')') + '</option>';
+          }).join('');
+        } catch (e) {}
+      }
+
+      function showSwitchForm(item) {
+        switchEditingId = item && item.id ? item.id : null;
+        document.getElementById('switch-form-wrap').style.display = '';
+        document.getElementById('switch-name').value = item ? (item.name || '') : '';
+        document.getElementById('switch-ip').value = item ? (item.ip || '') : '';
+        document.getElementById('switch-community').value = '';
+        document.getElementById('switch-version').value = item ? (item.snmp_version || 'v2c') : 'v2c';
+        document.getElementById('switch-port').value = item ? (item.port || 161) : 161;
+        document.getElementById('switch-interval').value = item ? (item.poll_interval_secs || 300) : 300;
+        document.getElementById('switch-location').value = item ? (item.location || '') : '';
+        document.getElementById('switch-enabled').checked = item ? !!item.enabled : true;
+        loadSubnetSelect('switch-subnet', item ? item.subnet_id : null);
+      }
+
+      function hideSwitchForm() {
+        switchEditingId = null;
+        document.getElementById('switch-form-wrap').style.display = 'none';
+      }
+
+      function editSwitch(id) {
+        var item = switches.find(function (s) { return s.id === id; });
+        if (item) showSwitchForm(item);
+      }
+
+      async function saveSwitch() {
+        var payload = {
+          name: document.getElementById('switch-name').value.trim(),
+          ip: document.getElementById('switch-ip').value.trim(),
+          community: document.getElementById('switch-community').value.trim(),
+          snmp_version: document.getElementById('switch-version').value,
+          port: parseInt(document.getElementById('switch-port').value || '161', 10),
+          poll_interval_secs: parseInt(document.getElementById('switch-interval').value || '300', 10),
+          subnet_id: document.getElementById('switch-subnet').value ? parseInt(document.getElementById('switch-subnet').value, 10) : null,
+          location: document.getElementById('switch-location').value.trim() || null,
+          enabled: document.getElementById('switch-enabled').checked
+        };
+        if (switchEditingId && !payload.community) delete payload.community;
+        var method = switchEditingId ? 'PUT' : 'POST';
+        var url = switchEditingId ? '/api/v2/switches/' + encodeURIComponent(switchEditingId) : '/api/v2/switches';
+        try {
+          var res = await fetch(url, {
+            method: method,
+            headers: mutHeaders(),
+            credentials: 'include',
+            body: JSON.stringify(payload)
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          hideSwitchForm();
+          loadSwitchesStats();
+          loadSwitches(switchesCurrentPage);
+        } catch (e) {
+          alert('Save failed: ' + e.message);
+        }
+      }
+
+      async function deleteSwitch(id) {
+        if (!confirm('Delete switch #' + id + '?')) return;
+        try {
+          var res = await fetch('/api/v2/switches/' + encodeURIComponent(id), {
+            method: 'DELETE',
+            headers: mutHeaders(),
+            credentials: 'include'
+          });
+          if (!res.ok && res.status !== 204) throw new Error('HTTP ' + res.status);
+          loadSwitchesStats();
+          loadSwitches(switchesCurrentPage);
+        } catch (e) {
+          alert('Delete failed: ' + e.message);
+        }
+      }
+
+      async function pollSwitch(id) {
+        try {
+          var res = await fetch('/api/v2/switches/' + encodeURIComponent(id) + '/poll', {
+            method: 'POST',
+            headers: mutHeaders(),
+            credentials: 'include'
+          });
+          var data = await res.json();
+          var el = document.getElementById('sw-msg-' + id);
+          if (res.ok) {
+            el.textContent = data.message || 'Poll queued';
+            el.style.color = '#22c55e';
+          } else {
+            el.textContent = data.message || ('HTTP ' + res.status);
+            el.style.color = '#ef4444';
+          }
+        } catch (e) {
+          var el2 = document.getElementById('sw-msg-' + id);
+          el2.textContent = 'Poll failed: ' + e.message;
+          el2.style.color = '#ef4444';
+        }
+      }
+
+      function toggleSwitchPorts(id) {
+        switchPortOpen[id] = !switchPortOpen[id];
+        var row = document.getElementById('sw-ports-row-' + id);
+        if (!row) return;
+        row.style.display = switchPortOpen[id] ? '' : 'none';
+        if (switchPortOpen[id]) loadSwitchPorts(id, 1);
+      }
+
+      async function loadSwitchPorts(id, page) {
+        try {
+          var res = await fetch('/api/v2/switch-ports?switch_id=' + encodeURIComponent(id) + '&page=' + (page || 1) + '&limit=50', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var data = await res.json();
+          var rows = data.data || [];
+          var box = document.getElementById('sw-ports-' + id);
+          if (!rows.length) {
+            box.innerHTML = '<span class="muted">No mapped ports.</span>';
+            return;
+          }
+          box.innerHTML = '<table><thead><tr><th>Port Name</th><th>VLAN</th><th>MAC</th><th>IP</th><th>Last Seen</th></tr></thead><tbody>' +
+            rows.map(function (r) {
+              return '<tr>' +
+                '<td>' + escapeHtml(r.port_name || ('port-' + r.port_index)) + '</td>' +
+                '<td>' + escapeHtml(r.vlan_id != null ? r.vlan_id : '-') + '</td>' +
+                '<td>' + escapeHtml(r.mac || '-') + '</td>' +
+                '<td>-</td>' +
+                '<td>' + escapeHtml(timeAgo(r.last_seen)) + '</td>' +
+                '</tr>';
+            }).join('') + '</tbody></table>';
+        } catch (e) {
+          document.getElementById('sw-ports-' + id).innerHTML = '<span style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</span>';
+        }
+      }
+
+      async function loadFingerprintsTab() {
+        await loadFingerprintStats();
+        await loadFingerprintList(1);
+        await loadFingerprintObservations(1);
+      }
+
+      async function loadFingerprintStats() {
+        try {
+          var res = await fetch('/api/v2/fingerprints/stats', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var s = await res.json();
+          var unique = Array.isArray(s.device_type_breakdown) ? s.device_type_breakdown.length : 0;
+          document.getElementById('fp-stats').innerHTML =
+            '<span>Total fingerprints: <strong>' + (s.total_fingerprints || 0) + '</strong></span>' +
+            '<span>Total observations: <strong>' + (s.total_observations || 0) + '</strong></span>' +
+            '<span>Unique device types: <strong>' + unique + '</strong></span>';
+        } catch (e) {
+          document.getElementById('fp-stats').innerHTML = '<span class="muted">No stats available.</span>';
+        }
+      }
+
+      function showFingerprintForm() {
+        document.getElementById('fp-form-wrap').style.display = '';
+      }
+
+      function hideFingerprintForm() {
+        document.getElementById('fp-form-wrap').style.display = 'none';
+      }
+
+      async function saveFingerprint() {
+        var payload = {
+          fingerprint: document.getElementById('fp-fingerprint').value.trim(),
+          device_type: document.getElementById('fp-device-type').value.trim(),
+          os_family: document.getElementById('fp-os-family').value.trim() || null,
+          description: document.getElementById('fp-description').value.trim() || null
+        };
+        try {
+          var res = await fetch('/api/v2/fingerprints', {
+            method: 'POST',
+            headers: mutHeaders(),
+            credentials: 'include',
+            body: JSON.stringify(payload)
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          hideFingerprintForm();
+          loadFingerprintStats();
+          loadFingerprintList(fpCurrentPage);
+        } catch (e) {
+          alert('Save failed: ' + e.message);
+        }
+      }
+
+      async function loadFingerprintList(page) {
+        fpCurrentPage = page || 1;
+        try {
+          var res = await fetch('/api/v2/fingerprints', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var all = await res.json();
+          fingerprints = Array.isArray(all) ? all : [];
+          var start = (fpCurrentPage - 1) * fpPageSize;
+          var rows = fingerprints.slice(start, start + fpPageSize);
+          var obsMap = {};
+          try {
+            var obsRes = await fetch('/api/v2/fingerprints/observations?page=1&limit=200', { credentials: 'include' });
+            if (obsRes.ok) {
+              var obsData = await obsRes.json();
+              (obsData.data || []).forEach(function (o) {
+                var key = o.fingerprint || '';
+                obsMap[key] = (obsMap[key] || 0) + 1;
+              });
+            }
+          } catch (_) {}
+          var body = document.getElementById('fp-body');
+          if (!rows.length) {
+            body.innerHTML = '<tr><td colspan="6" class="muted">No fingerprints.</td></tr>';
+            renderPager('fp-paging', fpCurrentPage, fpPageSize, fingerprints.length, 'loadFingerprintList');
+            return;
+          }
+          body.innerHTML = rows.map(function (f) {
+            var actions = '<button class="btn btn-sm role-admin" onclick="deleteFingerprint(' + f.id + ')">Delete</button>';
+            return '<tr>' +
+              '<td title="' + escapeHtml(f.fingerprint || '-') + '">' + trimFingerprint(f.fingerprint) + '</td>' +
+              '<td>' + escapeHtml(f.device_type || '-') + '</td>' +
+              '<td>' + escapeHtml(f.os_family || '-') + '</td>' +
+              '<td>' + escapeHtml(f.description || '-') + '</td>' +
+              '<td>' + escapeHtml(obsMap[f.fingerprint || ''] || 0) + '</td>' +
+              '<td>' + actions + '</td>' +
+              '</tr>';
+          }).join('');
+          renderPager('fp-paging', fpCurrentPage, fpPageSize, fingerprints.length, 'loadFingerprintList');
+          applyRoleVisibility(currentUser.role);
+        } catch (e) {
+          document.getElementById('fp-body').innerHTML =
+            '<tr><td colspan="6" style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+        }
+      }
+
+      async function deleteFingerprint(id) {
+        if (!confirm('Delete fingerprint #' + id + '?')) return;
+        try {
+          var res = await fetch('/api/v2/fingerprints/' + encodeURIComponent(id), {
+            method: 'DELETE',
+            headers: mutHeaders(),
+            credentials: 'include'
+          });
+          if (!res.ok && res.status !== 204) throw new Error('HTTP ' + res.status);
+          loadFingerprintList(fpCurrentPage);
+          loadFingerprintStats();
+        } catch (e) {
+          alert('Delete failed: ' + e.message);
+        }
+      }
+
+      async function runFingerprintBackfill() {
+        try {
+          var res = await fetch('/api/v2/fingerprints/backfill', {
+            method: 'POST',
+            headers: mutHeaders(),
+            credentials: 'include',
+            body: JSON.stringify({})
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          alert('Backfill initiated. Existing mappings will be re-matched against fingerprint database.');
+        } catch (e) {
+          alert('Backfill failed: ' + e.message);
+        }
+      }
+
+      async function loadFingerprintObservations(page) {
+        fpObsCurrentPage = page || 1;
+        try {
+          var res = await fetch('/api/v2/fingerprints/observations?page=' + fpObsCurrentPage + '&limit=50', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var data = await res.json();
+          var rows = data.data || [];
+          var body = document.getElementById('fp-obs-body');
+          if (!rows.length) {
+            body.innerHTML = '<tr><td colspan="7" class="muted">No observations.</td></tr>';
+            renderPager('fp-obs-paging', fpObsCurrentPage, 50, data.total || 0, 'loadFingerprintObservations');
+            return;
+          }
+          body.innerHTML = rows.map(function (o) {
+            return '<tr>' +
+              '<td>' + escapeHtml(o.mac || '-') + '</td>' +
+              '<td>' + escapeHtml(o.ip || '-') + '</td>' +
+              '<td title="' + escapeHtml(o.fingerprint || '-') + '">' + trimFingerprint(o.fingerprint) + '</td>' +
+              '<td>' + escapeHtml(o.device_type || 'unknown') + '</td>' +
+              '<td>' + escapeHtml(o.hostname || '-') + '</td>' +
+              '<td>' + escapeHtml(new Date(o.observed_at).toLocaleString()) + '</td>' +
+              '<td>' + escapeHtml(timeAgo(o.observed_at)) + '</td>' +
+              '</tr>';
+          }).join('');
+          renderPager('fp-obs-paging', fpObsCurrentPage, 50, data.total || 0, 'loadFingerprintObservations');
+        } catch (e) {
+          document.getElementById('fp-obs-body').innerHTML =
+            '<tr><td colspan="7" style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+        }
+      }
+
+      async function loadDnsTab() {
+        await loadDnsStats();
+        await loadDnsList(1);
+      }
+
+      async function loadDnsStats() {
+        try {
+          var res = await fetch('/api/v2/dns/stats', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var s = await res.json();
+          document.getElementById('dns-stats').innerHTML =
+            '<span>Cached entries: <strong>' + (s.total_cached || 0) + '</strong></span>' +
+            '<span>Successful lookups: <strong>' + (s.resolved_ok || 0) + '</strong></span>' +
+            '<span>Failed lookups: <strong>' + (s.unresolved || 0) + '</strong></span>';
+        } catch (e) {
+          document.getElementById('dns-stats').innerHTML = '<span class="muted">No stats available.</span>';
+        }
+      }
+
+      async function loadDnsList(page) {
+        dnsCurrentPage = page || 1;
+        try {
+          var res = await fetch('/api/v2/dns?page=' + dnsCurrentPage + '&limit=50', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var data = await res.json();
+          var rows = data.data || [];
+          var body = document.getElementById('dns-body');
+          if (!rows.length) {
+            body.innerHTML = '<tr><td colspan="4" class="muted">No DNS cache entries.</td></tr>';
+            renderPager('dns-paging', dnsCurrentPage, 50, data.total || 0, 'loadDnsList');
+            return;
+          }
+          body.innerHTML = rows.map(function (d) {
+            return '<tr>' +
+              '<td><a href="#" class="ip-link" onclick="openTimeline(\'ip\', \'' + escJs(d.ip || '') + '\');return false;">' + escapeHtml(d.ip || '-') + '</a></td>' +
+              '<td>' + escapeHtml(d.hostname || '-') + '</td>' +
+              '<td>' + escapeHtml(d.resolved_at ? new Date(d.resolved_at).toLocaleString() : '-') + '</td>' +
+              '<td>' + escapeHtml(timeAgo(d.expires_at)) + '</td>' +
+              '</tr>';
+          }).join('');
+          renderPager('dns-paging', dnsCurrentPage, 50, data.total || 0, 'loadDnsList');
+        } catch (e) {
+          document.getElementById('dns-body').innerHTML =
+            '<tr><td colspan="4" style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+        }
+      }
+
+      async function dnsLookupIp() {
+        var ip = document.getElementById('dns-lookup-ip').value.trim();
+        if (!ip) return;
+        var out = document.getElementById('dns-lookup-result');
+        try {
+          var res = await fetch('/api/v2/dns/' + encodeURIComponent(ip), { credentials: 'include' });
+          if (res.status === 404) {
+            out.textContent = 'not cached';
+            out.style.color = '#6b8579';
+            return;
+          }
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var data = await res.json();
+          out.textContent = 'hostname: ' + (data.hostname || 'not cached');
+          out.style.color = '#22c55e';
+        } catch (e) {
+          out.textContent = 'lookup failed: ' + e.message;
+          out.style.color = '#ef4444';
+        }
+      }
+
+      async function flushDnsCache() {
+        if (!confirm('Flush DNS cache?')) return;
+        try {
+          var res = await fetch('/api/v2/dns/flush', {
+            method: 'POST',
+            headers: mutHeaders(),
+            credentials: 'include',
+            body: JSON.stringify({})
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          alert('DNS cache flushed.');
+          loadDnsTab();
+        } catch (e) {
+          alert('Flush failed: ' + e.message);
+        }
+      }
+
+      async function loadSystemStatus() {
+        try {
+          var adaptersRes = await fetch('/api/v1/admin/adapters', { credentials: 'include' });
+          if (!adaptersRes.ok) throw new Error('HTTP ' + adaptersRes.status);
+          var adapters = await adaptersRes.json();
+          var body = document.getElementById('status-adapters-body');
+          if (!Array.isArray(adapters) || !adapters.length) {
+            body.innerHTML = '<tr><td colspan="5" class="muted">No adapter data.</td></tr>';
+          } else {
+            body.innerHTML = adapters.map(function (a) {
+              var status = a.status || 'unknown';
+              var dot = '<span class="dot offline"></span>';
+              if (status === 'listening') dot = '<span class="dot online"></span>';
+              if (status === 'starting') dot = '<span class="dot" style="background:#f59e0b;box-shadow:0 0 6px #f59e0b;"></span>';
+              return '<tr>' +
+                '<td>' + escapeHtml(a.name || '-') + '</td>' +
+                '<td>' + escapeHtml(a.bind || '-') + '</td>' +
+                '<td>' + dot + escapeHtml(status) + '</td>' +
+                '<td>' + escapeHtml(a.events_total != null ? a.events_total : 0) + '</td>' +
+                '<td>' + escapeHtml(timeAgo(a.last_event_at)) + '</td>' +
+                '</tr>';
+            }).join('');
+          }
+        } catch (e) {
+          document.getElementById('status-adapters-body').innerHTML =
+            '<tr><td colspan="5" style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+        }
+
+        try {
+          var cfgRes = await fetch('/api/v1/admin/runtime-config', { credentials: 'include' });
+          if (!cfgRes.ok) throw new Error('HTTP ' + cfgRes.status);
+          var cfg = await cfgRes.json();
+          var rows = [
+            ['database_url', maskedDbUrl(cfg.database_url)],
+            ['radius_bind', cfg.radius_bind || '-'],
+            ['radius_secret_set', yesNoBadge(!!cfg.radius_secret_set)],
+            ['ad_syslog_bind', cfg.ad_syslog_bind || '-'],
+            ['dhcp_syslog_bind', cfg.dhcp_syslog_bind || '-'],
+            ['ad_tls_bind', cfg.ad_tls_bind || '-'],
+            ['dhcp_tls_bind', cfg.dhcp_tls_bind || '-'],
+            ['tls_enabled', yesNoBadge(!!cfg.tls_enabled)],
+            ['oui_csv_path', cfg.oui_csv_path || '-'],
+            ['admin_http_bind', cfg.admin_http_bind || '-']
+          ];
+          document.getElementById('status-runtime').innerHTML = rows.map(function (r) {
+            return '<div class="setting-row" style="padding:6px 0;"><div class="setting-label"><span class="setting-title">' +
+              escapeHtml(r[0]) + '</span></div><div>' + r[1] + '</div></div>';
+          }).join('');
+        } catch (e2) {
+          document.getElementById('status-runtime').innerHTML =
+            '<span style="color:#ef4444;">Failed: ' + escapeHtml(e2.message) + '</span>';
+        }
+      }
+
+      function firewallTypeBadge(raw) {
+        var type = (raw || '').toLowerCase();
+        if (type === 'panos') return '<span class="badge badge-panos">PAN-OS</span>';
+        if (type === 'fortigate') return '<span class="badge badge-fortigate">FortiGate</span>';
+        return '<span class="badge badge-info">' + escapeHtml(raw || '-') + '</span>';
+      }
+
+      function toggleFirewallUsername() {
+        var type = document.getElementById('fw-type').value;
+        document.getElementById('fw-username').style.display = type === 'panos' ? '' : 'none';
+      }
+
+      function showFirewallForm(item) {
+        firewallEditingId = item && item.id ? item.id : null;
+        document.getElementById('firewall-form-wrap').style.display = '';
+        document.getElementById('fw-name').value = item ? (item.name || '') : '';
+        document.getElementById('fw-type').value = item ? (item.firewall_type || 'panos') : 'panos';
+        document.getElementById('fw-host').value = item ? (item.host || '') : '';
+        document.getElementById('fw-port').value = item ? (item.port || 443) : 443;
+        document.getElementById('fw-interval').value = item ? (item.push_interval_secs || 60) : 60;
+        document.getElementById('fw-username').value = item ? (item.username || '') : '';
+        document.getElementById('fw-password').value = '';
+        document.getElementById('fw-subnet-filter').value = item ? (item.subnet_filter || '') : '';
+        document.getElementById('fw-verify-tls').checked = item ? !!item.verify_tls : false;
+        document.getElementById('fw-enabled').checked = item ? !!item.enabled : true;
+        toggleFirewallUsername();
+      }
+
+      function hideFirewallForm() {
+        firewallEditingId = null;
+        document.getElementById('firewall-form-wrap').style.display = 'none';
+      }
+
+      async function saveFirewallTarget() {
+        if (!currentUser || currentUser.role !== 'Admin') return;
+        var payload = {
+          name: document.getElementById('fw-name').value.trim(),
+          firewall_type: document.getElementById('fw-type').value,
+          host: document.getElementById('fw-host').value.trim(),
+          port: parseInt(document.getElementById('fw-port').value || '443', 10),
+          username: document.getElementById('fw-username').value.trim() || null,
+          verify_tls: document.getElementById('fw-verify-tls').checked,
+          push_interval_secs: parseInt(document.getElementById('fw-interval').value || '60', 10),
+          subnet_filter: document.getElementById('fw-subnet-filter').value.trim() || null,
+          enabled: document.getElementById('fw-enabled').checked
+        };
+        var pass = document.getElementById('fw-password').value.trim();
+        if (!firewallEditingId || pass) payload.password = pass;
+        var url = '/api/v2/firewall/targets';
+        var method = 'POST';
+        if (firewallEditingId) {
+          url = '/api/v2/firewall/targets/' + encodeURIComponent(firewallEditingId);
+          method = 'PUT';
+        }
+        try {
+          var res = await fetch(url, {
+            method: method,
+            headers: mutHeaders(),
+            credentials: 'include',
+            body: JSON.stringify(payload)
+          });
+          if (!res.ok) {
+            var txt = await res.text();
+            throw new Error('HTTP ' + res.status + ' ' + txt);
+          }
+          hideFirewallForm();
+          await loadFirewallTargets();
+        } catch (e) {
+          alert('Save failed: ' + e.message);
+        }
+      }
+
+      async function loadFirewallTab() {
+        await loadFirewallTargets();
+        await loadFirewallStats();
+      }
+
+      async function loadFirewallStats() {
+        try {
+          var res = await fetch('/api/v2/firewall/stats', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var s = await res.json();
+          var lastPushAt = '-';
+          for (var i = 0; i < firewallTargets.length; i += 1) {
+            var lp = firewallTargets[i].last_push_at;
+            if (!lp) continue;
+            if (lastPushAt === '-' || new Date(lp).getTime() > new Date(lastPushAt).getTime()) lastPushAt = lp;
+          }
+          document.getElementById('firewall-stats').innerHTML =
+            '<span>Total targets: <strong>' + (s.total_targets || 0) + '</strong></span>' +
+            '<span>Enabled: <strong>' + (s.enabled_targets || 0) + '</strong></span>' +
+            '<span>Last push: <strong>' + escapeHtml(lastPushAt === '-' ? '-' : timeAgo(lastPushAt)) + '</strong></span>';
+        } catch (e) {
+          document.getElementById('firewall-stats').innerHTML = '<span class="muted">No stats available.</span>';
+        }
+      }
+
+      async function loadFirewallTargets() {
+        try {
+          var res = await fetch('/api/v2/firewall/targets', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          firewallTargets = await res.json();
+          var body = document.getElementById('firewall-body');
+          if (!Array.isArray(firewallTargets) || !firewallTargets.length) {
+            body.innerHTML = '<tr><td colspan="7" class="muted">No targets configured.</td></tr>';
+            loadFirewallStats();
+            return;
+          }
+          body.innerHTML = firewallTargets.map(function (t) {
+            var id = t.id;
+            var open = !!firewallHistoryOpen[id];
+            var actions =
+              '<button class="btn btn-sm role-admin" onclick="event.stopPropagation();testFirewallTarget(' + id + ')">Test</button> ' +
+              '<button class="btn btn-sm role-admin" onclick="event.stopPropagation();forceFirewallPush(' + id + ')">Force Push</button> ' +
+              '<button class="btn btn-sm role-admin" onclick="event.stopPropagation();editFirewallTarget(' + id + ')">Edit</button> ' +
+              '<button class="btn btn-sm role-admin" onclick="event.stopPropagation();deleteFirewallTarget(' + id + ')">Delete</button>';
+            return '<tr class="expand-row" onclick="toggleFirewallHistory(' + id + ')">' +
+              '<td>' + escapeHtml(t.name || '-') + '<div id="fw-result-' + id + '" class="muted" style="font-size:11px;"></div></td>' +
+              '<td>' + firewallTypeBadge(t.firewall_type) + '</td>' +
+              '<td>' + escapeHtml((t.host || '-') + ':' + (t.port || '-')) + '</td>' +
+              '<td>' + escapeHtml((t.push_interval_secs || '-') + 's') + '</td>' +
+              '<td>' + escapeHtml(t.last_push_status || '-') + '</td>' +
+              '<td>' + escapeHtml(timeAgo(t.last_push_at)) + '</td>' +
+              '<td>' + actions + '</td>' +
+              '</tr>' +
+              '<tr id="fw-history-row-' + id + '" style="display:' + (open ? '' : 'none') + ';"><td colspan="7"><div id="fw-history-' + id + '" class="muted">Loading history...</div></td></tr>';
+          }).join('');
+          applyRoleVisibility(currentUser.role);
+          await loadFirewallStats();
+          for (var k in firewallHistoryOpen) {
+            if (firewallHistoryOpen[k]) loadFirewallHistory(parseInt(k, 10));
+          }
+        } catch (e) {
+          document.getElementById('firewall-body').innerHTML =
+            '<tr><td colspan="7" style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+        }
+      }
+
+      function editFirewallTarget(id) {
+        var item = firewallTargets.find(function (t) { return t.id === id; });
+        if (item) showFirewallForm(item);
+      }
+
+      async function deleteFirewallTarget(id) {
+        if (!currentUser || currentUser.role !== 'Admin') return;
+        if (!confirm('Delete firewall target #' + id + '?')) return;
+        try {
+          var res = await fetch('/api/v2/firewall/targets/' + encodeURIComponent(id), {
+            method: 'DELETE',
+            headers: mutHeaders(),
+            credentials: 'include'
+          });
+          if (!res.ok && res.status !== 204) throw new Error('HTTP ' + res.status);
+          await loadFirewallTargets();
+        } catch (e) {
+          alert('Delete failed: ' + e.message);
+        }
+      }
+
+      async function testFirewallTarget(id) {
+        if (!currentUser || currentUser.role !== 'Admin') return;
+        try {
+          var res = await fetch('/api/v2/firewall/targets/' + encodeURIComponent(id) + '/test', {
+            method: 'POST',
+            headers: mutHeaders(),
+            credentials: 'include'
+          });
+          var data = await res.json();
+          var el = document.getElementById('fw-result-' + id);
+          if (res.ok && data.status === 'ok') {
+            el.textContent = 'Connection test: OK';
+            el.style.color = '#22c55e';
+          } else {
+            el.textContent = 'Connection test: ' + (data.message || ('HTTP ' + res.status));
+            el.style.color = '#ef4444';
+          }
+        } catch (e) {
+          var el2 = document.getElementById('fw-result-' + id);
+          el2.textContent = 'Connection test failed: ' + e.message;
+          el2.style.color = '#ef4444';
+        }
+      }
+
+      async function forceFirewallPush(id) {
+        if (!currentUser || currentUser.role !== 'Admin') return;
+        try {
+          var res = await fetch('/api/v2/firewall/targets/' + encodeURIComponent(id) + '/push', {
+            method: 'POST',
+            headers: mutHeaders(),
+            credentials: 'include'
+          });
+          var data = await res.json();
+          var el = document.getElementById('fw-result-' + id);
+          if (res.ok) {
+            el.textContent = 'Push initiated: ' + (data.pushed_count || 0) + ' entries';
+            el.style.color = '#22c55e';
+          } else {
+            el.textContent = 'Push failed: ' + (data.message || ('HTTP ' + res.status));
+            el.style.color = '#ef4444';
+          }
+          await loadFirewallTargets();
+        } catch (e) {
+          var el2 = document.getElementById('fw-result-' + id);
+          el2.textContent = 'Push failed: ' + e.message;
+          el2.style.color = '#ef4444';
+        }
+      }
+
+      function toggleFirewallHistory(id) {
+        firewallHistoryOpen[id] = !firewallHistoryOpen[id];
+        var row = document.getElementById('fw-history-row-' + id);
+        if (!row) return;
+        row.style.display = firewallHistoryOpen[id] ? '' : 'none';
+        if (firewallHistoryOpen[id]) loadFirewallHistory(id);
+      }
+
+      async function loadFirewallHistory(id) {
+        var box = document.getElementById('fw-history-' + id);
+        if (!box) return;
+        try {
+          var res = await fetch('/api/v2/firewall/targets/' + encodeURIComponent(id) + '/history?limit=20&page=1', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var data = await res.json();
+          var rows = data.data || [];
+          if (!rows.length) {
+            box.innerHTML = '<span class="muted">No push history.</span>';
+            return;
+          }
+          box.innerHTML = '<table><thead><tr><th>Timestamp</th><th>Entries</th><th>Status</th><th>Duration</th></tr></thead><tbody>' +
+            rows.map(function (r) {
+              return '<tr>' +
+                '<td>' + escapeHtml(new Date(r.pushed_at).toLocaleString()) + '</td>' +
+                '<td>' + escapeHtml(r.mapping_count != null ? r.mapping_count : '-') + '</td>' +
+                '<td>' + escapeHtml(r.status || '-') + '</td>' +
+                '<td>' + escapeHtml(r.duration_ms != null ? r.duration_ms + ' ms' : '-') + '</td>' +
+                '</tr>';
+            }).join('') +
+            '</tbody></table>';
+        } catch (e) {
+          box.innerHTML = '<span style="color:#ef4444;">Failed to load history: ' + escapeHtml(e.message) + '</span>';
+        }
+      }
+
+      function siemFormatBadge(fmt) {
+        var f = (fmt || '').toLowerCase();
+        var cls = f === 'cef' ? 'badge-cef' : (f === 'leef' ? 'badge-leef' : 'badge-json');
+        return '<span class="badge ' + cls + '">' + escapeHtml((fmt || '-').toUpperCase()) + '</span>';
+      }
+
+      function siemTransportBadge(tp) {
+        var t = (tp || '').toLowerCase();
+        var cls = t === 'udp' ? 'badge-udp' : 'badge-tcp';
+        return '<span class="badge ' + cls + '">' + escapeHtml((tp || '-').toUpperCase()) + '</span>';
+      }
+
+      function showSiemForm(item) {
+        siemEditingId = item && item.id ? item.id : null;
+        document.getElementById('siem-form-wrap').style.display = '';
+        document.getElementById('siem-name').value = item ? (item.name || '') : '';
+        document.getElementById('siem-format').value = item ? (item.format || 'cef') : 'cef';
+        document.getElementById('siem-transport').value = item ? (item.transport || 'udp') : 'udp';
+        document.getElementById('siem-host').value = item ? (item.host || '') : '';
+        document.getElementById('siem-port').value = item ? (item.port || 514) : 514;
+        document.getElementById('siem-fwd-m').checked = item ? !!item.forward_mappings : true;
+        document.getElementById('siem-fwd-c').checked = item ? !!item.forward_conflicts : true;
+        document.getElementById('siem-fwd-a').checked = item ? !!item.forward_alerts : false;
+        document.getElementById('siem-enabled').checked = item ? !!item.enabled : true;
+      }
+
+      function hideSiemForm() {
+        siemEditingId = null;
+        document.getElementById('siem-form-wrap').style.display = 'none';
+      }
+
+      async function saveSiemTarget() {
+        if (!currentUser || currentUser.role !== 'Admin') return;
+        var payload = {
+          name: document.getElementById('siem-name').value.trim(),
+          format: document.getElementById('siem-format').value,
+          transport: document.getElementById('siem-transport').value,
+          host: document.getElementById('siem-host').value.trim(),
+          port: parseInt(document.getElementById('siem-port').value || '514', 10),
+          forward_mappings: document.getElementById('siem-fwd-m').checked,
+          forward_conflicts: document.getElementById('siem-fwd-c').checked,
+          forward_alerts: document.getElementById('siem-fwd-a').checked,
+          enabled: document.getElementById('siem-enabled').checked
+        };
+        var url = '/api/v2/siem/targets';
+        var method = 'POST';
+        if (siemEditingId) {
+          url = '/api/v2/siem/targets/' + encodeURIComponent(siemEditingId);
+          method = 'PUT';
+        }
+        try {
+          var res = await fetch(url, {
+            method: method,
+            headers: mutHeaders(),
+            credentials: 'include',
+            body: JSON.stringify(payload)
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          hideSiemForm();
+          await loadSiemTab();
+        } catch (e) {
+          alert('Save failed: ' + e.message);
+        }
+      }
+
+      async function loadSiemTab() {
+        await loadSiemStats();
+        await loadSiemTargets();
+      }
+
+      async function loadSiemStats() {
+        try {
+          var res = await fetch('/api/v2/siem/stats', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var s = await res.json();
+          var forwarded = s.events_forwarded_total != null ? s.events_forwarded_total : (s.total_events_forwarded || 0);
+          document.getElementById('siem-stats').innerHTML =
+            '<span>Total targets: <strong>' + (s.total_targets || 0) + '</strong></span>' +
+            '<span>Enabled: <strong>' + (s.enabled_targets || 0) + '</strong></span>' +
+            '<span>Events forwarded total: <strong>' + forwarded + '</strong></span>';
+        } catch (e) {
+          document.getElementById('siem-stats').innerHTML = '<span class="muted">No stats available.</span>';
+        }
+      }
+
+      async function loadSiemTargets() {
+        try {
+          var res = await fetch('/api/v2/siem/targets', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          siemTargets = await res.json();
+          var body = document.getElementById('siem-body');
+          if (!Array.isArray(siemTargets) || !siemTargets.length) {
+            body.innerHTML = '<tr><td colspan="6" class="muted">No targets configured.</td></tr>';
+            return;
+          }
+          body.innerHTML = siemTargets.map(function (t) {
+            var flags =
+              '<span class="' + (t.forward_mappings ? 'check-yes' : 'check-no') + '">M</span> ' +
+              '<span class="' + (t.forward_conflicts ? 'check-yes' : 'check-no') + '">C</span> ' +
+              '<span class="' + (t.forward_alerts ? 'check-yes' : 'check-no') + '">A</span>';
+            return '<tr>' +
+              '<td>' + escapeHtml(t.name || '-') + '</td>' +
+              '<td>' + siemFormatBadge(t.format) + '</td>' +
+              '<td>' + siemTransportBadge(t.transport) + '</td>' +
+              '<td>' + escapeHtml((t.host || '-') + ':' + (t.port || '-')) + '</td>' +
+              '<td>' + flags + '</td>' +
+              '<td><button class="btn btn-sm role-admin" onclick="editSiemTarget(' + t.id + ')">Edit</button> ' +
+              '<button class="btn btn-sm role-admin" onclick="deleteSiemTarget(' + t.id + ')">Delete</button></td>' +
+              '</tr>';
+          }).join('');
+          applyRoleVisibility(currentUser.role);
+        } catch (e) {
+          document.getElementById('siem-body').innerHTML =
+            '<tr><td colspan="6" style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+        }
+      }
+
+      function editSiemTarget(id) {
+        var item = siemTargets.find(function (t) { return t.id === id; });
+        if (item) showSiemForm(item);
+      }
+
+      async function deleteSiemTarget(id) {
+        if (!currentUser || currentUser.role !== 'Admin') return;
+        if (!confirm('Delete SIEM target #' + id + '?')) return;
+        try {
+          var res = await fetch('/api/v2/siem/targets/' + encodeURIComponent(id), {
+            method: 'DELETE',
+            headers: mutHeaders(),
+            credentials: 'include'
+          });
+          if (!res.ok && res.status !== 204) throw new Error('HTTP ' + res.status);
+          await loadSiemTab();
+        } catch (e) {
+          alert('Delete failed: ' + e.message);
+        }
+      }
+
+      async function loadLdapTab() {
+        await loadLdapConfig();
+        await loadLdapGroups();
+      }
+
+      async function loadLdapConfig() {
+        try {
+          var res = await fetch('/api/v2/ldap/config', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var cfg = await res.json();
+          document.getElementById('ldap-enabled').checked = !!cfg.enabled;
+          document.getElementById('ldap-url').value = cfg.ldap_url || '';
+          document.getElementById('ldap-bind-dn').value = cfg.bind_dn || '';
+          document.getElementById('ldap-base-dn').value = cfg.base_dn || '';
+          document.getElementById('ldap-filter').value = cfg.search_filter || '';
+          document.getElementById('ldap-interval').value = cfg.sync_interval_secs || 300;
+          var ps = document.getElementById('ldap-pass-status');
+          ps.textContent = cfg.password_set ? 'Password saved' : 'Not set';
+          ps.style.color = cfg.password_set ? '#22c55e' : '#ef4444';
+        } catch (e) {
+          document.getElementById('ldap-sync-msg').textContent = 'Failed to load LDAP config: ' + e.message;
+        }
+      }
+
+      async function saveLdapField(field, value, el) {
+        if (!currentUser || currentUser.role !== 'Admin') return;
+        var payload = {};
+        payload[field] = value;
+        try {
+          var res = await fetch('/api/v2/ldap/config', {
+            method: 'PUT',
+            headers: mutHeaders(),
+            credentials: 'include',
+            body: JSON.stringify(payload)
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          flashElement(el, true);
+        } catch (e) {
+          flashElement(el, false);
+        }
+      }
+
+      async function saveLdapPassword() {
+        if (!currentUser || currentUser.role !== 'Admin') return;
+        var input = document.getElementById('ldap-bind-pass');
+        var pass = input.value.trim();
+        if (!pass) return;
+        try {
+          var res = await fetch('/api/v2/ldap/config', {
+            method: 'PUT',
+            headers: mutHeaders(),
+            credentials: 'include',
+            body: JSON.stringify({ bind_password: pass })
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          input.value = '';
+          var ps = document.getElementById('ldap-pass-status');
+          ps.textContent = 'Password saved';
+          ps.style.color = '#22c55e';
+        } catch (e) {
+          alert('Failed to save password: ' + e.message);
+        }
+      }
+
+      async function forceLdapSync() {
+        if (!currentUser || currentUser.role !== 'Admin') return;
+        try {
+          var res = await fetch('/api/v2/ldap/sync', {
+            method: 'POST',
+            headers: mutHeaders(),
+            credentials: 'include'
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          document.getElementById('ldap-sync-msg').textContent = 'Sync initiated';
+          document.getElementById('ldap-sync-msg').style.color = '#22c55e';
+        } catch (e) {
+          document.getElementById('ldap-sync-msg').textContent = 'Sync failed: ' + e.message;
+          document.getElementById('ldap-sync-msg').style.color = '#ef4444';
+        }
+      }
+
+      async function loadLdapGroups() {
+        try {
+          var res = await fetch('/api/v2/ldap/groups', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var rows = await res.json();
+          var box = document.getElementById('ldap-groups-list');
+          if (!Array.isArray(rows) || !rows.length) {
+            box.innerHTML = '<span class="muted">No groups available.</span>';
+            return;
+          }
+          box.innerHTML = rows.map(function (r) {
+            var name = r.group_name || '-';
+            return '<div style="margin:4px 0;"><a class="ip-link" href="#" onclick="loadLdapGroupMembers(\'' + escJs(name) + '\');return false;">' + escapeHtml(name) + '</a></div>';
+          }).join('');
+        } catch (e) {
+          document.getElementById('ldap-groups-list').innerHTML = '<span style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</span>';
+        }
+      }
+
+      async function loadLdapGroupMembers(group) {
+        try {
+          var res = await fetch('/api/v2/ldap/groups/' + encodeURIComponent(group) + '/members', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var rows = await res.json();
+          var box = document.getElementById('ldap-members-list');
+          if (!Array.isArray(rows) || !rows.length) {
+            box.innerHTML = '<span class="muted">No members in ' + escapeHtml(group) + '.</span>';
+            return;
+          }
+          box.innerHTML = '<div class="muted" style="margin-bottom:6px;">Group: ' + escapeHtml(group) + '</div>' +
+            rows.map(function (r) {
+              return '<div style="margin:4px 0;">' + escapeHtml(r.username || '-') + '</div>';
+            }).join('');
+        } catch (e) {
+          document.getElementById('ldap-members-list').innerHTML = '<span style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</span>';
+        }
+      }
+
+      async function lookupLdapUserGroups() {
+        var username = document.getElementById('ldap-user-query').value.trim();
+        if (!username) return;
+        try {
+          var res = await fetch('/api/v2/ldap/users/' + encodeURIComponent(username) + '/groups', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var rows = await res.json();
+          var box = document.getElementById('ldap-user-groups');
+          if (!Array.isArray(rows) || !rows.length) {
+            box.innerHTML = '<span class="muted">No groups for ' + escapeHtml(username) + '.</span>';
+            return;
+          }
+          box.innerHTML = rows.map(function (r) {
+            return '<div style="margin:4px 0;">' + escapeHtml(r.group_name || '-') + '</div>';
+          }).join('');
+        } catch (e) {
+          document.getElementById('ldap-user-groups').innerHTML = '<span style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</span>';
+        }
       }
 
       async function loadSycopeConfig() {
