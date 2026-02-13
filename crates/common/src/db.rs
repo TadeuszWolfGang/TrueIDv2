@@ -155,9 +155,10 @@ impl Db {
     pub async fn get_mapping(&self, ip: &str) -> Result<Option<DeviceMapping>> {
         let row = sqlx::query(
             "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
-                    m.subnet_id, s.name as subnet_name
+                    m.subnet_id, s.name as subnet_name, d.hostname
              FROM mappings m
              LEFT JOIN subnets s ON m.subnet_id = s.id
+             LEFT JOIN dns_cache d ON m.ip = d.ip
              WHERE m.ip = ?",
         )
         .bind(ip)
@@ -180,6 +181,7 @@ impl Db {
         let vendor: Option<String> = row.try_get("vendor")?;
         let subnet_id: Option<i64> = row.try_get("subnet_id").ok();
         let subnet_name: Option<String> = row.try_get("subnet_name").ok();
+        let hostname: Option<String> = row.try_get("hostname").ok();
 
         Ok(Some(DeviceMapping {
             ip,
@@ -192,6 +194,7 @@ impl Db {
             vendor,
             subnet_id,
             subnet_name,
+            hostname,
         }))
     }
 
@@ -218,9 +221,10 @@ impl Db {
     pub async fn get_active_mappings(&self) -> Result<Vec<DeviceMapping>> {
         let rows = sqlx::query(
             "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
-                    m.subnet_id, s.name as subnet_name
+                    m.subnet_id, s.name as subnet_name, d.hostname
              FROM mappings m
              LEFT JOIN subnets s ON m.subnet_id = s.id
+             LEFT JOIN dns_cache d ON m.ip = d.ip
              WHERE m.is_active = true
              ORDER BY m.last_seen DESC",
         )
@@ -241,6 +245,7 @@ impl Db {
             let vendor: Option<String> = row.try_get("vendor")?;
             let subnet_id: Option<i64> = row.try_get("subnet_id").ok();
             let subnet_name: Option<String> = row.try_get("subnet_name").ok();
+            let hostname: Option<String> = row.try_get("hostname").ok();
 
             results.push(DeviceMapping {
                 ip,
@@ -253,6 +258,7 @@ impl Db {
                 vendor,
                 subnet_id,
                 subnet_name,
+                hostname,
             });
         }
 
@@ -524,9 +530,10 @@ impl Db {
     pub async fn get_recent_mappings(&self, limit: i64) -> Result<Vec<DeviceMapping>> {
         let rows = sqlx::query(
             "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
-                    m.subnet_id, s.name as subnet_name
+                    m.subnet_id, s.name as subnet_name, d.hostname
              FROM mappings m
              LEFT JOIN subnets s ON m.subnet_id = s.id
+             LEFT JOIN dns_cache d ON m.ip = d.ip
              ORDER BY m.last_seen DESC
              LIMIT ?",
         )
@@ -548,6 +555,7 @@ impl Db {
             let vendor: Option<String> = row.try_get("vendor")?;
             let subnet_id: Option<i64> = row.try_get("subnet_id").ok();
             let subnet_name: Option<String> = row.try_get("subnet_name").ok();
+            let hostname: Option<String> = row.try_get("hostname").ok();
 
             results.push(DeviceMapping {
                 ip,
@@ -560,6 +568,7 @@ impl Db {
                 vendor,
                 subnet_id,
                 subnet_name,
+                hostname,
             });
         }
 

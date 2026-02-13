@@ -457,9 +457,10 @@ pub async fn search(
         let count_sql = format!("SELECT COUNT(*) as c FROM mappings m {where_clause}");
         let data_sql = format!(
             "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
-                    m.subnet_id, s.name as subnet_name
+                    m.subnet_id, s.name as subnet_name, d.hostname
              FROM mappings m
              LEFT JOIN subnets s ON m.subnet_id = s.id
+             LEFT JOIN dns_cache d ON m.ip = d.ip
              {where_clause} ORDER BY {} {} LIMIT ? OFFSET ?",
             mappings_sort_column(q.sort.as_deref()),
             order
@@ -510,6 +511,7 @@ pub async fn search(
                 vendor: row.try_get("vendor").ok(),
                 subnet_id: row.try_get("subnet_id").ok(),
                 subnet_name: row.try_get("subnet_name").ok(),
+                hostname: row.try_get("hostname").ok(),
             });
         }
 
@@ -631,9 +633,10 @@ pub async fn export_mappings(
     };
     let sql = format!(
         "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
-                m.subnet_id, s.name as subnet_name
+                m.subnet_id, s.name as subnet_name, d.hostname
          FROM mappings m
          LEFT JOIN subnets s ON m.subnet_id = s.id
+         LEFT JOIN dns_cache d ON m.ip = d.ip
          {where_clause} ORDER BY m.last_seen DESC"
     );
 
@@ -665,6 +668,7 @@ pub async fn export_mappings(
             vendor: row.try_get("vendor").ok(),
             subnet_id: row.try_get("subnet_id").ok(),
             subnet_name: row.try_get("subnet_name").ok(),
+            hostname: row.try_get("hostname").ok(),
         });
     }
 
@@ -704,12 +708,12 @@ pub async fn export_mappings(
     }
 
     let mut csv = String::from(
-        "ip,user,mac,source,last_seen,confidence,is_active,vendor,subnet_id,subnet_name\n",
+        "ip,user,mac,source,last_seen,confidence,is_active,vendor,subnet_id,subnet_name,hostname\n",
     );
     for row in &data {
         let user = row.current_users.first().cloned().unwrap_or_default();
         let line = format!(
-            "{},{},{},{},{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{},{},{},{},{}\n",
             csv_escape(&row.ip),
             csv_escape(&user),
             csv_escape(row.mac.as_deref().unwrap_or("")),
@@ -720,6 +724,7 @@ pub async fn export_mappings(
             csv_escape(row.vendor.as_deref().unwrap_or("")),
             row.subnet_id.map(|v| v.to_string()).unwrap_or_default(),
             csv_escape(row.subnet_name.as_deref().unwrap_or("")),
+            csv_escape(row.hostname.as_deref().unwrap_or("")),
         );
         csv.push_str(&line);
     }

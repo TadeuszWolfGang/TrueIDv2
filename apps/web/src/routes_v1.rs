@@ -134,9 +134,10 @@ pub(crate) async fn api_v1_mappings(
     let count_sql = format!("SELECT COUNT(*) as c FROM mappings m {}", where_clause);
     let data_sql = format!(
         "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
-                m.subnet_id, s.name as subnet_name
+                m.subnet_id, s.name as subnet_name, d.hostname
          FROM mappings m
          LEFT JOIN subnets s ON m.subnet_id = s.id
+         LEFT JOIN dns_cache d ON m.ip = d.ip
          {} ORDER BY {} {} LIMIT ? OFFSET ?",
         where_clause, sort_col, order,
     );
@@ -184,6 +185,7 @@ pub(crate) async fn api_v1_mappings(
         let vendor: Option<String> = row.try_get("vendor").ok();
         let subnet_id: Option<i64> = row.try_get("subnet_id").ok();
         let subnet_name: Option<String> = row.try_get("subnet_name").ok();
+        let hostname: Option<String> = row.try_get("hostname").ok();
 
         data.push(DeviceMapping {
             ip,
@@ -196,6 +198,7 @@ pub(crate) async fn api_v1_mappings(
             vendor,
             subnet_id,
             subnet_name,
+            hostname,
         });
     }
 

@@ -11,6 +11,7 @@ pub mod routes_api_keys;
 pub mod routes_audit;
 pub mod routes_auth;
 pub mod routes_conflicts;
+pub mod routes_dns;
 pub mod routes_proxy;
 pub mod routes_search;
 pub mod routes_subnets;
@@ -178,6 +179,9 @@ pub fn build_router(state: AppState) -> Router {
             "/api/v2/subnets/{id}/mappings",
             get(routes_subnets::subnet_mappings),
         )
+        .route("/api/v2/dns", get(routes_dns::list_dns))
+        .route("/api/v2/dns/stats", get(routes_dns::dns_stats))
+        .route("/api/v2/dns/{ip}", get(routes_dns::dns_by_ip))
         .route("/api/v2/alerts/history", get(routes_alerts::alert_history))
         .route("/api/v2/alerts/stats", get(routes_alerts::alert_stats))
         .route("/api/v1/stats", get(routes_v1::api_v1_stats))
@@ -276,6 +280,8 @@ pub fn build_router(state: AppState) -> Router {
             "/api/v2/subnets/{id}",
             put(routes_subnets::update_subnet).delete(routes_subnets::delete_subnet),
         )
+        .route("/api/v2/dns/{ip}", delete(routes_dns::delete_dns_ip))
+        .route("/api/v2/dns/flush", post(routes_dns::flush_dns_cache))
         .route("/api/v1/audit-logs", get(routes_audit::list_audit_logs))
         .route("/api/v1/audit-logs/stats", get(routes_audit::audit_stats))
         .layer(axum_mw::from_fn_with_state(

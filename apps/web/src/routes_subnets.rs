@@ -695,9 +695,10 @@ pub(crate) async fn subnet_mappings(
 
     let rows = sqlx::query(
         "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
-                m.subnet_id, s.name as subnet_name
+                m.subnet_id, s.name as subnet_name, d.hostname
          FROM mappings m
          LEFT JOIN subnets s ON m.subnet_id = s.id
+         LEFT JOIN dns_cache d ON m.ip = d.ip
          WHERE m.subnet_id = ?
          ORDER BY m.last_seen DESC
          LIMIT ? OFFSET ?",
@@ -732,6 +733,7 @@ pub(crate) async fn subnet_mappings(
             vendor: row.try_get("vendor").ok(),
             subnet_id: row.try_get("subnet_id").ok(),
             subnet_name: row.try_get("subnet_name").ok(),
+            hostname: row.try_get("hostname").ok(),
         });
     }
 

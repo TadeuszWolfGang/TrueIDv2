@@ -466,7 +466,7 @@ async fn test_export_mappings_csv() {
     let lines: Vec<&str> = text.lines().collect();
     assert_eq!(
         lines.first().copied().unwrap_or(""),
-        "ip,user,mac,source,last_seen,confidence,is_active,vendor,subnet_id,subnet_name"
+        "ip,user,mac,source,last_seen,confidence,is_active,vendor,subnet_id,subnet_name,hostname"
     );
     assert_eq!(lines.len(), 6);
 }

@@ -66,6 +66,10 @@ pub struct DeviceMapping {
     /// Subnet human-readable name (denormalized for API convenience).
     #[serde(default)]
     pub subnet_name: Option<String>,
+    // ── Phase 2: DNS reverse lookup ──
+    /// Reverse DNS hostname from PTR record cache.
+    #[serde(default)]
+    pub hostname: Option<String>,
 }
 
 /// Stored event row from the events table.
