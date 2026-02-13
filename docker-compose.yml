@@ -4,22 +4,38 @@ services:
     command: trueid-engine
     working_dir: /app
     ports:
-      - "1813:1813/udp"
-      - "5514:5514/udp"
-      - "5516:5516/udp"
-      # SECURITY: engine admin API (:8080) must NEVER be exposed outside Docker network.
-      # It is accessible only via trueid-web proxy which adds authentication.
-      # ports: do NOT add 8080 mapping here
+      - "${RADIUS_PORT:-1813}:1813/udp"
+      - "${AD_SYSLOG_PORT:-5514}:5514/udp"
+      - "${DHCP_SYSLOG_PORT:-5516}:5516/udp"
+      - "${VPN_SYSLOG_PORT:-5518}:5518/udp"
+      # TLS ports (optional, only if TLS_CA_CERT is set)
+      # - "6514:6514"   # AD TLS
+      # - "6516:6516"   # DHCP TLS
     volumes:
-      - ./data:/app/data
+      - trueid-data:/app/data
+      - ${TLS_CERT_DIR:-./tls}:/app/tls:ro
+      - ${OUI_CSV_PATH:-/dev/null}:/app/oui.csv:ro
     environment:
       DATABASE_URL: "sqlite:///app/data/net-identity.db?mode=rwc"
       RADIUS_BIND: "0.0.0.0:1813"
+      RADIUS_SECRET: "${RADIUS_SECRET:-secret}"
       AD_SYSLOG_BIND: "0.0.0.0:5514"
       DHCP_SYSLOG_BIND: "0.0.0.0:5516"
+      VPN_SYSLOG_BIND: "0.0.0.0:5518"
       ADMIN_HTTP_BIND: "0.0.0.0:8080"
-      ENGINE_SERVICE_TOKEN: "${ENGINE_SERVICE_TOKEN:-}"
-      RUST_LOG: info
+      ENGINE_SERVICE_TOKEN: "${ENGINE_SERVICE_TOKEN}"
+      OUI_CSV_PATH: "/app/oui.csv"
+      # TLS (optional)
+      TLS_CA_CERT: "${TLS_CA_CERT:-}"
+      TLS_SERVER_CERT: "${TLS_SERVER_CERT:-}"
+      TLS_SERVER_KEY: "${TLS_SERVER_KEY:-}"
+      RUST_LOG: "${RUST_LOG:-info}"
+    healthcheck:
+      test: ["CMD-SHELL", "sqlite3 /app/data/net-identity.db 'SELECT 1' || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
 
   web:
@@ -27,23 +43,45 @@ services:
     command: trueid-web
     working_dir: /app
     ports:
-      - "3000:3000"
+      - "${WEB_PORT:-3000}:3000"
     volumes:
-      - ./data:/app/data
-      - ./apps/web/assets:/app/assets
+      - trueid-data:/app/data
     environment:
       DATABASE_URL: "sqlite:///app/data/net-identity.db?mode=rwc"
       HTTP_BIND: "0.0.0.0:3000"
       ASSETS_DIR: "/app/assets"
       ENGINE_API_URL: "http://engine:8080"
-      ENGINE_SERVICE_TOKEN: "${ENGINE_SERVICE_TOKEN:-}"
-      JWT_SECRET: "${JWT_SECRET:-}"
-      CONFIG_ENCRYPTION_KEY: "${CONFIG_ENCRYPTION_KEY:-}"
+      ENGINE_SERVICE_TOKEN: "${ENGINE_SERVICE_TOKEN}"
+      JWT_SECRET: "${JWT_SECRET}"
+      CONFIG_ENCRYPTION_KEY: "${CONFIG_ENCRYPTION_KEY}"
       ARGON2_PEPPER: "${ARGON2_PEPPER:-}"
       TRUEID_ADMIN_USER: "${TRUEID_ADMIN_USER:-admin}"
       TRUEID_ADMIN_PASS: "${TRUEID_ADMIN_PASS:-}"
       TRUEID_DEV_MODE: "${TRUEID_DEV_MODE:-false}"
-      RUST_LOG: info
+      # TLS for web (optional, for HTTPS termination)
+      TLS_CERT: "${WEB_TLS_CERT:-}"
+      TLS_KEY: "${WEB_TLS_KEY:-}"
+      RUST_LOG: "${RUST_LOG:-info}"
     depends_on:
-      - engine
+      engine:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     restart: unless-stopped
+
+  # Optional: Prometheus metrics scraper
+  # prometheus:
+  #   image: prom/prometheus:latest
+  #   ports:
+  #     - "9090:9090"
+  #   volumes:
+  #     - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+  #   depends_on:
+  #     - web
+
+volumes:
+  trueid-data:
+    driver: local

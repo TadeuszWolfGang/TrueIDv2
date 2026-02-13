@@ -1,13 +1,14 @@
 # TrueID
 
-**Real-time Identity Correlation Engine** written in Rust.
-Maps IP addresses to user identities using RADIUS (802.1x), Active Directory
-(Kerberos/Syslog) and DHCP — with source-priority scoring and a live dashboard.
+**Real-time identity correlation platform** written in Rust.
+TrueID maps IP addresses to users and devices from multiple telemetry sources and exposes
+RBAC-protected APIs, dashboard workflows, and integration outputs for SOC operations.
 
 ## Requirements
 
-- Rust (stable, >= 1.75) — install: https://rustup.rs
-- macOS / Linux (Windows: WSL2)
+- Rust (stable, >= 1.82) - install: https://rustup.rs
+- Docker + Docker Compose (recommended for deployment)
+- macOS / Linux (Windows via WSL2)
 
 ## Quick Start
 
@@ -27,145 +28,247 @@ make web
 
 ## Commands
 
-| Command       | Description                              |
-|---------------|------------------------------------------|
-| `make setup`  | First-time setup: .env, build, init DB   |
-| `make engine` | Run engine (ingestion + admin API)       |
-| `make web`    | Start web dashboard (port 3000)          |
-| `make run`    | Run engine + web together                |
-| `make check`  | Health check: .env, DB, server status    |
-| `make clean`  | Remove local database                    |
-| `make help`   | Show all available commands              |
+| Command | Description |
+|---|---|
+| `make setup` | First-time setup: `.env`, build, init DB |
+| `make engine` | Run engine (ingestion + admin API) |
+| `make web` | Start web dashboard (port 3000) |
+| `make run` | Run engine + web together |
+| `make check` | Health check: `.env`, DB, server status |
+| `make smoke-test` | Run basic API smoke checks |
+| `make test` | Run full test suite |
+| `make lint` | Run `fmt` + `clippy -D warnings` |
+| `make docker-build` | Build Docker images |
+| `make docker-up` | Start Docker stack |
+| `make docker-down` | Stop Docker stack |
+| `make docker-status` | Show container status + health |
+| `make docker-logs` | Follow container logs |
+| `make docker-backup` | Backup SQLite DB from container |
+| `make help` | Show all available targets |
 
 ## Architecture
 
 ```
- ┌──────────┐  ┌──────────┐  ┌──────────┐
- │  RADIUS  │  │ AD Syslog│  │DHCP Syslog│
- └────┬─────┘  └────┬─────┘  └────┬──────┘
-      │  UDP :1813   │ UDP :5514   │ UDP :5516
-      └──────────────┼─────────────┘
-                     ▼
-            ┌────────────────┐
-            │ TrueID Engine  │   (trueid-engine)
-            │  adapters +    │
-            │  admin API     │   :8080 (internal)
-            └───────┬────────┘
-                    │ write
-                    ▼
-              ┌──────────┐
-              │  SQLite   │
-              └─────┬────┘
-                    │ read
-                    ▼
-            ┌────────────────┐
-            │  TrueID Web    │   (trueid-web)
-            │  API + proxy   │
-            │  + static UI   │   :3000
-            └────────────────┘
+ ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐
+ │  RADIUS  │  │ AD Syslog│  │DHCP Syslog│  │VPN Syslog│
+ └────┬─────┘  └────┬─────┘  └────┬──────┘  └────┬─────┘
+      │ :1813       │ :5514       │ :5516        │ :5518
+      └─────────────┼─────────────┼──────────────┘
+                    ▼             ▼
+           ┌─────────────────────────────┐
+           │       TrueID Engine         │
+           │  Adapters │ Event Loop      │
+           │  Conflict │ Alert Engine    │──► Firewall Push (PAN-OS/FortiGate)
+           │  SNMP     │ DNS Resolver    │──► SIEM Forward (CEF/LEEF/JSON)
+           │  LDAP     │ Prometheus      │──► Webhook Alerts
+           └────────────┬────────────────┘
+                        │ SQLite
+                        ▼
+           ┌─────────────────────────────┐
+           │       TrueID Web            │
+           │  REST API │ Auth (JWT)      │
+           │  Dashboard│ Audit Log       │
+           │  CSV/JSON │ Role-based ACL  │
+           └─────────────────────────────┘
+                     :3000
 ```
 
 ## Components
 
 | Crate | Path | Role |
-|-------|------|------|
-| **trueid-common** | `crates/common` | Shared models, DB pool, migrations, helpers |
-| **trueid-engine** | `apps/engine` | Passive UDP/TLS listener + Admin API (:8080). Writes to DB |
-| **trueid-web** | `apps/web` | HTTP API gateway + dashboard. Reads from DB, proxies writes to engine |
+|---|---|---|
+| `trueid-common` | `crates/common` | Shared models, DB, migrations, crypto/config helpers |
+| `trueid-engine` | `apps/engine` | UDP/TLS ingestion, correlation, push/forward pipelines |
+| `trueid-web` | `apps/web` | REST API + dashboard + auth/RBAC + reporting/export |
+
+## Features
+
+| Category | Feature | Status |
+|---|---|---|
+| **Ingestion** | RADIUS (802.1x) | ✅ |
+|  | Active Directory Syslog | ✅ |
+|  | DHCP Syslog | ✅ |
+|  | VPN Syslog (AnyConnect, GlobalProtect, Fortinet) | ✅ |
+|  | TLS/mTLS agent support | ✅ |
+| **Correlation** | IP<->User<->MAC mapping | ✅ |
+|  | Source priority scoring | ✅ |
+|  | Multi-user session tracking | ✅ |
+|  | IPv4 + IPv6 dual-stack | ✅ |
+| **Network** | Subnet management + auto-tagging | ✅ |
+|  | SNMP switch polling (MAC->port) | ✅ |
+|  | DHCP fingerprinting (device type) | ✅ |
+|  | DNS reverse lookup cache | ✅ |
+|  | OUI vendor resolution | ✅ |
+| **Security** | Conflict detection (3 types) | ✅ |
+|  | Alert rules + webhook | ✅ |
+|  | Firewall User-ID push (PAN-OS, FortiGate) | ✅ |
+|  | SIEM event forwarding (CEF, LEEF, JSON) | ✅ |
+| **Identity** | LDAP/AD group sync | ✅ |
+|  | User group enrichment in API | ✅ |
+| **API** | REST API v1 + v2 | ✅ |
+|  | API key authentication | ✅ |
+|  | JWT session auth + CSRF | ✅ |
+|  | Role-based access (Admin/Operator/Viewer) | ✅ |
+|  | CSV + JSON export | ✅ |
+|  | Timeline (IP/User/MAC) | ✅ |
+|  | Audit log | ✅ |
+| **Monitoring** | Prometheus metrics (`/metrics`) | ✅ |
+|  | Adapter health status | ✅ |
+| **Dashboard** | Live mappings + search | ✅ |
+|  | Conflict management | ✅ |
+|  | Alert rules + history | ✅ |
+|  | Integration management (Firewall/SIEM/LDAP) | ✅ |
+|  | Network management (Subnets/Switches/Fingerprints) | ✅ |
 
 ## Configuration
 
-Copy `.env.example` to `.env` (done automatically by `make setup`):
-
-```env
-DATABASE_URL=sqlite://net-identity.db?mode=rwc
-RADIUS_BIND=0.0.0.0:1813
-AD_SYSLOG_BIND=0.0.0.0:5514
-DHCP_SYSLOG_BIND=0.0.0.0:5516
-HTTP_BIND=0.0.0.0:3000
-RUST_LOG=info
-```
-
-All defaults work out of the box — no changes needed for local development.
-
-## Security
-
-### TLS (REQUIRED for production)
-
-TrueID uses HttpOnly Secure cookies. The browser will only send Secure cookies over HTTPS.
-Without TLS, authentication will not work (unless `TRUEID_DEV_MODE=true`).
-
-**Option A: Reverse proxy (recommended)**
-
-```nginx
-server {
-    listen 443 ssl;
-    server_name trueid.example.com;
-    ssl_certificate /etc/ssl/trueid.pem;
-    ssl_certificate_key /etc/ssl/trueid-key.pem;
-
-    location / {
-        proxy_pass http://trueid-web:3000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
-
-**Option B: Native TLS**
-
-Set `TLS_CERT` and `TLS_KEY` env vars pointing to PEM files. `trueid-web` will use HTTPS directly.
-
-### Required environment variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `JWT_SECRET` | Prod | Random 64+ char secret for JWT signing |
-| `ENGINE_SERVICE_TOKEN` | Prod | Shared secret between web↔engine (≥32 chars) |
-| `CONFIG_ENCRYPTION_KEY` | Prod | 64 hex chars (32-byte AES key) for config encryption |
-| `ARGON2_PEPPER` | Recommended | Extra secret prepended to passwords before hashing |
-| `TRUEID_ADMIN_USER` | First run | Initial admin username |
-| `TRUEID_ADMIN_PASS` | First run | Initial admin password (≥12 chars) |
-| `TLS_CERT` | If native TLS | Path to certificate PEM |
-| `TLS_KEY` | If native TLS | Path to private key PEM |
-| `TRUEID_DEV_MODE` | Dev only | Set `"true"` to relax security for local development |
-
-### Secret generation
+Copy `.env.example` to `.env`:
 
 ```bash
-JWT_SECRET=$(openssl rand -hex 32)
-ENGINE_SERVICE_TOKEN=$(openssl rand -hex 32)
-CONFIG_ENCRYPTION_KEY=$(openssl rand -hex 32)
-ARGON2_PEPPER=$(openssl rand -hex 16)
+cp .env.example .env
+make secrets
 ```
 
-### Network architecture
+Then copy generated secret values into `.env` and set:
 
-- Engine `:8080` must **NEVER** be exposed outside the Docker network.
-- All external access goes through `trueid-web` `:3000` which enforces authentication.
-- Web→Engine communication is secured by `ENGINE_SERVICE_TOKEN` header.
+- `TRUEID_ADMIN_PASS`
+- listener/port overrides (if needed)
+- optional TLS/OUI paths
 
-### Roles
+### Required Secrets
+
+| Variable | Description |
+|---|---|
+| `JWT_SECRET` | JWT signing key for web sessions/API auth |
+| `ENGINE_SERVICE_TOKEN` | Shared secret for web-to-engine internal calls |
+| `CONFIG_ENCRYPTION_KEY` | AES key for sensitive config at rest |
+
+### Security Notes
+
+- Do not expose engine port `8080` outside internal network.
+- Keep `TRUEID_DEV_MODE=false` in production.
+- Use TLS termination (reverse proxy or native certs) for secure cookies/session flow.
+
+## Docker Deployment
+
+### Quick Start (Docker)
+
+```bash
+# Clone and configure
+git clone <repo> && cd TrueID
+cp .env.example .env
+
+# Generate secrets
+make secrets
+# Copy output to .env
+
+# Set initial admin password in .env
+# TRUEID_ADMIN_PASS=YourSecurePassword123
+
+# Build and start
+make docker-build
+make docker-up
+
+# Check status
+make docker-status
+
+# View logs
+make docker-logs
+```
+
+Dashboard: http://localhost:3000
+
+### Ports
+
+| Port | Protocol | Service |
+|---|---|---|
+| 3000 | TCP | Web dashboard + API |
+| 1813 | UDP | RADIUS accounting |
+| 5514 | UDP | AD syslog |
+| 5516 | UDP | DHCP syslog |
+| 5518 | UDP | VPN syslog |
+
+### Backup & Restore
+
+```bash
+# Backup
+make docker-backup
+
+# Restore (stop services first)
+docker compose down
+cp backups/backup-YYYYMMDD-HHMMSS.db data/net-identity.db
+docker compose up -d
+```
+
+## API Reference (summary)
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| POST | `/api/auth/login` | Public | Login |
+| POST | `/api/auth/logout` | Session | Logout |
+| GET | `/api/auth/me` | Session | Current user |
+| GET | `/api/v1/mappings` | Session/Key | List mappings |
+| GET | `/api/v1/stats` | Session/Key | Global stats |
+| GET | `/api/v2/search` | Session/Key | Universal search |
+| GET | `/api/v2/conflicts` | Session/Key | List conflicts |
+| GET | `/api/v2/alerts/rules` | Admin | Alert rules |
+| GET | `/api/v2/subnets` | Session/Key | Subnets |
+| GET | `/api/v2/switches` | Session/Key | SNMP switches |
+| GET | `/api/v2/firewall/targets` | Admin | Firewall targets |
+| GET | `/api/v2/siem/targets` | Admin | SIEM targets |
+| GET | `/api/v2/ldap/config` | Admin | LDAP config |
+| GET | `/api/v2/timeline/ip/{ip}` | Session/Key | IP timeline |
+| GET | `/api/v1/audit-logs` | Admin | Audit log |
+| GET | `/metrics` | Public | Prometheus metrics |
+| GET | `/health` | Public | Health check |
+
+Full API details: inline route documentation (OpenAPI planned).
+
+## Prometheus Monitoring
+
+TrueID exposes Prometheus metrics at `/metrics` (no auth required).
+
+### `prometheus.yml`
+
+```yaml
+scrape_configs:
+  - job_name: trueid
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['trueid-web:3000']
+```
+
+### Available Metrics
+
+| Metric | Type | Description |
+|---|---|---|
+| `trueid_events_total` | counter | Events by source |
+| `trueid_active_mappings` | gauge | Current active mappings |
+| `trueid_conflicts_total` | counter | Total conflicts |
+| `trueid_alerts_fired_total` | counter | Alerts fired |
+| `trueid_firewall_push_total` | counter | Firewall pushes by target |
+| `trueid_siem_events_forwarded_total` | counter | SIEM events forwarded |
+| `trueid_ldap_sync_users` | gauge | Users synced from LDAP |
+| `trueid_uptime_seconds` | gauge | Engine uptime |
+
+## Roles
 
 | Role | Permissions |
-|------|-------------|
-| **Admin** | Full access: user management, API keys, config, audit logs |
-| **Operator** | Read + write mappings, manage own sessions |
-| **Viewer** | Read-only access to mappings, events, stats |
+|---|---|
+| **Admin** | Full access: users, API keys, integrations, audit, settings |
+| **Operator** | Operational write paths, mapping/session management |
+| **Viewer** | Read-only data exploration and reporting |
 
 ## Troubleshooting
 
 | Problem | Solution |
-|---------|----------|
-| White screen on port 3000 | Run `make engine` first, then `make web` |
-| "unable to open database" | Check `DATABASE_URL` in `.env`, run `make setup` |
-| DB exists but tables missing | Run `make engine` to apply migrations |
-| Need full reset | `make clean && make setup` |
+|---|---|
+| Web not responding | Check `make docker-status`, then `make docker-logs` |
+| DB open/migration errors | Verify `DATABASE_URL` and mounted volume permissions |
+| Healthcheck fails | Confirm engine on `:8080`, web on `:3000`, and required secrets |
+| Auth/session issues | Ensure HTTPS/TLS config and correct `JWT_SECRET` |
 
-## Integration
+## Integration Guide
 
-See [INTEGRATION_GUIDE.md](INTEGRATION_GUIDE.md) for step-by-step configuration
-of all supported data sources: TrueID Agent (Windows, TLS), NXLog CE,
-FreeRADIUS, Microsoft NPS, ISC DHCP + rsyslog, Kea DHCP, and Windows DHCP Server.
+See [INTEGRATION_GUIDE.md](INTEGRATION_GUIDE.md) for source-specific integration steps
+(TrueID Agent, NXLog, FreeRADIUS, NPS, DHCP variants, VPN syslog inputs, and more).

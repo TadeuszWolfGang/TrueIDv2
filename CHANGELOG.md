@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Changed
+- Updated container build/runtime hardening in `Dockerfile`: dependency caching layers, non-root `trueid` runtime user, `/app/tls` directory, and expanded exposed ports including VPN syslog `5518/udp`.
+- Updated `docker-compose.yml` for production deployment: named volume `trueid-data`, healthchecks, engine->web startup dependency (`service_healthy`), TLS/OUI mounts, and full env-driven port/config wiring.
+- Updated `Makefile` with deployment operations (`secrets`, `docker-*`, `test*`, `lint`) and fixed `docker-backup` to use a deterministic in-container filename (`backup.db`) with host-side timestamped copies.
+- Expanded `.env.example` and `README.md` to document Phase 3 deployment, Docker workflow, API summary, and Prometheus monitoring; added root `prometheus.yml` scraper config.
 - Added dashboard Network Management tabs in `apps/web/assets/index.html`: Subnets, Switches (SNMP), Fingerprints, and DNS with stats banners, paginated tables, and role-aware actions.
 - Added subnet CRUD UI + inline subnet mappings drill-down; added switch CRUD/poll UI + inline switch-port drill-down; added fingerprint CRUD/backfill UI + observations browser; added DNS cache list/lookup/flush UI.
 - Extended dashboard RBAC visibility rules to support `.role-operator` and `.role-admin`, keeping read-only access for Viewer and mutation controls for Operator/Admin as configured.
