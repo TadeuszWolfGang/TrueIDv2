@@ -11,6 +11,7 @@ mod alerts;
 mod conflicts;
 mod dns_resolver;
 mod fingerprints;
+mod firewall_push;
 mod snmp_poller;
 mod subnets;
 mod tls_listener;
@@ -454,6 +455,7 @@ async fn main() -> Result<()> {
     start_janitor(db.clone());
     dns_resolver::start_dns_resolver(db.clone());
     snmp_poller::start_snmp_poller(db.clone());
+    firewall_push::start_firewall_push(db.clone());
 
     // Optional TLS listeners (only started if cert files exist).
     if tls_files_exist {

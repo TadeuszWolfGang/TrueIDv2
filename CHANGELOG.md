@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Changed
+- Added firewall User-ID push foundation: migration `0019_add_firewall_targets.sql` with `firewall_targets` and `firewall_push_history`.
+- Added engine firewall push module (`apps/engine/src/firewall_push.rs`) with PAN-OS/FortiGate push handlers, per-target TLS policy, PAN-OS key cache, and background push loops.
+- Added web firewall API (`apps/web/src/routes_firewall.rs`) for target CRUD, inline force push, connection test, push history, and firewall stats; wired routes in `apps/web/src/lib.rs`.
 - Added multi-user IP session support (`ip_sessions`) with `mappings.multi_user` and `current_users` populated from active sessions.
 - Extended subnet matching foundation to dual-stack (IPv4 + IPv6 CIDR) and updated v1/v2 mapping queries/exports with `multi_user` and `current_users`.
 - Updated web E2E tests for new mappings CSV schema and added coverage for multi-user sessions and IPv6 mapping flow.

@@ -13,6 +13,7 @@ pub mod routes_audit;
 pub mod routes_auth;
 pub mod routes_conflicts;
 pub mod routes_dns;
+pub mod routes_firewall;
 pub mod routes_fingerprints;
 pub mod routes_proxy;
 pub mod routes_search;
@@ -202,6 +203,27 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v2/dns/stats", get(routes_dns::dns_stats))
         .route("/api/v2/dns/{ip}", get(routes_dns::dns_by_ip))
         .route("/api/v2/dns/:ip", get(routes_dns::dns_by_ip))
+        .route("/api/v2/firewall/stats", get(routes_firewall::firewall_stats))
+        .route(
+            "/api/v2/firewall/targets",
+            get(routes_firewall::list_targets),
+        )
+        .route(
+            "/api/v2/firewall/targets/{id}/history",
+            get(routes_firewall::target_history),
+        )
+        .route(
+            "/api/v2/firewall/targets/:id/history",
+            get(routes_firewall::target_history),
+        )
+        .route(
+            "/api/v2/firewall/targets/{id}",
+            get(routes_firewall::get_target),
+        )
+        .route(
+            "/api/v2/firewall/targets/:id",
+            get(routes_firewall::get_target),
+        )
         .route(
             "/api/v2/fingerprints",
             get(routes_fingerprints::list_fingerprints),
@@ -337,6 +359,34 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v2/dns/{ip}", delete(routes_dns::delete_dns_ip))
         .route("/api/v2/dns/:ip", delete(routes_dns::delete_dns_ip))
         .route("/api/v2/dns/flush", post(routes_dns::flush_dns_cache))
+        .route(
+            "/api/v2/firewall/targets",
+            post(routes_firewall::create_target),
+        )
+        .route(
+            "/api/v2/firewall/targets/{id}/push",
+            post(routes_firewall::force_push),
+        )
+        .route(
+            "/api/v2/firewall/targets/:id/push",
+            post(routes_firewall::force_push),
+        )
+        .route(
+            "/api/v2/firewall/targets/{id}/test",
+            post(routes_firewall::test_target),
+        )
+        .route(
+            "/api/v2/firewall/targets/:id/test",
+            post(routes_firewall::test_target),
+        )
+        .route(
+            "/api/v2/firewall/targets/{id}",
+            put(routes_firewall::update_target).delete(routes_firewall::delete_target),
+        )
+        .route(
+            "/api/v2/firewall/targets/:id",
+            put(routes_firewall::update_target).delete(routes_firewall::delete_target),
+        )
         .route(
             "/api/v2/fingerprints",
             post(routes_fingerprints::create_fingerprint),
