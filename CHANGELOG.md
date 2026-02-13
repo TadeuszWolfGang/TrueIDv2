@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Changed
+- Refactored web handlers to use shared `helpers::require_db(...)` and reduced repeated `DeviceMapping` row mapping via `DeviceMapping::from_row()`.
+- Extracted engine `main.rs` responsibilities into `vendor.rs`, `tls_parsers.rs`, and `adapter_status.rs`; unified MAC normalization in `trueid_common::model::normalize_mac`.
 - Added DNS reverse lookup cache foundation (`0014_add_dns_cache.sql`), engine background resolver loop with TTL/interval config + 3s timeout, new `/api/v2/dns*` endpoints, and `hostname` propagation in v1/v2 mappings/search/export responses.
 - Added subnet/VLAN awareness foundation (migration `0013_add_subnets.sql`, engine subnet cache + post-upsert subnet tagging, and new `/api/v2/subnets*` API endpoints).
 - Extended `DeviceMapping` with `subnet_id` and `subnet_name`, and updated v1/v2 mappings queries + exports to include subnet context (CSV header now includes `subnet_id,subnet_name`).

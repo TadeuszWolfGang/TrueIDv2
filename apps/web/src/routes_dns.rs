@@ -12,6 +12,7 @@ use sqlx::Row;
 use tracing::warn;
 
 use crate::error::{self, ApiError};
+use crate::helpers;
 use crate::middleware::AuthUser;
 use crate::AppState;
 
@@ -88,14 +89,7 @@ pub(crate) async fn list_dns(
     Query(q): Query<DnsQuery>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let page = q.page.unwrap_or(1).max(1);
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
@@ -197,14 +191,7 @@ pub(crate) async fn dns_stats(
     auth: AuthUser,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let total_cached: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM dns_cache")
         .fetch_one(db.pool())
@@ -289,14 +276,7 @@ pub(crate) async fn dns_by_ip(
     Path(ip): Path<String>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let row = sqlx::query(
         "SELECT ip, hostname, previous_hostname, resolved_at, expires_at, first_seen, last_error, resolve_count
@@ -336,14 +316,7 @@ pub(crate) async fn delete_dns_ip(
     Path(ip): Path<String>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let result = sqlx::query("DELETE FROM dns_cache WHERE ip = ?")
         .bind(&ip)
@@ -391,14 +364,7 @@ pub(crate) async fn flush_dns_cache(
     auth: AuthUser,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let result = sqlx::query("DELETE FROM dns_cache")
         .execute(db.pool())

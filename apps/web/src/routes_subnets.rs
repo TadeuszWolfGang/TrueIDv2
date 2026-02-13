@@ -13,6 +13,7 @@ use tracing::warn;
 use trueid_common::model::DeviceMapping;
 
 use crate::error::{self, ApiError};
+use crate::helpers;
 use crate::middleware::AuthUser;
 use crate::AppState;
 
@@ -180,14 +181,7 @@ pub(crate) async fn list_subnets(
     auth: AuthUser,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let rows = sqlx::query(
         "SELECT id, cidr, name, vlan_id, location, description, gateway, created_at, updated_at
@@ -222,14 +216,7 @@ pub(crate) async fn create_subnet(
     State(state): State<AppState>,
     Json(body): Json<CreateSubnetRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     validate_fields(
         Some(body.cidr.trim()),
@@ -320,14 +307,7 @@ pub(crate) async fn update_subnet(
     State(state): State<AppState>,
     Json(body): Json<UpdateSubnetRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let existing = sqlx::query("SELECT id FROM subnets WHERE id = ?")
         .bind(id)
@@ -465,14 +445,7 @@ pub(crate) async fn delete_subnet(
     Path(id): Path<i64>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let exists = sqlx::query("SELECT id FROM subnets WHERE id = ?")
         .bind(id)
@@ -546,14 +519,7 @@ pub(crate) async fn subnet_stats(
     auth: AuthUser,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let total_subnets: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM subnets")
         .fetch_one(db.pool())
@@ -646,14 +612,7 @@ pub(crate) async fn subnet_mappings(
     Query(q): Query<SubnetMappingsQuery>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let page = q.page.unwrap_or(1).max(1);
     let per_page = q.per_page.unwrap_or(50).clamp(1, 200);
@@ -695,7 +654,7 @@ pub(crate) async fn subnet_mappings(
 
     let rows = sqlx::query(
         "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
-                m.subnet_id, s.name as subnet_name, d.hostname
+                m.subnet_id, s.name as subnet_name, d.hostname, m.device_type
          FROM mappings m
          LEFT JOIN subnets s ON m.subnet_id = s.id
          LEFT JOIN dns_cache d ON m.ip = d.ip
@@ -720,21 +679,16 @@ pub(crate) async fn subnet_mappings(
 
     let mut data = Vec::with_capacity(rows.len());
     for row in rows {
-        let source_str: String = row.try_get("source").unwrap_or_default();
-        let confidence: i64 = row.try_get("confidence").unwrap_or(0);
-        data.push(DeviceMapping {
-            ip: row.try_get("ip").unwrap_or_default(),
-            mac: row.try_get("mac").ok(),
-            current_users: vec![row.try_get("user").unwrap_or_default()],
-            last_seen: row.try_get("last_seen").unwrap_or_else(|_| Utc::now()),
-            source: trueid_common::model::source_from_str(&source_str),
-            confidence_score: u8::try_from(confidence).unwrap_or(0),
-            is_active: row.try_get("is_active").unwrap_or(false),
-            vendor: row.try_get("vendor").ok(),
-            subnet_id: row.try_get("subnet_id").ok(),
-            subnet_name: row.try_get("subnet_name").ok(),
-            hostname: row.try_get("hostname").ok(),
-        });
+        let mapping = DeviceMapping::from_row(&row).map_err(|e| {
+            warn!(error = %e, subnet_id = id, "Failed to decode subnet mapping row");
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error::INTERNAL_ERROR,
+                "Failed to list subnet mappings",
+            )
+            .with_request_id(&auth.request_id)
+        })?;
+        data.push(mapping);
     }
 
     Ok(Json(PaginatedSubnetMappings {

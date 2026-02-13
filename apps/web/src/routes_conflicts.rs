@@ -13,6 +13,7 @@ use sqlx::Row;
 use std::collections::HashMap;
 
 use crate::error::{self, ApiError};
+use crate::helpers;
 use crate::middleware::AuthUser;
 use crate::AppState;
 
@@ -147,14 +148,7 @@ pub async fn list_conflicts(
     Query(q): Query<ListConflictsQuery>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let from_dt = parse_datetime_param(&q.from_ts, "from", &auth.request_id)?;
     let to_dt = parse_datetime_param(&q.to_ts, "to", &auth.request_id)?;
@@ -271,14 +265,7 @@ pub async fn conflict_stats(
     auth: AuthUser,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let total_row = sqlx::query("SELECT COUNT(*) as c FROM conflicts WHERE resolved_at IS NULL")
         .fetch_one(db.pool())
@@ -359,14 +346,7 @@ pub async fn resolve_conflict(
     State(state): State<AppState>,
     Json(body): Json<ResolveConflictRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let existing = sqlx::query("SELECT details, resolved_at FROM conflicts WHERE id = ?")
         .bind(id)

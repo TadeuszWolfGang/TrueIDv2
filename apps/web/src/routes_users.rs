@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use crate::error::{self, ApiError};
+use crate::helpers;
 use crate::middleware::AuthUser;
 use crate::AppState;
 use trueid_common::model::{UserPublic, UserRole};
@@ -62,17 +63,11 @@ fn validate_username(username: &str) -> bool {
 
 /// Lists all users with pagination.
 pub async fn list_users(
-    _auth: AuthUser,
+    auth: AuthUser,
     Query(q): Query<UsersQuery>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let page = q.page.unwrap_or(1).max(1);
     let per_page = q.per_page.unwrap_or(50).clamp(1, 200);
@@ -127,13 +122,7 @@ pub async fn create_user(
         .with_request_id(&auth.request_id));
     }
 
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let user = db
         .create_user(&body.username, &body.password, body.role)
@@ -185,13 +174,7 @@ pub async fn get_user(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let user = db.get_user_by_id(id).await.ok().flatten().ok_or_else(|| {
         ApiError::new(StatusCode::NOT_FOUND, error::NOT_FOUND, "User not found")
@@ -219,13 +202,7 @@ pub async fn change_role(
         .with_request_id(&auth.request_id));
     }
 
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let user = db.get_user_by_id(id).await.ok().flatten().ok_or_else(|| {
         ApiError::new(StatusCode::NOT_FOUND, error::NOT_FOUND, "User not found")
@@ -286,13 +263,7 @@ pub async fn reset_password(
         .with_request_id(&auth.request_id));
     }
 
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let _user = db.get_user_by_id(id).await.ok().flatten().ok_or_else(|| {
         ApiError::new(StatusCode::NOT_FOUND, error::NOT_FOUND, "User not found")
@@ -335,13 +306,7 @@ pub async fn unlock_account(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let _user = db.get_user_by_id(id).await.ok().flatten().ok_or_else(|| {
         ApiError::new(StatusCode::NOT_FOUND, error::NOT_FOUND, "User not found")
@@ -390,13 +355,7 @@ pub async fn delete_user(
         .with_request_id(&auth.request_id));
     }
 
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let user = db.get_user_by_id(id).await.ok().flatten().ok_or_else(|| {
         ApiError::new(StatusCode::NOT_FOUND, error::NOT_FOUND, "User not found")

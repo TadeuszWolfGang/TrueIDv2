@@ -111,6 +111,8 @@ fn parse_event(message: &[u8]) -> Result<Option<IdentityEvent>> {
 
 /// Normalizes a MAC address by removing separators.
 ///
+/// NOTE: intentionally different from `trueid_common::model::normalize_mac` — stores raw hex without colons.
+///
 /// Parameters: `value` - MAC address string.
 /// Returns: normalized lowercase hex string.
 fn normalize_mac(value: &str) -> String {

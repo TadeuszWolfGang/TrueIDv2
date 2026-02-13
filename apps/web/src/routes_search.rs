@@ -16,9 +16,10 @@ use std::time::Instant;
 use tracing::warn;
 
 use crate::error::{self, ApiError};
+use crate::helpers;
 use crate::middleware::AuthUser;
 use crate::AppState;
-use trueid_common::model::{source_from_str, DeviceMapping, StoredEvent};
+use trueid_common::model::{DeviceMapping, StoredEvent};
 
 const DEFAULT_PAGE: u32 = 1;
 const DEFAULT_LIMIT: u32 = 50;
@@ -425,14 +426,7 @@ pub async fn search(
     Query(q): Query<SearchQuery>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let scope = parse_scope(q.scope.as_deref(), &auth.request_id)?;
     let from_dt = parse_datetime_param(&q.from_ts, "from", &auth.request_id)?;
@@ -457,7 +451,7 @@ pub async fn search(
         let count_sql = format!("SELECT COUNT(*) as c FROM mappings m {where_clause}");
         let data_sql = format!(
             "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
-                    m.subnet_id, s.name as subnet_name, d.hostname
+                    m.subnet_id, s.name as subnet_name, d.hostname, m.device_type
              FROM mappings m
              LEFT JOIN subnets s ON m.subnet_id = s.id
              LEFT JOIN dns_cache d ON m.ip = d.ip
@@ -498,21 +492,16 @@ pub async fn search(
 
         let mut data = Vec::with_capacity(rows.len());
         for row in rows {
-            let source_str: String = row.try_get("source").unwrap_or_default();
-            let confidence: i64 = row.try_get("confidence").unwrap_or(0);
-            data.push(DeviceMapping {
-                ip: row.try_get("ip").unwrap_or_default(),
-                mac: row.try_get("mac").ok(),
-                current_users: vec![row.try_get("user").unwrap_or_default()],
-                last_seen: row.try_get("last_seen").unwrap_or_else(|_| Utc::now()),
-                source: source_from_str(&source_str),
-                confidence_score: u8::try_from(confidence).unwrap_or(0),
-                is_active: row.try_get("is_active").unwrap_or(false),
-                vendor: row.try_get("vendor").ok(),
-                subnet_id: row.try_get("subnet_id").ok(),
-                subnet_name: row.try_get("subnet_name").ok(),
-                hostname: row.try_get("hostname").ok(),
-            });
+            let mapping = DeviceMapping::from_row(&row).map_err(|e| {
+                warn!(error = %e, "Search mappings row decode failed");
+                ApiError::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    error::INTERNAL_ERROR,
+                    "Failed to decode mappings row",
+                )
+                .with_request_id(&auth.request_id)
+            })?;
+            data.push(mapping);
         }
 
         mappings = Some(SearchSection { data, total });
@@ -596,14 +585,7 @@ pub async fn export_mappings(
     Query(q): Query<ExportMappingsQuery>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let format = parse_export_format(q.format.as_deref(), &auth.request_id)?;
     let from_dt = parse_datetime_param(&q.from_ts, "from", &auth.request_id)?;
@@ -633,7 +615,7 @@ pub async fn export_mappings(
     };
     let sql = format!(
         "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
-                m.subnet_id, s.name as subnet_name, d.hostname
+                m.subnet_id, s.name as subnet_name, d.hostname, m.device_type
          FROM mappings m
          LEFT JOIN subnets s ON m.subnet_id = s.id
          LEFT JOIN dns_cache d ON m.ip = d.ip
@@ -655,21 +637,16 @@ pub async fn export_mappings(
 
     let mut data = Vec::with_capacity(rows.len());
     for row in rows {
-        let source_str: String = row.try_get("source").unwrap_or_default();
-        let confidence: i64 = row.try_get("confidence").unwrap_or(0);
-        data.push(DeviceMapping {
-            ip: row.try_get("ip").unwrap_or_default(),
-            mac: row.try_get("mac").ok(),
-            current_users: vec![row.try_get("user").unwrap_or_default()],
-            last_seen: row.try_get("last_seen").unwrap_or_else(|_| Utc::now()),
-            source: source_from_str(&source_str),
-            confidence_score: u8::try_from(confidence).unwrap_or(0),
-            is_active: row.try_get("is_active").unwrap_or(false),
-            vendor: row.try_get("vendor").ok(),
-            subnet_id: row.try_get("subnet_id").ok(),
-            subnet_name: row.try_get("subnet_name").ok(),
-            hostname: row.try_get("hostname").ok(),
-        });
+        let mapping = DeviceMapping::from_row(&row).map_err(|e| {
+            warn!(error = %e, "Export mappings row decode failed");
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error::INTERNAL_ERROR,
+                "Failed to decode mappings row",
+            )
+            .with_request_id(&auth.request_id)
+        })?;
+        data.push(mapping);
     }
 
     if let Some(db) = &state.db {
@@ -708,12 +685,12 @@ pub async fn export_mappings(
     }
 
     let mut csv = String::from(
-        "ip,user,mac,source,last_seen,confidence,is_active,vendor,subnet_id,subnet_name,hostname\n",
+        "ip,user,mac,source,last_seen,confidence,is_active,vendor,subnet_id,subnet_name,hostname,device_type\n",
     );
     for row in &data {
         let user = row.current_users.first().cloned().unwrap_or_default();
         let line = format!(
-            "{},{},{},{},{},{},{},{},{},{},{}\n",
+            "{},{},{},{},{},{},{},{},{},{},{},{}\n",
             csv_escape(&row.ip),
             csv_escape(&user),
             csv_escape(row.mac.as_deref().unwrap_or("")),
@@ -725,6 +702,7 @@ pub async fn export_mappings(
             row.subnet_id.map(|v| v.to_string()).unwrap_or_default(),
             csv_escape(row.subnet_name.as_deref().unwrap_or("")),
             csv_escape(row.hostname.as_deref().unwrap_or("")),
+            csv_escape(row.device_type.as_deref().unwrap_or("")),
         );
         csv.push_str(&line);
     }
@@ -747,14 +725,7 @@ pub async fn export_events(
     Query(q): Query<ExportEventsQuery>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let format = parse_export_format(q.format.as_deref(), &auth.request_id)?;
     let from_dt = parse_datetime_param(&q.from_ts, "from", &auth.request_id)?;

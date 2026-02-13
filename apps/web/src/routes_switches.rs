@@ -10,8 +10,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use tracing::warn;
+use trueid_common::model::normalize_mac;
 
 use crate::error::{self, ApiError};
+use crate::helpers;
 use crate::middleware::AuthUser;
 use crate::AppState;
 
@@ -179,27 +181,6 @@ fn validate_switch_fields(
     Ok(())
 }
 
-/// Normalizes MAC to lowercase colon-separated notation.
-///
-/// Parameters: `mac` - input MAC string.
-/// Returns: normalized MAC string.
-fn normalize_mac(mac: &str) -> String {
-    let hex: String = mac.chars().filter(|c| c.is_ascii_hexdigit()).collect();
-    if hex.len() != 12 {
-        return mac.to_ascii_lowercase();
-    }
-    let h = hex.to_ascii_lowercase();
-    format!(
-        "{}:{}:{}:{}:{}:{}",
-        &h[0..2],
-        &h[2..4],
-        &h[4..6],
-        &h[6..8],
-        &h[8..10],
-        &h[10..12]
-    )
-}
-
 /// Maps SQL row to switch response.
 ///
 /// Parameters: `row` - SQL row.
@@ -234,14 +215,7 @@ pub(crate) async fn list_switches(
     auth: AuthUser,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let rows = sqlx::query(
         "SELECT id, ip, name, snmp_version, port, poll_interval_secs, enabled, subnet_id, location,
@@ -274,14 +248,7 @@ pub(crate) async fn get_switch(
     Path(id): Path<i64>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let row = sqlx::query(
         "SELECT id, ip, name, snmp_version, port, poll_interval_secs, enabled, subnet_id, location,
@@ -319,14 +286,7 @@ pub(crate) async fn create_switch(
     State(state): State<AppState>,
     Json(req): Json<CreateSwitchRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     validate_switch_fields(
         Some(&req.ip),
@@ -418,14 +378,7 @@ pub(crate) async fn update_switch(
     State(state): State<AppState>,
     Json(req): Json<UpdateSwitchRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
     validate_switch_fields(
         req.ip.as_deref(),
         req.name.as_deref(),
@@ -538,14 +491,7 @@ pub(crate) async fn delete_switch(
     Path(id): Path<i64>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let result = sqlx::query("DELETE FROM snmp_switches WHERE id = ?")
         .bind(id)
@@ -592,14 +538,7 @@ pub(crate) async fn force_poll(
     Path(id): Path<i64>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let result = sqlx::query(
         "UPDATE snmp_switches
@@ -657,14 +596,7 @@ pub(crate) async fn switch_stats(
     auth: AuthUser,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let total_switches: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM snmp_switches")
         .fetch_one(db.pool())
@@ -750,14 +682,7 @@ pub(crate) async fn list_port_mappings(
     Query(q): Query<PortQuery>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let page = q.page.unwrap_or(1).max(1);
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
@@ -766,8 +691,9 @@ pub(crate) async fn list_port_mappings(
     let mut conditions = Vec::<String>::new();
     let mut binds = Vec::<String>::new();
     if let Some(mac) = q.mac.as_deref() {
+        let normalized = normalize_mac(mac).unwrap_or_else(|| mac.to_ascii_lowercase());
         conditions.push("sp.mac LIKE ?".to_string());
-        binds.push(format!("%{}%", normalize_mac(mac)));
+        binds.push(format!("%{normalized}%"));
     }
     if let Some(port_name) = q.port_name.as_deref() {
         conditions.push("sp.port_name LIKE ?".to_string());
@@ -883,15 +809,8 @@ pub(crate) async fn port_by_mac(
     Path(mac): Path<String>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
-    let target = normalize_mac(&mac);
+    let db = helpers::require_db(&state, &auth.request_id)?;
+    let target = normalize_mac(&mac).unwrap_or_else(|| mac.to_ascii_lowercase());
 
     let rows = sqlx::query(
         "SELECT sp.id, sp.switch_id, sw.name as switch_name, sp.mac, sp.port_index, sp.if_index, sp.port_name, sp.vlan_id, sp.first_seen, sp.last_seen

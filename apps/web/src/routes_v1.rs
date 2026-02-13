@@ -134,7 +134,7 @@ pub(crate) async fn api_v1_mappings(
     let count_sql = format!("SELECT COUNT(*) as c FROM mappings m {}", where_clause);
     let data_sql = format!(
         "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
-                m.subnet_id, s.name as subnet_name, d.hostname
+                m.subnet_id, s.name as subnet_name, d.hostname, m.device_type
          FROM mappings m
          LEFT JOIN subnets s ON m.subnet_id = s.id
          LEFT JOIN dns_cache d ON m.ip = d.ip
@@ -175,31 +175,14 @@ pub(crate) async fn api_v1_mappings(
 
     let mut data = Vec::with_capacity(rows.len());
     for row in rows {
-        let ip: String = row.try_get("ip").unwrap_or_default();
-        let user: String = row.try_get("user").unwrap_or_default();
-        let source_str: String = row.try_get("source").unwrap_or_default();
-        let mac: Option<String> = row.try_get("mac").ok();
-        let last_seen = row.try_get("last_seen").unwrap_or_else(|_| Utc::now());
-        let confidence: i64 = row.try_get("confidence").unwrap_or(0);
-        let is_active: bool = row.try_get("is_active").unwrap_or(false);
-        let vendor: Option<String> = row.try_get("vendor").ok();
-        let subnet_id: Option<i64> = row.try_get("subnet_id").ok();
-        let subnet_name: Option<String> = row.try_get("subnet_name").ok();
-        let hostname: Option<String> = row.try_get("hostname").ok();
-
-        data.push(DeviceMapping {
-            ip,
-            mac,
-            current_users: vec![user],
-            last_seen,
-            source: trueid_common::model::source_from_str(&source_str),
-            confidence_score: u8::try_from(confidence).unwrap_or(0),
-            is_active,
-            vendor,
-            subnet_id,
-            subnet_name,
-            hostname,
-        });
+        let mapping = DeviceMapping::from_row(&row).map_err(|e| {
+            warn!(error = %e, "Mappings row decode failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"error": "query failed"})),
+            )
+        })?;
+        data.push(mapping);
     }
 
     Ok(Json(PaginatedMappings {

@@ -12,6 +12,7 @@ use sqlx::Row;
 use tracing::warn;
 
 use crate::error::{self, ApiError};
+use crate::helpers;
 use crate::middleware::AuthUser;
 use crate::AppState;
 
@@ -220,14 +221,7 @@ pub async fn timeline_ip(
     Query(q): Query<TimelineQuery>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let (from_dt, to_dt) = resolve_time_range(&q, &auth.request_id)?;
     let page = q.page.unwrap_or(1).max(1);
@@ -413,14 +407,7 @@ pub async fn timeline_user(
     Query(q): Query<TimelineQuery>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let (from_dt, to_dt) = resolve_time_range(&q, &auth.request_id)?;
     let page = q.page.unwrap_or(1).max(1);
@@ -571,14 +558,7 @@ pub async fn timeline_mac(
     Query(_q): Query<TimelineQuery>,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let rows = sqlx::query(
         "SELECT ip, user, source, last_seen, is_active

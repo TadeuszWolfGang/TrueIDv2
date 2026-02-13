@@ -16,6 +16,7 @@ use crate::auth::{
     REFRESH_COOKIE_NAME, REFRESH_TOKEN_TTL,
 };
 use crate::error::{self, ApiError};
+use crate::helpers;
 use crate::middleware::AuthUser;
 use crate::AppState;
 use trueid_common::auth_provider::AuthResult;
@@ -131,13 +132,7 @@ pub async fn login(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-    })?;
+    let db = helpers::require_db(&state, &rid)?;
     let auth_chain = state.auth_chain.as_ref().ok_or_else(|| {
         ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -273,13 +268,7 @@ pub async fn logout(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
     let ip = client_ip(&headers);
 
     // Revoke the specific refresh session.
@@ -325,13 +314,7 @@ pub async fn logout_all(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
     let ip = client_ip(&headers);
 
     let count = db.revoke_all_sessions(auth.user_id).await.unwrap_or(0);
@@ -370,13 +353,7 @@ pub async fn refresh(
 ) -> Result<impl IntoResponse, ApiError> {
     let rid = request_id.0;
 
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-    })?;
+    let db = helpers::require_db(&state, &rid)?;
 
     let cookie_header = headers
         .get(header::COOKIE)
@@ -475,13 +452,7 @@ pub async fn me(
     auth: AuthUser,
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let user = db
         .get_user_by_id(auth.user_id)
@@ -541,13 +512,7 @@ pub async fn change_password(
         .with_request_id(&auth.request_id));
     }
 
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
     let auth_chain = state.auth_chain.as_ref().ok_or_else(|| {
         ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -679,13 +644,7 @@ pub async fn list_sessions(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
 
     let sessions = db.list_active_sessions(auth.user_id).await.map_err(|e| {
         warn!(error = %e, "Failed to list sessions");
@@ -727,13 +686,7 @@ pub async fn revoke_session(
     headers: axum::http::HeaderMap,
     Path(session_id): Path<i64>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let db = state.db.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            error::SERVICE_UNAVAILABLE,
-            "Database unavailable",
-        )
-    })?;
+    let db = helpers::require_db(&state, &auth.request_id)?;
     let ip = client_ip(&headers);
 
     // Ensure session belongs to user.

@@ -179,7 +179,7 @@ impl Db {
     pub async fn get_mapping(&self, ip: &str) -> Result<Option<DeviceMapping>> {
         let row = sqlx::query(
             "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
-                    m.subnet_id, s.name as subnet_name, d.hostname
+                    m.subnet_id, s.name as subnet_name, d.hostname, m.device_type
              FROM mappings m
              LEFT JOIN subnets s ON m.subnet_id = s.id
              LEFT JOIN dns_cache d ON m.ip = d.ip
@@ -192,34 +192,7 @@ impl Db {
         let Some(row) = row else {
             return Ok(None);
         };
-
-        let ip: String = row.try_get("ip")?;
-        let user: String = row.try_get("user")?;
-        let source: String = row.try_get("source")?;
-        let mac: Option<String> = row.try_get("mac")?;
-        let last_seen: DateTime<Utc> = row.try_get("last_seen")?;
-        let confidence: i64 = row.try_get("confidence")?;
-        let confidence_score =
-            u8::try_from(confidence).context("confidence value out of u8 range")?;
-        let is_active: bool = row.try_get("is_active")?;
-        let vendor: Option<String> = row.try_get("vendor")?;
-        let subnet_id: Option<i64> = row.try_get("subnet_id").ok();
-        let subnet_name: Option<String> = row.try_get("subnet_name").ok();
-        let hostname: Option<String> = row.try_get("hostname").ok();
-
-        Ok(Some(DeviceMapping {
-            ip,
-            mac,
-            current_users: vec![user],
-            last_seen,
-            source: source_from_str(&source),
-            confidence_score,
-            is_active,
-            vendor,
-            subnet_id,
-            subnet_name,
-            hostname,
-        }))
+        Ok(Some(DeviceMapping::from_row(&row)?))
     }
 
     /// Marks mappings as inactive when `last_seen` exceeds the TTL.
@@ -245,7 +218,7 @@ impl Db {
     pub async fn get_active_mappings(&self) -> Result<Vec<DeviceMapping>> {
         let rows = sqlx::query(
             "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
-                    m.subnet_id, s.name as subnet_name, d.hostname
+                    m.subnet_id, s.name as subnet_name, d.hostname, m.device_type
              FROM mappings m
              LEFT JOIN subnets s ON m.subnet_id = s.id
              LEFT JOIN dns_cache d ON m.ip = d.ip
@@ -257,33 +230,7 @@ impl Db {
 
         let mut results = Vec::with_capacity(rows.len());
         for row in rows {
-            let ip: String = row.try_get("ip")?;
-            let user: String = row.try_get("user")?;
-            let source: String = row.try_get("source")?;
-            let mac: Option<String> = row.try_get("mac")?;
-            let last_seen: DateTime<Utc> = row.try_get("last_seen")?;
-            let confidence: i64 = row.try_get("confidence")?;
-            let confidence_score =
-                u8::try_from(confidence).context("confidence value out of u8 range")?;
-            let is_active: bool = row.try_get("is_active")?;
-            let vendor: Option<String> = row.try_get("vendor")?;
-            let subnet_id: Option<i64> = row.try_get("subnet_id").ok();
-            let subnet_name: Option<String> = row.try_get("subnet_name").ok();
-            let hostname: Option<String> = row.try_get("hostname").ok();
-
-            results.push(DeviceMapping {
-                ip,
-                mac,
-                current_users: vec![user],
-                last_seen,
-                source: source_from_str(&source),
-                confidence_score,
-                is_active,
-                vendor,
-                subnet_id,
-                subnet_name,
-                hostname,
-            });
+            results.push(DeviceMapping::from_row(&row)?);
         }
 
         Ok(results)
@@ -554,7 +501,7 @@ impl Db {
     pub async fn get_recent_mappings(&self, limit: i64) -> Result<Vec<DeviceMapping>> {
         let rows = sqlx::query(
             "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
-                    m.subnet_id, s.name as subnet_name, d.hostname
+                    m.subnet_id, s.name as subnet_name, d.hostname, m.device_type
              FROM mappings m
              LEFT JOIN subnets s ON m.subnet_id = s.id
              LEFT JOIN dns_cache d ON m.ip = d.ip
@@ -567,33 +514,7 @@ impl Db {
 
         let mut results = Vec::with_capacity(rows.len());
         for row in rows {
-            let ip: String = row.try_get("ip")?;
-            let user: String = row.try_get("user")?;
-            let source: String = row.try_get("source")?;
-            let mac: Option<String> = row.try_get("mac")?;
-            let last_seen: DateTime<Utc> = row.try_get("last_seen")?;
-            let confidence: i64 = row.try_get("confidence")?;
-            let confidence_score =
-                u8::try_from(confidence).context("confidence value out of u8 range")?;
-            let is_active: bool = row.try_get("is_active")?;
-            let vendor: Option<String> = row.try_get("vendor")?;
-            let subnet_id: Option<i64> = row.try_get("subnet_id").ok();
-            let subnet_name: Option<String> = row.try_get("subnet_name").ok();
-            let hostname: Option<String> = row.try_get("hostname").ok();
-
-            results.push(DeviceMapping {
-                ip,
-                mac,
-                current_users: vec![user],
-                last_seen,
-                source: source_from_str(&source),
-                confidence_score,
-                is_active,
-                vendor,
-                subnet_id,
-                subnet_name,
-                hostname,
-            });
+            results.push(DeviceMapping::from_row(&row)?);
         }
 
         Ok(results)

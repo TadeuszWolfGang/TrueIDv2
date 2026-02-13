@@ -5,13 +5,17 @@
 //! events and persists them to SQLite. Exposes an internal Admin HTTP
 //! API on a separate port for configuration and monitoring.
 
+mod adapter_status;
 mod admin_api;
 mod alerts;
 mod conflicts;
 mod dns_resolver;
+mod fingerprints;
 mod snmp_poller;
 mod subnets;
 mod tls_listener;
+mod tls_parsers;
+mod vendor;
 
 use anyhow::Result;
 use axum::Router;
@@ -19,7 +23,6 @@ use chrono::Utc;
 use net_identity_adapter_ad_logs::AdLogsAdapter;
 use net_identity_adapter_dhcp_logs::DhcpLogsAdapter;
 use net_identity_adapter_radius::RadiusAdapter;
-use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
@@ -29,10 +32,12 @@ use tokio::sync::RwLock;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 use trueid_common::db::Db;
-use trueid_common::model::{AdapterStatus, IdentityEvent};
+use trueid_common::model::{AdapterStatus, IdentityEvent, SourceType};
 use trueid_common::{env_or_default, parse_socket_addr};
 
 use crate::admin_api::{EngineAdminState, RuntimeEnv};
+pub(crate) use crate::vendor::resolve_vendor;
+use crate::vendor::{load_oui_csv, VendorMap};
 
 const DEFAULT_DB_URL: &str = "sqlite://net-identity.db?mode=rwc";
 const DEFAULT_RADIUS_ADDR: &str = "0.0.0.0:1813";
@@ -47,59 +52,6 @@ const DEFAULT_TLS_CERT: &str = "./certs/server.pem";
 const DEFAULT_TLS_KEY: &str = "./certs/server-key.pem";
 const DEFAULT_ADMIN_HTTP_ADDR: &str = "127.0.0.1:8080";
 
-/// OUI-to-vendor lookup table (key: uppercase 6-char hex prefix).
-type VendorMap = HashMap<String, String>;
-
-/// Loads the IEEE OUI database from a CSV file into a `VendorMap`.
-///
-/// CSV format: Registry, Assignment, Organization Name, Organization Address.
-/// Uses index-based field access for robustness with quoted fields.
-///
-/// Parameters: `path` - filesystem path to oui.csv.
-/// Returns: populated `VendorMap` or an error.
-fn load_oui_csv(path: &Path) -> Result<VendorMap> {
-    let mut reader = csv::Reader::from_path(path)?;
-    let mut map = HashMap::with_capacity(40_000);
-    let mut sample_count = 0_u32;
-
-    for result in reader.records() {
-        let record = result?;
-        let oui = record.get(1).unwrap_or("").trim().to_ascii_uppercase();
-        let vendor = record.get(2).unwrap_or("").trim().to_string();
-
-        if sample_count < 5 {
-            info!(oui = %oui, vendor = %vendor, "Sample parsed");
-            sample_count += 1;
-        }
-
-        if !oui.is_empty() && !vendor.is_empty() {
-            map.insert(oui, vendor);
-        }
-    }
-    Ok(map)
-}
-
-/// Resolves a MAC address to a vendor name using the OUI map.
-///
-/// Strips separators (`:`, `-`, `.`), takes the first 6 hex chars,
-/// uppercases them, and queries the map.
-///
-/// Parameters: `mac` - raw MAC string (any separator), `vendors` - OUI lookup table.
-/// Returns: vendor name if found.
-pub fn resolve_vendor(mac: &str, vendors: &VendorMap) -> Option<String> {
-    let hex: String = mac
-        .chars()
-        .filter(|c| c.is_ascii_hexdigit())
-        .collect::<String>()
-        .to_uppercase();
-    if hex.len() < 6 {
-        return None;
-    }
-    let oui_key = &hex[..6];
-    info!(oui_key = %oui_key, mac = %mac, "Looking up OUI");
-    vendors.get(oui_key).cloned()
-}
-
 /// Runs the event processing loop, persisting each event to the database.
 ///
 /// Also updates adapter stats counters for live monitoring.
@@ -113,11 +65,24 @@ async fn run_event_loop(
     vendors: Arc<VendorMap>,
     adapter_stats: Arc<RwLock<Vec<AdapterStatus>>>,
     subnet_cache: Arc<RwLock<Vec<subnets::SubnetEntry>>>,
+    fingerprint_db: Arc<RwLock<fingerprints::FingerprintDb>>,
     alert_rules: Arc<RwLock<Vec<alerts::AlertRule>>>,
     http_client: reqwest::Client,
 ) -> Result<()> {
     while let Some(event) = receiver.recv().await {
         let ip_str = event.ip.to_string();
+        let dhcp_options55 = if matches!(event.source, SourceType::DhcpLease) {
+            tls_parsers::extract_field_value(&event.raw_data, "options55")
+        } else {
+            None
+        };
+        let event_mac = event.mac.clone();
+        let dhcp_hostname =
+            if matches!(event.source, SourceType::DhcpLease) && !event.user.is_empty() {
+                Some(event.user.clone())
+            } else {
+                None
+            };
         let vendor = event
             .mac
             .as_deref()
@@ -190,6 +155,27 @@ async fn run_event_loop(
             let subnets = subnet_cache.read().await;
             if let Err(e) = subnets::tag_subnet(db.pool(), &ip_str, &subnets).await {
                 warn!(error = %e, ip = %ip_str, "Subnet tagging failed");
+            }
+        }
+
+        if let (Some(options55), Some(mac)) = (dhcp_options55.as_deref(), event_mac.as_deref()) {
+            if let Some(normalized) = fingerprints::normalize_fingerprint(options55) {
+                let device_type = {
+                    let fp_db = fingerprint_db.read().await;
+                    fingerprints::match_fingerprint(&normalized, &fp_db)
+                };
+                if let Err(e) = fingerprints::record_observation(
+                    db.pool(),
+                    mac,
+                    &ip_str,
+                    &normalized,
+                    dhcp_hostname.as_deref(),
+                    device_type.as_deref(),
+                )
+                .await
+                {
+                    warn!(error = %e, mac = %mac, "Fingerprint observation failed");
+                }
             }
         }
     }
@@ -266,116 +252,6 @@ fn start_janitor(db: Arc<Db>) {
     });
 }
 
-/// Parses a TLS heartbeat message and upserts agent info.
-///
-/// Expected: `... TrueID-Agent: HEARTBEAT hostname=X uptime=X events_sent=X events_dropped=X`
-///
-/// Parameters: `msg` - raw syslog payload, `db` - database handle.
-pub async fn handle_heartbeat(msg: &str, db: &Db) {
-    let payload = match msg.split("TrueID-Agent: ").nth(1) {
-        Some(p) if p.starts_with("HEARTBEAT") => p,
-        _ => return,
-    };
-    let get = |key: &str| -> Option<String> {
-        payload
-            .split_whitespace()
-            .find(|s| s.starts_with(&format!("{}=", key)))
-            .and_then(|s| s.split_once('='))
-            .map(|(_, v)| v.to_string())
-    };
-    let hostname = match get("hostname") {
-        Some(h) if !h.is_empty() => h,
-        _ => return,
-    };
-    let uptime = get("uptime").and_then(|v| v.parse().ok()).unwrap_or(0);
-    let sent = get("events_sent").and_then(|v| v.parse().ok()).unwrap_or(0);
-    let dropped = get("events_dropped")
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
-
-    if let Err(err) = db
-        .upsert_agent(&hostname, uptime, sent, dropped, "tls")
-        .await
-    {
-        warn!(error = %err, hostname = %hostname, "Failed to upsert agent heartbeat");
-    }
-}
-
-/// Builds the initial adapter stats list for monitoring.
-fn build_initial_adapter_stats(
-    radius_addr: &str,
-    ad_addr: &str,
-    dhcp_addr: &str,
-    ad_tls_addr: &str,
-    dhcp_tls_addr: &str,
-    tls_enabled: bool,
-) -> Vec<AdapterStatus> {
-    let tls_status = if tls_enabled { "idle" } else { "disabled" };
-    vec![
-        AdapterStatus {
-            name: "RADIUS".into(),
-            protocol: "UDP".into(),
-            bind: radius_addr.into(),
-            status: "idle".into(),
-            last_event_at: None,
-            events_total: 0,
-        },
-        AdapterStatus {
-            name: "AD Syslog".into(),
-            protocol: "UDP".into(),
-            bind: ad_addr.into(),
-            status: "idle".into(),
-            last_event_at: None,
-            events_total: 0,
-        },
-        AdapterStatus {
-            name: "DHCP Syslog".into(),
-            protocol: "UDP".into(),
-            bind: dhcp_addr.into(),
-            status: "idle".into(),
-            last_event_at: None,
-            events_total: 0,
-        },
-        AdapterStatus {
-            name: "AD TLS".into(),
-            protocol: "TCP+TLS".into(),
-            bind: ad_tls_addr.into(),
-            status: tls_status.into(),
-            last_event_at: None,
-            events_total: 0,
-        },
-        AdapterStatus {
-            name: "DHCP TLS".into(),
-            protocol: "TCP+TLS".into(),
-            bind: dhcp_tls_addr.into(),
-            status: tls_status.into(),
-            last_event_at: None,
-            events_total: 0,
-        },
-    ]
-}
-
-/// Periodically recomputes adapter status strings based on last_event_at.
-fn start_adapter_status_updater(adapter_stats: Arc<RwLock<Vec<AdapterStatus>>>) {
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(Duration::from_secs(10)).await;
-            let now = Utc::now();
-            let mut stats = adapter_stats.write().await;
-            for a in stats.iter_mut() {
-                if a.status == "disabled" {
-                    continue;
-                }
-                a.status = match a.last_event_at {
-                    Some(t) if (now - t).num_minutes() < 5 => "active".into(),
-                    Some(_) => "idle".into(),
-                    None => "idle".into(),
-                };
-            }
-        }
-    });
-}
-
 /// Starts all adapters, admin HTTP, processes events and waits for Ctrl+C.
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -408,12 +284,36 @@ async fn main() -> Result<()> {
         }
         Err(err) => {
             warn!(error = %err, path = %oui_path, "Failed to load OUI CSV — vendor lookup disabled");
-            Arc::new(HashMap::new())
+            Arc::new(VendorMap::new())
         }
     };
 
     info!(db_url = %db_url, "Initializing database");
     let db = Arc::new(trueid_common::db::init_db(&db_url).await?);
+
+    // DHCP fingerprint DB loaded at startup and refreshed in background.
+    let fingerprint_db: Arc<RwLock<fingerprints::FingerprintDb>> = Arc::new(RwLock::new(
+        fingerprints::load_fingerprints(db.pool())
+            .await
+            .unwrap_or_default(),
+    ));
+    {
+        let reload_fp_db = fingerprint_db.clone();
+        let reload_fp_pool = db.pool().clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                match fingerprints::load_fingerprints(&reload_fp_pool).await {
+                    Ok(new_db) => *reload_fp_db.write().await = new_db,
+                    Err(e) => warn!(error = %e, "Failed to reload fingerprint DB"),
+                }
+            }
+        });
+    }
+    if let Err(e) = fingerprints::backfill_device_types(db.pool()).await {
+        warn!(error = %e, "Failed to backfill mapping device types");
+    }
 
     // TLS paths.
     let tls_ca = env_or_default("TLS_CA_CERT", DEFAULT_TLS_CA);
@@ -426,7 +326,7 @@ async fn main() -> Result<()> {
         && Path::new(&tls_key).exists();
 
     // Adapter stats (shared with admin API).
-    let adapter_stats = Arc::new(RwLock::new(build_initial_adapter_stats(
+    let adapter_stats = Arc::new(RwLock::new(adapter_status::build_initial_adapter_stats(
         &radius_bind_str,
         &ad_syslog_bind_str,
         &dhcp_syslog_bind_str,
@@ -434,7 +334,7 @@ async fn main() -> Result<()> {
         &dhcp_tls_bind_str,
         tls_files_exist,
     )));
-    start_adapter_status_updater(adapter_stats.clone());
+    adapter_status::start_adapter_status_updater(adapter_stats.clone());
 
     // Runtime env snapshot for E4.
     let runtime_env = Arc::new(RuntimeEnv {
@@ -528,6 +428,7 @@ async fn main() -> Result<()> {
     let event_vendors = vendors.clone();
     let event_adapter_stats = adapter_stats.clone();
     let event_subnet_cache = subnet_cache.clone();
+    let event_fingerprint_db = fingerprint_db.clone();
     let event_alert_rules = alert_rules.clone();
     let event_http_client = http_client.clone();
     tokio::spawn(async move {
@@ -537,6 +438,7 @@ async fn main() -> Result<()> {
             event_vendors,
             event_adapter_stats,
             event_subnet_cache,
+            event_fingerprint_db,
             event_alert_rules,
             event_http_client,
         )
@@ -573,9 +475,11 @@ async fn main() -> Result<()> {
                         // Check for heartbeat first.
                         let hb_db = ad_db.clone();
                         let hb_msg = msg.to_string();
-                        tokio::spawn(async move { handle_heartbeat(&hb_msg, &hb_db).await });
+                        tokio::spawn(async move {
+                            tls_parsers::handle_heartbeat(&hb_msg, &hb_db).await
+                        });
 
-                        if let Ok(Some(event)) = parse_tls_syslog_ad(msg) {
+                        if let Ok(Some(event)) = tls_parsers::parse_tls_syslog_ad(msg) {
                             let s = ad_sender.clone();
                             tokio::spawn(async move {
                                 if let Err(err) = s.send(event).await {
@@ -604,9 +508,13 @@ async fn main() -> Result<()> {
                     Arc::new(move |msg: &str, _peer: SocketAddr| {
                         let hb_db = dhcp_db.clone();
                         let hb_msg = msg.to_string();
-                        tokio::spawn(async move { handle_heartbeat(&hb_msg, &hb_db).await });
+                        tokio::spawn(async move {
+                            tls_parsers::handle_heartbeat(&hb_msg, &hb_db).await
+                        });
 
-                        if let Ok(Some(event)) = parse_tls_syslog_dhcp(msg) {
+                        if let Ok(Some((event, _options55))) =
+                            tls_parsers::parse_tls_syslog_dhcp(msg)
+                        {
                             let s = dhcp_sender.clone();
                             tokio::spawn(async move {
                                 if let Err(err) = s.send(event).await {
@@ -647,75 +555,4 @@ async fn main() -> Result<()> {
     db.close().await;
 
     Ok(())
-}
-
-/// Parses a TLS-transported AD syslog message into an IdentityEvent.
-///
-/// Expected format: `<PRI>... TrueID-Agent: AD_LOGON user=X ip=X port=X event_id=X status=X`
-///
-/// Parameters: `msg` - raw syslog payload.
-/// Returns: optional IdentityEvent if the message matches.
-fn parse_tls_syslog_ad(msg: &str) -> anyhow::Result<Option<IdentityEvent>> {
-    let payload = msg.split("TrueID-Agent: ").nth(1).unwrap_or("");
-    if !payload.starts_with("AD_LOGON") {
-        return Ok(None);
-    }
-    let get = |key: &str| -> Option<String> {
-        payload
-            .split_whitespace()
-            .find(|s| s.starts_with(&format!("{}=", key)))
-            .and_then(|s| s.split_once('='))
-            .map(|(_, v)| v.to_string())
-    };
-    let user = get("user").unwrap_or_default();
-    let ip_str = get("ip").unwrap_or_default();
-    let ip: std::net::IpAddr = match ip_str.parse() {
-        Ok(ip) => ip,
-        Err(_) => return Ok(None),
-    };
-    Ok(Some(IdentityEvent {
-        source: trueid_common::model::SourceType::AdLog,
-        ip,
-        user,
-        timestamp: chrono::Utc::now(),
-        raw_data: msg.to_string(),
-        mac: None,
-        confidence_score: 90,
-    }))
-}
-
-/// Parses a TLS-transported DHCP syslog message into an IdentityEvent.
-///
-/// Expected format: `<PRI>... TrueID-Agent: DHCP_LEASE ip=X mac=X hostname=X lease=X`
-///
-/// Parameters: `msg` - raw syslog payload.
-/// Returns: optional IdentityEvent if the message matches.
-fn parse_tls_syslog_dhcp(msg: &str) -> anyhow::Result<Option<IdentityEvent>> {
-    let payload = msg.split("TrueID-Agent: ").nth(1).unwrap_or("");
-    if !payload.starts_with("DHCP_LEASE") {
-        return Ok(None);
-    }
-    let get = |key: &str| -> Option<String> {
-        payload
-            .split_whitespace()
-            .find(|s| s.starts_with(&format!("{}=", key)))
-            .and_then(|s| s.split_once('='))
-            .map(|(_, v)| v.to_string())
-    };
-    let ip_str = get("ip").unwrap_or_default();
-    let ip: std::net::IpAddr = match ip_str.parse() {
-        Ok(ip) => ip,
-        Err(_) => return Ok(None),
-    };
-    let mac = get("mac");
-    let hostname = get("hostname").unwrap_or_default();
-    Ok(Some(IdentityEvent {
-        source: trueid_common::model::SourceType::DhcpLease,
-        ip,
-        user: hostname,
-        timestamp: chrono::Utc::now(),
-        raw_data: msg.to_string(),
-        mac,
-        confidence_score: 60,
-    }))
 }

@@ -4,6 +4,7 @@
 
 pub mod auth;
 pub mod error;
+pub mod helpers;
 pub mod middleware;
 pub mod rate_limit;
 pub mod routes_alerts;
@@ -12,6 +13,7 @@ pub mod routes_audit;
 pub mod routes_auth;
 pub mod routes_conflicts;
 pub mod routes_dns;
+pub mod routes_fingerprints;
 pub mod routes_proxy;
 pub mod routes_search;
 pub mod routes_subnets;
@@ -180,9 +182,14 @@ pub fn build_router(state: AppState) -> Router {
             "/api/v2/subnets/{id}/mappings",
             get(routes_subnets::subnet_mappings),
         )
+        .route(
+            "/api/v2/subnets/:id/mappings",
+            get(routes_subnets::subnet_mappings),
+        )
         .route("/api/v2/switches", get(routes_switches::list_switches))
         .route("/api/v2/switches/stats", get(routes_switches::switch_stats))
         .route("/api/v2/switches/{id}", get(routes_switches::get_switch))
+        .route("/api/v2/switches/:id", get(routes_switches::get_switch))
         .route(
             "/api/v2/switch-ports",
             get(routes_switches::list_port_mappings),
@@ -194,9 +201,23 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v2/dns", get(routes_dns::list_dns))
         .route("/api/v2/dns/stats", get(routes_dns::dns_stats))
         .route("/api/v2/dns/{ip}", get(routes_dns::dns_by_ip))
+        .route("/api/v2/dns/:ip", get(routes_dns::dns_by_ip))
+        .route(
+            "/api/v2/fingerprints",
+            get(routes_fingerprints::list_fingerprints),
+        )
+        .route(
+            "/api/v2/fingerprints/stats",
+            get(routes_fingerprints::fingerprint_stats),
+        )
+        .route(
+            "/api/v2/fingerprints/observations",
+            get(routes_fingerprints::list_observations),
+        )
         .route("/api/v2/alerts/history", get(routes_alerts::alert_history))
         .route("/api/v2/alerts/stats", get(routes_alerts::alert_stats))
         .route("/api/v1/stats", get(routes_v1::api_v1_stats))
+        .route("/lookup/{ip}", get(routes_v1::lookup))
         .route("/lookup/:ip", get(routes_v1::lookup))
         .route("/api/recent", get(routes_v1::recent))
         .route(
@@ -292,17 +313,46 @@ pub fn build_router(state: AppState) -> Router {
             "/api/v2/subnets/{id}",
             put(routes_subnets::update_subnet).delete(routes_subnets::delete_subnet),
         )
+        .route(
+            "/api/v2/subnets/:id",
+            put(routes_subnets::update_subnet).delete(routes_subnets::delete_subnet),
+        )
         .route("/api/v2/switches", post(routes_switches::create_switch))
         .route(
             "/api/v2/switches/{id}",
             put(routes_switches::update_switch).delete(routes_switches::delete_switch),
         )
         .route(
+            "/api/v2/switches/:id",
+            put(routes_switches::update_switch).delete(routes_switches::delete_switch),
+        )
+        .route(
             "/api/v2/switches/{id}/poll",
             post(routes_switches::force_poll),
         )
+        .route(
+            "/api/v2/switches/:id/poll",
+            post(routes_switches::force_poll),
+        )
         .route("/api/v2/dns/{ip}", delete(routes_dns::delete_dns_ip))
+        .route("/api/v2/dns/:ip", delete(routes_dns::delete_dns_ip))
         .route("/api/v2/dns/flush", post(routes_dns::flush_dns_cache))
+        .route(
+            "/api/v2/fingerprints",
+            post(routes_fingerprints::create_fingerprint),
+        )
+        .route(
+            "/api/v2/fingerprints/backfill",
+            post(routes_fingerprints::backfill),
+        )
+        .route(
+            "/api/v2/fingerprints/{id}",
+            delete(routes_fingerprints::delete_fingerprint),
+        )
+        .route(
+            "/api/v2/fingerprints/:id",
+            delete(routes_fingerprints::delete_fingerprint),
+        )
         .route("/api/v1/audit-logs", get(routes_audit::list_audit_logs))
         .route("/api/v1/audit-logs/stats", get(routes_audit::audit_stats))
         .layer(axum_mw::from_fn_with_state(

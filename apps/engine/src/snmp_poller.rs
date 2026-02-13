@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tracing::{info, warn};
 use trueid_common::db::Db;
+use trueid_common::model::normalize_mac;
 
 use std::sync::Arc;
 
@@ -206,7 +207,7 @@ fn poll_switch_sync(ip: &str, community: &str, port: u16) -> Result<Vec<Discover
             .and_then(|idx| if_index_to_name.get(&vec![*idx]).cloned());
 
         results.push(DiscoveredPort {
-            mac: normalize_mac(&mac),
+            mac: normalize_mac(&mac).unwrap_or_else(|| "00:00:00:00:00:00".to_string()),
             port_index: i64::from(*bridge_port),
             if_index: if_idx.map(i64::from),
             port_name,
@@ -340,27 +341,6 @@ fn bytes_to_mac(bytes: &[u8]) -> String {
     format!(
         "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
         o[0], o[1], o[2], o[3], o[4], o[5]
-    )
-}
-
-/// Normalizes MAC into lower-case colon-separated format.
-///
-/// Parameters: `mac` - input MAC in arbitrary separator format.
-/// Returns: normalized MAC or zero MAC if input invalid.
-fn normalize_mac(mac: &str) -> String {
-    let hex: String = mac.chars().filter(|c| c.is_ascii_hexdigit()).collect();
-    if hex.len() != 12 {
-        return "00:00:00:00:00:00".to_string();
-    }
-    let lower = hex.to_ascii_lowercase();
-    format!(
-        "{}:{}:{}:{}:{}:{}",
-        &lower[0..2],
-        &lower[2..4],
-        &lower[4..6],
-        &lower[6..8],
-        &lower[8..10],
-        &lower[10..12]
     )
 }
 

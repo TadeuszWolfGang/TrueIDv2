@@ -132,4 +132,5 @@ mod imp {
     }
 }
 
+#[allow(unused_imports)]
 pub use imp::subscribe;

@@ -70,6 +70,48 @@ pub struct DeviceMapping {
     /// Reverse DNS hostname from PTR record cache.
     #[serde(default)]
     pub hostname: Option<String>,
+    // ── Phase 2: DHCP fingerprinting ──
+    /// Device type identified via DHCP option 55 fingerprint.
+    #[serde(default)]
+    pub device_type: Option<String>,
+}
+
+impl DeviceMapping {
+    /// Constructs a `DeviceMapping` from a SQLx SQLite row.
+    ///
+    /// Parameters: `row` - row containing mapping projection columns.
+    /// Returns: parsed `DeviceMapping` or SQLx decode error.
+    pub fn from_row(row: &sqlx::sqlite::SqliteRow) -> Result<Self, sqlx::Error> {
+        use sqlx::Row;
+
+        let ip: String = row.try_get("ip")?;
+        let user: String = row.try_get("user")?;
+        let source: String = row.try_get("source")?;
+        let mac: Option<String> = row.try_get("mac")?;
+        let last_seen: chrono::DateTime<chrono::Utc> = row.try_get("last_seen")?;
+        let confidence: i64 = row.try_get("confidence")?;
+        let is_active: bool = row.try_get("is_active")?;
+        let vendor: Option<String> = row.try_get("vendor")?;
+        let subnet_id: Option<i64> = row.try_get("subnet_id").ok();
+        let subnet_name: Option<String> = row.try_get("subnet_name").ok();
+        let hostname: Option<String> = row.try_get("hostname").ok();
+        let device_type: Option<String> = row.try_get("device_type").ok();
+
+        Ok(Self {
+            ip,
+            mac,
+            current_users: vec![user],
+            last_seen,
+            source: source_from_str(&source),
+            confidence_score: u8::try_from(confidence).unwrap_or(0),
+            is_active,
+            vendor,
+            subnet_id,
+            subnet_name,
+            hostname,
+            device_type,
+        })
+    }
 }
 
 /// Stored event row from the events table.
@@ -135,6 +177,27 @@ pub fn source_from_str(value: &str) -> SourceType {
         "Manual" => SourceType::Manual,
         _ => SourceType::Manual,
     }
+}
+
+/// Normalizes a MAC address to lowercase colon-separated format.
+///
+/// Parameters: `raw` - MAC address in arbitrary separator format.
+/// Returns: normalized `aa:bb:cc:dd:ee:ff` or `None` for invalid input.
+pub fn normalize_mac(raw: &str) -> Option<String> {
+    let hex: String = raw.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+    if hex.len() != 12 {
+        return None;
+    }
+    let h = hex.to_ascii_lowercase();
+    Some(format!(
+        "{}:{}:{}:{}:{}:{}",
+        &h[0..2],
+        &h[2..4],
+        &h[4..6],
+        &h[6..8],
+        &h[8..10],
+        &h[10..12]
+    ))
 }
 
 /// Default confidence score for events.
