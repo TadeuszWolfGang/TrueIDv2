@@ -179,6 +179,9 @@
     <!-- User bar -->
     <div id="user-bar" style="display:none;justify-content:space-between;align-items:center;margin-bottom:16px;">
       <span id="user-info" style="color:#6b8579;font-size:13px;"></span>
+      <span id="connection-status" style="color:#6b8579;font-size:12px;display:flex;align-items:center;gap:6px;">
+        <span class="dot offline"></span> Polling
+      </span>
       <button class="btn btn-sm" id="logout-btn" onclick="doLogout()">Logout</button>
     </div>
 
@@ -1043,10 +1046,13 @@
         <pre id="analytics-report-json" style="max-height:70vh;overflow:auto;white-space:pre-wrap;color:#c7f9cc;"></pre>
       </div>
     </div>
+    <div id="live-indicator" style="position:fixed;bottom:16px;right:16px;z-index:200;"></div>
 
     <script>
       var currentUser = null;
       var activeTab = 'mappings';
+      var evtSource = null;
+      var sseConnected = false;
       var tabLoaded = {
         mappings: false, search: false, conflicts: false, alerts: false, analytics: false, status: false,
         subnets: false, switches: false, fingerprints: false, dns: false,
@@ -1158,6 +1164,103 @@
         return '<span class="wh-skip">- ' + escapeHtml(status || 'no_webhook') + '</span>';
       }
 
+      function getRealtimePollInterval(tabName) {
+        if ((tabName === 'mappings' || tabName === 'conflicts' || tabName === 'alerts') && sseConnected) {
+          return 120000;
+        }
+        return 30000;
+      }
+
+      function refreshRealtimeTabPolling() {
+        if (activeTab === 'mappings' || activeTab === 'conflicts' || activeTab === 'alerts') {
+          switchTab(activeTab);
+        }
+      }
+
+      function updateConnectionStatus(connected) {
+        var el = document.getElementById('connection-status');
+        if (!el) return;
+        if (connected) {
+          el.innerHTML = '<span class="dot online"></span> Live';
+        } else {
+          el.innerHTML = '<span class="dot offline"></span> Polling';
+        }
+      }
+
+      function showLiveIndicator(type, message) {
+        var host = document.getElementById('live-indicator');
+        if (!host) return;
+        var color = '#22c55e';
+        if (type === 'alert') color = '#ef4444';
+        if (type === 'conflict') color = '#f59e0b';
+        if (type === 'firewall') color = '#60a5fa';
+        var toast = document.createElement('div');
+        toast.style.cssText = 'background:#0f1512;border:1px solid ' + color +
+          ';border-radius:6px;padding:8px 12px;margin-top:8px;font-size:12px;color:' +
+          color + ';max-width:320px;';
+        toast.textContent = 'LIVE ' + message;
+        host.appendChild(toast);
+        setTimeout(function () { toast.remove(); }, 5000);
+      }
+
+      function handleMappingUpdate(data) {
+        showLiveIndicator('mapping', (data.ip || '-') + ' -> ' + (data.user || '-'));
+        if (activeTab === 'mappings') loadMappings(mappingsCurrentPage);
+      }
+
+      function handleConflictEvent(data) {
+        showLiveIndicator('conflict', (data.severity || 'warning') + ': ' + (data.ip || 'unknown'));
+        if (activeTab === 'conflicts') {
+          loadConflictsStats();
+          loadConflicts(conflictsCurrentPage);
+        }
+      }
+
+      function handleAlertEvent(data) {
+        showLiveIndicator('alert', (data.severity || 'warning') + ': ' + (data.rule_name || 'rule'));
+        if (activeTab === 'alerts') {
+          loadAlertStats();
+          loadAlertHistory(alertHistoryCurrentPage);
+        }
+      }
+
+      function handleFirewallEvent(data) {
+        var label = data.target_name || 'firewall';
+        var status = data.success ? 'ok' : 'error';
+        showLiveIndicator('firewall', label + ' push ' + status);
+      }
+
+      function connectSSE() {
+        if (evtSource) evtSource.close();
+        evtSource = new EventSource('/api/v2/events/stream');
+
+        evtSource.onopen = function () {
+          sseConnected = true;
+          updateConnectionStatus(true);
+          refreshRealtimeTabPolling();
+        };
+        evtSource.addEventListener('mapping', function (e) {
+          handleMappingUpdate(JSON.parse(e.data || '{}'));
+        });
+        evtSource.addEventListener('conflict', function (e) {
+          handleConflictEvent(JSON.parse(e.data || '{}'));
+        });
+        evtSource.addEventListener('alert', function (e) {
+          handleAlertEvent(JSON.parse(e.data || '{}'));
+        });
+        evtSource.addEventListener('firewall', function (e) {
+          handleFirewallEvent(JSON.parse(e.data || '{}'));
+        });
+        evtSource.onerror = function () {
+          if (evtSource) evtSource.close();
+          evtSource = null;
+          sseConnected = false;
+          updateConnectionStatus(false);
+          refreshRealtimeTabPolling();
+          setTimeout(connectSSE, 5000);
+        };
+      }
+
       async function initAuth() {
         try {
           var resp = await fetch('/api/auth/me', { credentials: 'include' });
@@ -1173,8 +1276,10 @@
           document.getElementById('user-info').textContent =
             'Logged in as ' + currentUser.username + ' (' + currentUser.role + ')';
           document.getElementById('user-bar').style.display = 'flex';
+          updateConnectionStatus(false);
           applyRoleVisibility(currentUser.role);
           switchTab('mappings');
+          connectSSE();
         } catch (e) {
           window.location = '/login.html';
         }
@@ -1199,6 +1304,12 @@
       }
 
       async function doLogout() {
+        if (evtSource) {
+          evtSource.close();
+          evtSource = null;
+        }
+        sseConnected = false;
+        updateConnectionStatus(false);
         try {
           await fetch('/api/auth/logout', {
             method: 'POST',
@@ -1256,7 +1367,7 @@
           clearTabTimers();
           tabRefreshTimers.mappings = setInterval(function () {
             if (activeTab === 'mappings') loadMappings(mappingsCurrentPage);
-          }, 30000);
+          }, getRealtimePollInterval('mappings'));
         } else if (name === 'search') {
           if (!tabLoaded.search) tabLoaded.search = true;
           clearTabTimers();
@@ -1272,7 +1383,7 @@
               loadConflictsStats();
               loadConflicts(conflictsCurrentPage);
             }
-          }, 30000);
+          }, getRealtimePollInterval('conflicts'));
         } else if (name === 'alerts') {
           if (!tabLoaded.alerts) {
             tabLoaded.alerts = true;
@@ -1287,7 +1398,7 @@
               loadAlertHistory(alertHistoryCurrentPage);
               if (currentUser && currentUser.role === 'Admin') loadAlertRules();
             }
-          }, 30000);
+          }, getRealtimePollInterval('alerts'));
         } else if (name === 'analytics') {
           if (!tabLoaded.analytics) {
             tabLoaded.analytics = true;

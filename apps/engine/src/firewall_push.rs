@@ -1,6 +1,7 @@
 //! Firewall User-ID push loop (PAN-OS and FortiGate).
 
 use anyhow::{anyhow, Context, Result};
+use chrono::Utc;
 use reqwest::StatusCode;
 use sqlx::Row;
 use std::collections::{HashMap, HashSet};
@@ -10,6 +11,9 @@ use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 use trueid_common::db::Db;
+use trueid_common::live_event::LiveEvent;
+
+use crate::live_bus;
 
 /// Firewall vendor type for dispatch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -501,6 +505,12 @@ pub async fn run_push_loop(db: Arc<Db>, target_id: i64) {
                 {
                     warn!(error = %e, target_id, "Failed to update firewall target push status");
                 }
+                live_bus::send(LiveEvent::FirewallPush {
+                    target_name: target.name.clone(),
+                    entries_count: i64::from(count),
+                    success: true,
+                    pushed_at: Utc::now(),
+                });
                 info!(target_id, target = %target.name, pushed = count, "Firewall push cycle complete");
             }
             Err(e) => {
@@ -516,6 +526,12 @@ pub async fn run_push_loop(db: Arc<Db>, target_id: i64) {
                 {
                     warn!(error = %update_err, target_id, "Failed to update firewall push error status");
                 }
+                live_bus::send(LiveEvent::FirewallPush {
+                    target_name: target.name.clone(),
+                    entries_count: 0,
+                    success: false,
+                    pushed_at: Utc::now(),
+                });
                 warn!(error = %msg, target_id, target = %target.name, "Firewall push cycle failed");
             }
         }

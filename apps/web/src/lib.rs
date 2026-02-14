@@ -19,6 +19,7 @@ pub mod routes_firewall;
 pub mod routes_ldap;
 pub mod routes_proxy;
 pub mod routes_search;
+pub mod routes_sse;
 pub mod routes_siem;
 pub mod routes_subnets;
 pub mod routes_switches;
@@ -286,6 +287,7 @@ pub fn build_router(state: AppState) -> Router {
             get(routes_analytics::get_report),
         )
         .route("/api/v1/stats", get(routes_v1::api_v1_stats))
+        .route("/api/v2/events/stream", get(routes_sse::event_stream))
         .route("/lookup/{ip}", get(routes_v1::lookup))
         .route("/lookup/:ip", get(routes_v1::lookup))
         .route("/api/recent", get(routes_v1::recent))

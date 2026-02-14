@@ -13,6 +13,7 @@ mod dns_resolver;
 mod fingerprints;
 mod firewall_push;
 mod ldap_sync;
+mod live_bus;
 mod metrics;
 mod report_generator;
 mod siem_forwarder;
@@ -40,6 +41,7 @@ use tokio::task::JoinHandle;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 use trueid_common::db::Db;
+use trueid_common::live_event::LiveEvent;
 use trueid_common::model::{AdapterStatus, IdentityEvent, SourceType};
 use trueid_common::{env_or_default, parse_socket_addr};
 
@@ -153,6 +155,15 @@ async fn run_event_loop(mut receiver: Receiver<IdentityEvent>, ctx: EventLoopCtx
                         severity: c.severity.clone(),
                         timestamp: Utc::now(),
                     });
+                    live_bus::send(LiveEvent::ConflictDetected {
+                        id: c.id,
+                        conflict_type: c.conflict_type.clone(),
+                        severity: c.severity.clone(),
+                        ip: c.ip.clone(),
+                        user_old: c.user_old.clone(),
+                        user_new: c.user_new.clone(),
+                        detected_at: c.detected_at,
+                    });
                 }
                 detected
             }
@@ -181,6 +192,14 @@ async fn run_event_loop(mut receiver: Receiver<IdentityEvent>, ctx: EventLoopCtx
                 });
                 let pool = db.pool().clone();
                 let client = http_client.clone();
+                live_bus::send(LiveEvent::AlertFired {
+                    rule_name: firing.rule_name.clone(),
+                    rule_type: firing.rule_type.clone(),
+                    severity: firing.severity.clone(),
+                    ip: firing.ip.clone(),
+                    user: firing.user_name.clone(),
+                    fired_at: Utc::now(),
+                });
                 tokio::spawn(async move {
                     alerts::fire_alert(&pool, &client, &firing).await;
                 });
@@ -197,10 +216,21 @@ async fn run_event_loop(mut receiver: Receiver<IdentityEvent>, ctx: EventLoopCtx
             confidence: event.confidence_score,
             timestamp: event.timestamp,
         };
+        let mapping_user = event.user.clone();
+        let mapping_mac = event.mac.clone();
+        let mapping_timestamp = event.timestamp;
+        let mapping_source = source_name.to_string();
         if let Err(err) = db.upsert_mapping(event, vendor.as_deref()).await {
             warn!(error = %err, "Failed to upsert mapping");
             continue;
         }
+        live_bus::send(LiveEvent::MappingUpdate {
+            ip: ip_str.clone(),
+            user: mapping_user,
+            mac: mapping_mac,
+            source: mapping_source,
+            timestamp: mapping_timestamp,
+        });
         let _ = siem_sender.try_send(siem_mapping_event);
 
         {
@@ -352,6 +382,8 @@ async fn main() -> Result<()> {
 
     info!(db_url = %db_url, "Initializing database");
     let db = Arc::new(trueid_common::db::init_db(&db_url).await?);
+    let (live_tx, _) = tokio::sync::broadcast::channel::<LiveEvent>(1024);
+    live_bus::set_sender(live_tx.clone());
 
     // DHCP fingerprint DB loaded at startup and refreshed in background.
     let fingerprint_db: Arc<RwLock<fingerprints::FingerprintDb>> = Arc::new(RwLock::new(
@@ -431,6 +463,7 @@ async fn main() -> Result<()> {
         runtime_env,
         service_token,
         start_time,
+        live_tx: live_tx.clone(),
     };
     let admin_router: Router = admin_api::admin_router(admin_state);
     info!(%admin_addr, "Starting admin HTTP API");
@@ -535,6 +568,17 @@ async fn main() -> Result<()> {
     snmp_poller::start_snmp_poller(db.clone());
     firewall_push::start_firewall_push(db.clone());
     report_generator::start_report_generator(db.clone());
+    {
+        let heartbeat_tx = live_tx.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                let _ = heartbeat_tx.send(LiveEvent::Heartbeat {
+                    timestamp: Utc::now(),
+                });
+            }
+        });
+    }
     {
         let ldap_db = db.clone();
         tokio::spawn(async move {

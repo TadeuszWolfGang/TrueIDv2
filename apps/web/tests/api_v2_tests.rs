@@ -5,6 +5,7 @@
 
 use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode};
+use axum::routing::get;
 use axum::Router;
 use chrono::{Duration, Utc};
 use http_body_util::BodyExt;
@@ -21,6 +22,16 @@ use trueid_web::{auth, build_router, rate_limit, AppState};
 /// Parameters: none.
 /// Returns: `(Router, Arc<Db>)` ready for in-process requests.
 async fn build_test_app() -> (Router, Arc<trueid_common::db::Db>) {
+    build_test_app_with_engine_url("http://127.0.0.1:8080".to_string()).await
+}
+
+/// Builds an isolated in-memory test app with custom engine URL.
+///
+/// Parameters: `engine_url` - upstream engine base URL for proxy routes.
+/// Returns: `(Router, Arc<Db>)` ready for in-process requests.
+async fn build_test_app_with_engine_url(
+    engine_url: String,
+) -> (Router, Arc<trueid_common::db::Db>) {
     let db = Arc::new(init_db("sqlite::memory:").await.expect("init_db failed"));
 
     let user = db
@@ -35,7 +46,7 @@ async fn build_test_app() -> (Router, Arc<trueid_common::db::Db>) {
 
     let state = AppState {
         db: Some(db.clone()),
-        engine_url: "http://127.0.0.1:8080".to_string(),
+        engine_url,
         http_client: reqwest::Client::new(),
         jwt_config: auth::JwtConfig::from_env(true),
         engine_service_token: None,
@@ -46,6 +57,33 @@ async fn build_test_app() -> (Router, Arc<trueid_common::db::Db>) {
         )),
     };
     (build_router(state), db)
+}
+
+/// Spawns a minimal mock engine SSE server for proxy tests.
+///
+/// Parameters: none.
+/// Returns: `(base_url, task_handle)` for the spawned mock server.
+async fn spawn_mock_engine_sse() -> (String, tokio::task::JoinHandle<()>) {
+    let app = Router::new().route(
+        "/engine/events/stream",
+        get(|| async {
+            (
+                StatusCode::OK,
+                [("content-type", "text/event-stream")],
+                "event: heartbeat\ndata: {\"type\":\"heartbeat\"}\n\n",
+            )
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock engine failed");
+    let addr = listener
+        .local_addr()
+        .expect("read mock engine local addr failed");
+    let handle = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    (format!("http://{}", addr), handle)
 }
 
 /// Seeds mappings/events for API v2 tests.
@@ -1567,6 +1605,39 @@ async fn test_analytics_viewer_cannot_generate() {
     let (status, _) = auth_post(&app, &cookie, "/api/v2/analytics/reports/generate", &json!({}))
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn test_sse_endpoint_requires_auth() {
+    let (app, _) = build_test_app().await;
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/v2/events/stream")
+        .body(Body::empty())
+        .expect("build sse unauth request failed");
+    let resp = app
+        .clone()
+        .oneshot(req)
+        .await
+        .expect("execute sse unauth request failed");
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_sse_endpoint_returns_stream() {
+    let (engine_url, mock_handle) = spawn_mock_engine_sse().await;
+    let (app, _) = build_test_app_with_engine_url(engine_url).await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, headers, body) = auth_get_raw(&app, &cookie, "/api/v2/events/stream").await;
+    mock_handle.abort();
+
+    assert_eq!(status, StatusCode::OK);
+    let content_type = headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(content_type.starts_with("text/event-stream"));
+    assert!(!body.is_empty());
 }
 
 #[tokio::test]

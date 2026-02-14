@@ -8,18 +8,24 @@ use axum::{
     http::StatusCode,
     middleware as axum_mw,
     response::{IntoResponse, Response},
+    response::sse::{Event, KeepAlive, Sse},
     routing::{delete, get, post},
     Json, Router,
 };
+use futures::StreamExt;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::convert::Infallible;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Instant;
+use tokio::sync::broadcast;
 use tokio::sync::RwLock;
+use tokio_stream::wrappers::BroadcastStream;
 use tracing::info;
 use trueid_common::db::Db;
+use trueid_common::live_event::LiveEvent;
 use trueid_common::model::{AdapterStatus, IdentityEvent, SourceType};
 
 /// Shared state for the engine admin API.
@@ -34,6 +40,8 @@ pub struct EngineAdminState {
     pub service_token: Option<String>,
     /// Engine process start time used for uptime metrics.
     pub start_time: Instant,
+    /// Broadcast channel for real-time events exposed over SSE.
+    pub live_tx: broadcast::Sender<LiveEvent>,
 }
 
 /// Snapshot of engine environment at startup (read-only diagnostics).
@@ -101,6 +109,7 @@ pub fn admin_router(state: EngineAdminState) -> Router {
         .route("/engine/mappings", post(create_manual_mapping))
         .route("/engine/mappings/{ip}", delete(delete_mapping))
         .route("/engine/ldap/sync", post(force_ldap_sync))
+        .route("/engine/events/stream", get(sse_stream))
         .layer(axum_mw::from_fn_with_state(
             state.clone(),
             service_token_guard,
@@ -109,6 +118,42 @@ pub fn admin_router(state: EngineAdminState) -> Router {
         .merge(public_routes)
         .merge(protected_routes)
         .with_state(state)
+}
+
+/// Converts a live event to SSE event name.
+///
+/// Parameters: `event` - live event payload.
+/// Returns: SSE event type string.
+fn live_event_kind(event: &LiveEvent) -> &'static str {
+    match event {
+        LiveEvent::MappingUpdate { .. } => "mapping",
+        LiveEvent::ConflictDetected { .. } => "conflict",
+        LiveEvent::AlertFired { .. } => "alert",
+        LiveEvent::FirewallPush { .. } => "firewall",
+        LiveEvent::AdapterStatus { .. } => "adapter",
+        LiveEvent::Heartbeat { .. } => "heartbeat",
+    }
+}
+
+/// Streams engine live events as server-sent events.
+///
+/// Parameters: `s` - shared admin API state with broadcast sender.
+/// Returns: SSE stream with JSON payloads.
+async fn sse_stream(
+    State(s): State<EngineAdminState>,
+) -> Sse<impl futures::Stream<Item = Result<Event, Infallible>>> {
+    let stream = BroadcastStream::new(s.live_tx.subscribe()).filter_map(|msg| async move {
+        let event = match msg {
+            Ok(event) => event,
+            Err(_) => return None,
+        };
+        let json = match serde_json::to_string(&event) {
+            Ok(json) => json,
+            Err(_) => return None,
+        };
+        Some(Ok(Event::default().event(live_event_kind(&event)).data(json)))
+    });
+    Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
 /// Returns Prometheus metrics in text exposition format.

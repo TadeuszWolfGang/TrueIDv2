@@ -15,10 +15,12 @@ net-identity-adapter-dhcp-logs = { path = "../../crates/adapter-dhcp-logs" }
 net-identity-adapter-radius = { path = "../../crates/adapter-radius" }
 trueid-common = { path = "../../crates/common" }
 tokio = { workspace = true }
+tokio-stream = { version = "0.1", features = ["sync"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 regex = { workspace = true }
 once_cell = { workspace = true }
+futures = "0.3"
 csv = "1"
 dotenvy = "0.15"
 rustls = { version = "0.23", features = ["ring"] }

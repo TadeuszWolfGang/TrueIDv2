@@ -6,6 +6,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 ## [0.6.0] — 2026-02-13
 
 ### Added
+- **SSE Live Feed**: engine `/engine/events/stream` + web `/api/v2/events/stream` for real-time mapping/conflict/alert/firewall/heartbeat events
+- Dashboard live updates via native `EventSource` (toast indicator + Live/Polling connection status)
 - **Reporting & Analytics**: `/api/v2/analytics/*` endpoints, compliance summary, daily `report_snapshots` generator, dashboard Analytics tab (SVG charts + report history)
 - **Production Operations**: backup/restore/install scripts, Nginx/Caddy reverse-proxy templates, systemd services + backup timer, HA architecture guide (`docs/HA.md`)
 - **VPN Adapters**: AnyConnect, GlobalProtect, Fortinet syslog parsing (UDP :5518 + TLS)
@@ -23,6 +25,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - `EventLoopCtx` struct — cleaner event loop parameter passing
 - 34 new tests (21 E2E + 13 unit) covering Phase 3 handlers and parsers
 - Phase 4 test coverage: +10 analytics E2E tests and +2 report generator unit tests (totals: 93 E2E, 15 unit)
+- SSE test coverage: +2 E2E tests (`test_sse_endpoint_requires_auth`, `test_sse_endpoint_returns_stream`)
 
 ### Fixed
 - `group_names` subquery missing in routes_v1, routes_search, routes_subnets (groups always null)
@@ -30,6 +33,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - VPN dispatcher not matching `Username = ..., IP = ...` format
 
 ### Changed
+- Polling for mappings/conflicts/alerts reduced to 120s when SSE is connected (fallback to 30s on disconnect)
 - Graceful shutdown flow for engine/web (drain window, controlled loop stop, graceful server termination)
 - `parse_vpn_syslog` now public for testability
 - 6 call sites migrated from inline `ok_or_else` to `helpers::require_db()`
