@@ -5,184 +5,378 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>TrueID Dashboard</title>
     <style>
-      :root { color-scheme: dark; }
+      :root {
+        color-scheme: dark;
+        --bg-deep: #020a06;
+        --bg-panel: #091a11;
+        --bg-surface: #0d2818;
+        --bg-hover: #0f3d1f;
+        --green-bright: #00ff41;
+        --green-mid: #00cc33;
+        --green-dim: #0a8a2e;
+        --green-ghost: rgba(0, 255, 65, 0.08);
+        --green-glow: 0 0 8px rgba(0, 255, 65, 0.4);
+        --text-glow: 0 0 6px rgba(0, 255, 65, 0.5);
+        --text-primary: #c8f7d0;
+        --text-secondary: #5a9a6b;
+        --text-heading: #00ff41;
+        --status-ok: #00ff41;
+        --status-warn: #ffb800;
+        --status-error: #ff2d2d;
+        --status-info: #00b4ff;
+        --border-dim: #0f3d1f;
+        --border-bright: #00ff41;
+        --scrollbar-thumb: #0a8a2e;
+        --scrollbar-track: #020a06;
+      }
       body {
-        background: #0b0f0d;
-        color: #c7f9cc;
+        background: var(--bg-deep);
+        color: var(--text-primary);
         font-family: "SFMono-Regular", ui-monospace, Menlo, Monaco, Consolas,
           "Liberation Mono", "Courier New", monospace;
         margin: 0;
         padding: 24px;
       }
-      h1 { margin: 0 0 16px; font-size: 20px; color: #80ffdb; letter-spacing: 0.02em; }
+      body > *:not(#matrix-bg) { position: relative; z-index: 1; }
+      h1 {
+        margin: 0 0 16px;
+        font-size: 20px;
+        color: var(--text-heading);
+        letter-spacing: 0.02em;
+        text-shadow: var(--text-glow);
+      }
       .panel {
-        border: 1px solid #1e2a24;
+        border: 1px solid var(--border-dim);
         border-radius: 8px;
-        background: #0f1512;
+        background: var(--bg-panel);
         padding: 16px;
-        box-shadow: 0 0 18px rgba(0, 255, 128, 0.08);
+        box-shadow: 0 0 18px var(--green-ghost);
       }
       table { width: 100%; border-collapse: collapse; }
       thead th {
-        text-align: left; font-weight: 600; color: #80ffdb;
-        border-bottom: 1px solid #1e2a24; padding: 10px 8px;
+        text-align: left;
+        font-weight: 600;
+        color: var(--text-heading);
+        border-bottom: 1px solid var(--border-dim);
+        padding: 10px 8px;
       }
       tbody td {
         padding: 8px;
-        border-bottom: 1px solid rgba(30, 42, 36, 0.6);
+        border-bottom: 1px solid var(--border-dim);
       }
-      tbody tr:hover { background: rgba(0, 255, 128, 0.05); }
-      .muted { color: #6b8579; }
+      table tr:hover td {
+        background: var(--bg-hover);
+        box-shadow: inset 2px 0 0 var(--green-bright);
+      }
+      .muted { color: var(--text-secondary); }
       tr.offline td { opacity: 0.45; }
       .dot {
-        display: inline-block; width: 8px; height: 8px;
-        border-radius: 50%; margin-right: 6px; vertical-align: middle;
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin-right: 6px;
+        vertical-align: middle;
       }
-      .dot.online { background: #22c55e; box-shadow: 0 0 6px #22c55e; }
-      .dot.offline { background: #3a3a3a; }
-      .vendor { display: block; font-size: 11px; color: #6b8579; margin-top: 2px; }
-      .status { margin-top: 12px; font-size: 12px; color: #6b8579; }
+      .dot.online {
+        background: var(--green-bright);
+        box-shadow: 0 0 6px var(--green-bright);
+        animation: pulse-green 2s infinite;
+      }
+      .dot.offline { background: var(--status-error); opacity: 0.75; }
+      @keyframes pulse-green {
+        0%, 100% { box-shadow: 0 0 4px var(--green-bright); }
+        50% {
+          box-shadow: 0 0 12px var(--green-bright),
+            0 0 20px var(--green-ghost);
+        }
+      }
+      .vendor { display: block; font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+      .status { margin-top: 12px; font-size: 12px; color: var(--text-secondary); }
 
-      /* Tabs */
       .tab {
         padding: 8px 24px;
-        background: #0f1512;
-        color: #6b8579;
-        border: 1px solid #1e2a24;
+        background: var(--bg-panel);
+        color: var(--text-secondary);
+        border: 1px solid var(--border-dim);
         border-bottom: none;
         cursor: pointer;
         font-family: inherit;
         font-size: 14px;
         transition: all 0.2s;
       }
-      .tab:hover { color: #80ffdb; }
+      .tab:hover { color: var(--green-bright); }
       .tab.active {
-        color: #80ffdb;
-        background: #0b0f0d;
-        border-color: #80ffdb;
-        border-bottom: 2px solid #0b0f0d;
+        color: var(--green-bright);
+        background: var(--bg-deep);
+        border-color: var(--green-bright);
+        border-bottom: 2px solid var(--green-bright);
+        box-shadow: 0 2px 8px var(--green-ghost);
+        text-shadow: var(--text-glow);
         margin-bottom: -1px;
         z-index: 1;
       }
 
-      /* Setting rows */
       .setting-row {
-        display: flex; justify-content: space-between;
-        align-items: center; padding: 12px 0; gap: 16px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 12px 0;
+        gap: 16px;
       }
       .setting-label { flex: 1; }
-      .setting-title { display: block; color: #c7f9cc; font-size: 14px; }
-      .setting-desc { display: block; color: #6b8579; font-size: 12px; margin-top: 2px; }
-      .setting-input {
-        background: #0b0f0d; border: 1px solid #1e2a24; border-radius: 4px;
-        color: #c7f9cc; padding: 8px 12px; font-family: inherit; font-size: 13px;
-        width: 280px; transition: border-color 0.2s;
+      .setting-title { display: block; color: var(--text-primary); font-size: 14px; }
+      .setting-desc { display: block; color: var(--text-secondary); font-size: 12px; margin-top: 2px; }
+      .setting-divider { border-top: 1px solid var(--border-dim); margin: 8px 0; }
+      .section-title {
+        color: var(--text-heading);
+        font-size: 15px;
+        margin: 16px 0 4px;
+        font-weight: 600;
+        text-shadow: var(--text-glow);
       }
-      .setting-input:focus { outline: none; border-color: #80ffdb; }
-      .setting-divider { border-top: 1px solid #1e2a24; margin: 8px 0; }
-      .section-title { color: #80ffdb; font-size: 15px; margin: 16px 0 4px; font-weight: 600; }
-      .section-desc { color: #6b8579; font-size: 12px; margin: 0 0 8px; }
+      .section-desc { color: var(--text-secondary); font-size: 12px; margin: 0 0 8px; }
       .section-desc code {
-        background: #1e2a24; padding: 2px 6px; border-radius: 3px;
-        font-size: 11px; color: #80ffdb;
+        background: var(--bg-surface);
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-size: 11px;
+        color: var(--green-bright);
       }
 
-      /* Toggle switch */
       .toggle { position: relative; display: inline-block; width: 48px; height: 26px; flex-shrink: 0; }
       .toggle input { opacity: 0; width: 0; height: 0; }
       .toggle-slider {
-        position: absolute; inset: 0; background: #1e2a24;
-        border-radius: 26px; transition: 0.3s; cursor: pointer;
+        position: absolute;
+        inset: 0;
+        background: var(--bg-surface);
+        border-radius: 26px;
+        transition: 0.3s;
+        cursor: pointer;
+        border: 1px solid var(--border-dim);
       }
       .toggle-slider::before {
-        content: ''; position: absolute; width: 20px; height: 20px;
-        left: 3px; bottom: 3px; background: #6b8579;
-        border-radius: 50%; transition: 0.3s;
+        content: '';
+        position: absolute;
+        width: 20px;
+        height: 20px;
+        left: 3px;
+        bottom: 2px;
+        background: var(--text-secondary);
+        border-radius: 50%;
+        transition: 0.3s;
       }
-      .toggle input:checked + .toggle-slider { background: #22c55e; }
-      .toggle input:checked + .toggle-slider::before { transform: translateX(22px); background: #fff; }
+      .toggle input:checked + .toggle-slider { background: var(--green-dim); }
+      .toggle input:checked + .toggle-slider::before {
+        transform: translateX(22px);
+        background: var(--green-bright);
+        box-shadow: var(--green-glow);
+      }
 
-      /* Buttons */
-      .btn {
-        background: #1e2a24; color: #80ffdb; border: 1px solid #80ffdb;
-        border-radius: 4px; padding: 8px 16px; font-family: inherit;
-        font-size: 13px; cursor: pointer; transition: all 0.2s; white-space: nowrap;
+      input, select, textarea, .setting-input {
+        background: var(--bg-deep);
+        border: 1px solid var(--border-dim);
+        color: var(--text-primary);
+        font-family: inherit;
+        padding: 8px 12px;
+        border-radius: 3px;
       }
-      .btn:hover { background: #80ffdb; color: #0b0f0d; }
+      input:focus, select:focus, textarea:focus, .setting-input:focus {
+        outline: none;
+        border-color: var(--green-bright);
+        box-shadow: var(--green-glow);
+      }
+
+      .btn {
+        background: transparent;
+        color: var(--green-bright);
+        border: 1px solid var(--green-dim);
+        border-radius: 3px;
+        padding: 6px 14px;
+        cursor: pointer;
+        transition: all 0.2s;
+        font-family: inherit;
+        white-space: nowrap;
+      }
+      .btn:hover {
+        border-color: var(--green-bright);
+        box-shadow: var(--green-glow);
+        text-shadow: var(--text-glow);
+      }
+      .btn-primary {
+        background: var(--green-dim);
+        border-color: var(--green-mid);
+      }
+      .btn-primary:hover { background: var(--green-mid); }
+      .btn-danger {
+        color: var(--status-error);
+        border-color: var(--status-error);
+      }
+      .btn-danger:hover { box-shadow: 0 0 8px rgba(255, 45, 45, 0.4); }
       .btn-sm { padding: 6px 12px; font-size: 12px; }
       .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-      /* Sync status box */
       .sync-status-box {
-        background: #0b0f0d; border: 1px solid #1e2a24;
-        border-radius: 4px; padding: 12px; font-size: 13px;
+        background: var(--bg-deep);
+        border: 1px solid var(--border-dim);
+        border-radius: 4px;
+        padding: 12px;
+        font-size: 13px;
       }
 
-      /* Feedback flash */
       .flash-ok { animation: flashGreen 0.6s; }
       .flash-err { animation: flashRed 0.6s; }
       @keyframes flashGreen {
-        0%, 100% { border-color: #1e2a24; }
-        50% { border-color: #22c55e; box-shadow: 0 0 8px rgba(34,197,94,0.3); }
+        0%, 100% { border-color: var(--border-dim); }
+        50% { border-color: var(--status-ok); box-shadow: var(--green-glow); }
       }
       @keyframes flashRed {
-        0%, 100% { border-color: #1e2a24; }
-        50% { border-color: #ef4444; box-shadow: 0 0 8px rgba(239,68,68,0.3); }
+        0%, 100% { border-color: var(--border-dim); }
+        50% {
+          border-color: var(--status-error);
+          box-shadow: 0 0 8px rgba(255, 45, 45, 0.4);
+        }
       }
 
-      /* Severity badges */
       .badge {
-        display: inline-block; padding: 2px 8px; border-radius: 10px;
-        font-size: 11px; font-weight: 600; text-transform: uppercase;
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
       }
-      .badge-critical { background: rgba(239,68,68,0.2); color: #ef4444; }
-      .badge-warning { background: rgba(245,158,11,0.2); color: #f59e0b; }
-      .badge-info { background: rgba(59,130,246,0.2); color: #3b82f6; }
-      .badge-panos { background: rgba(34,197,94,0.2); color: #22c55e; }
-      .badge-fortigate { background: rgba(59,130,246,0.2); color: #3b82f6; }
-      .badge-cef, .badge-udp { background: rgba(34,197,94,0.2); color: #22c55e; }
-      .badge-leef { background: rgba(245,158,11,0.2); color: #f59e0b; }
-      .badge-json, .badge-tcp { background: rgba(59,130,246,0.2); color: #3b82f6; }
-      .check-yes { color: #22c55e; font-weight: 700; }
-      .check-no { color: #3a3a3a; font-weight: 700; }
+      .badge-critical { background: rgba(255, 45, 45, 0.16); color: var(--status-error); }
+      .badge-warning { background: rgba(255, 184, 0, 0.16); color: var(--status-warn); }
+      .badge-info { background: rgba(0, 180, 255, 0.16); color: var(--status-info); }
+      .badge-panos,
+      .badge-cef,
+      .badge-udp { background: var(--green-ghost); color: var(--status-ok); }
+      .badge-fortigate,
+      .badge-json,
+      .badge-tcp { background: rgba(0, 180, 255, 0.16); color: var(--status-info); }
+      .badge-leef { background: rgba(255, 184, 0, 0.16); color: var(--status-warn); }
+      .check-yes { color: var(--status-ok); font-weight: 700; }
+      .check-no { color: var(--status-error); font-weight: 700; }
       .expand-row { cursor: pointer; }
-      .expand-row:hover { background: rgba(0,255,128,0.08); }
       .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
       .multi-badge {
         font-size: 11px;
-        color: #80ffdb;
-        background: rgba(128,255,219,0.15);
+        color: var(--green-bright);
+        background: var(--green-ghost);
         padding: 1px 6px;
         border-radius: 8px;
         margin-left: 4px;
       }
 
-      /* Clickable IP */
       .ip-link {
-        color: #80ffdb; cursor: pointer; text-decoration: none;
-        border-bottom: 1px dotted #80ffdb;
+        color: var(--green-bright);
+        cursor: pointer;
+        text-decoration: none;
+        border-bottom: 1px dotted var(--green-bright);
       }
-      .ip-link:hover { color: #c7f9cc; }
+      .ip-link:hover { color: var(--text-primary); text-shadow: var(--text-glow); }
 
-      /* Timeline panel animation */
       .timeline-enter { animation: slideIn 0.2s ease-out; }
-      @keyframes slideIn { from { transform: translateX(100%); } to { transform: translateX(0); } }
+      @keyframes slideIn {
+        from { transform: translateX(100%); }
+        to { transform: translateX(0); }
+      }
+      .wh-sent { color: var(--status-ok); }
+      .wh-failed { color: var(--status-error); }
+      .wh-skip { color: var(--text-secondary); }
 
-      /* Webhook status icons */
-      .wh-sent { color: #22c55e; }
-      .wh-failed { color: #ef4444; }
-      .wh-skip { color: #6b8579; }
+      .stat-card {
+        background: var(--bg-panel);
+        border: 1px solid var(--border-dim);
+        border-radius: 4px;
+        padding: 12px 16px;
+        position: relative;
+        overflow: hidden;
+      }
+      .stat-card::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: repeating-linear-gradient(
+          0deg,
+          transparent,
+          transparent 2px,
+          rgba(0, 255, 65, 0.02) 2px,
+          rgba(0, 255, 65, 0.02) 4px
+        );
+        pointer-events: none;
+      }
+
+      #security-modal {
+        backdrop-filter: blur(2px);
+      }
+      .security-modal-panel {
+        max-width: 640px;
+        margin: 6vh auto;
+        background: var(--bg-panel);
+        border: 1px solid var(--green-dim);
+        border-radius: 8px;
+        padding: 16px;
+        box-shadow: var(--green-glow);
+      }
+      .qr-box {
+        background: var(--bg-deep);
+        border: 1px solid var(--green-dim);
+        padding: 10px;
+        border-radius: 6px;
+        display: inline-block;
+      }
+      #totp-backup-codes {
+        font-family: inherit;
+        color: var(--green-bright);
+        background: var(--bg-surface);
+        border-color: var(--green-dim);
+      }
+
+      #matrix-toggle {
+        min-width: 34px;
+        padding: 6px 8px;
+      }
+
+      @keyframes neon-flash {
+        0% { opacity: 0; transform: translateX(20px); }
+        10% {
+          opacity: 1;
+          transform: translateX(0);
+          box-shadow: 0 0 15px rgba(0, 255, 65, 0.5);
+        }
+        90% { opacity: 1; }
+        100% { opacity: 0; }
+      }
+      .live-toast { animation: neon-flash 4s ease-out forwards; }
+
+      ::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+      }
+      ::-webkit-scrollbar-track { background: var(--scrollbar-track); }
+      ::-webkit-scrollbar-thumb {
+        background: var(--scrollbar-thumb);
+        border-radius: 3px;
+      }
+      ::-webkit-scrollbar-thumb:hover { background: var(--green-mid); }
     </style>
   </head>
   <body>
+    <canvas id="matrix-bg" style="position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;opacity:0.04;pointer-events:none;"></canvas>
 
     <!-- User bar -->
     <div id="user-bar" style="display:none;justify-content:space-between;align-items:center;margin-bottom:16px;">
-      <span id="user-info" style="color:#6b8579;font-size:13px;"></span>
-      <span id="connection-status" style="color:#6b8579;font-size:12px;display:flex;align-items:center;gap:6px;">
+      <span id="user-info" style="color:var(--text-secondary);font-size:13px;"></span>
+      <span id="connection-status" style="color:var(--text-secondary);font-size:12px;display:flex;align-items:center;gap:6px;">
         <span class="dot offline"></span> Polling
       </span>
       <div style="display:flex;gap:8px;">
+        <button class="btn btn-sm" id="matrix-toggle" onclick="toggleMatrixRain()" title="Toggle background effect">◈</button>
         <button class="btn btn-sm" id="security-btn" onclick="openSecurityModal()">Security</button>
         <button class="btn btn-sm" id="logout-btn" onclick="doLogout()">Logout</button>
       </div>
@@ -235,7 +429,7 @@
           <button class="btn btn-sm" onclick="exportMappings('csv')">Export CSV</button>
           <button class="btn btn-sm" onclick="exportMappings('json')">Export JSON</button>
         </div>
-        <div id="mappings-stats" style="display:flex;gap:24px;margin-bottom:12px;font-size:13px;color:#6b8579;"></div>
+        <div id="mappings-stats" style="display:flex;gap:24px;margin-bottom:12px;font-size:13px;color:var(--text-secondary);"></div>
         <table>
           <thead>
             <tr>
@@ -257,7 +451,7 @@
             </tr>
           </tbody>
         </table>
-        <div id="mappings-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:#6b8579;"></div>
+        <div id="mappings-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text-secondary);"></div>
         <div class="status" id="mappings-status">Last update: never</div>
       </div>
     </div>
@@ -308,8 +502,8 @@
           </table>
         </div>
 
-        <div id="search-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:#6b8579;"></div>
-        <div id="search-meta" style="margin-top:8px;font-size:12px;color:#6b8579;"></div>
+        <div id="search-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text-secondary);"></div>
+        <div id="search-meta" style="margin-top:8px;font-size:12px;color:var(--text-secondary);"></div>
       </div>
     </div>
 
@@ -317,7 +511,7 @@
     <div id="tab-conflicts" style="display:none;">
       <h1>TrueID :: Conflicts</h1>
       <div class="panel">
-        <div id="conflicts-stats" style="display:flex;gap:24px;margin-bottom:16px;font-size:13px;color:#6b8579;"></div>
+        <div id="conflicts-stats" style="display:flex;gap:24px;margin-bottom:16px;font-size:13px;color:var(--text-secondary);"></div>
         <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">
           <select id="conflict-type" class="setting-input" style="width:160px;">
             <option value="">All types</option>
@@ -355,7 +549,7 @@
             <tr><td colspan="8" class="muted">Loading...</td></tr>
           </tbody>
         </table>
-        <div id="conflicts-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:#6b8579;"></div>
+        <div id="conflicts-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text-secondary);"></div>
       </div>
     </div>
 
@@ -363,13 +557,13 @@
     <div id="tab-alerts" style="display:none;">
       <h1>TrueID :: Alerts</h1>
       <div class="panel">
-        <div id="alerts-stats" style="display:flex;gap:24px;margin-bottom:16px;font-size:13px;color:#6b8579;"></div>
+        <div id="alerts-stats" style="display:flex;gap:24px;margin-bottom:16px;font-size:13px;color:var(--text-secondary);"></div>
 
         <div id="alerts-rules-section">
           <h2 class="section-title">Alert Rules
             <button class="btn btn-sm" style="margin-left:12px;" onclick="showAddRuleForm()">+ Add Rule</button>
           </h2>
-          <div id="alert-rule-form" style="display:none;margin-bottom:16px;padding:12px;border:1px solid #1e2a24;border-radius:4px;">
+          <div id="alert-rule-form" style="display:none;margin-bottom:16px;padding:12px;border:1px solid var(--border-dim);border-radius:4px;">
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
               <input type="text" id="rule-name" class="setting-input" style="width:200px;" placeholder="Rule name">
               <select id="rule-type" class="setting-input" style="width:160px;">
@@ -428,7 +622,7 @@
           <thead><tr><th>Severity</th><th>Rule</th><th>Type</th><th>IP</th><th>User</th><th>Webhook</th><th>Fired At</th></tr></thead>
           <tbody id="alert-history-body"></tbody>
         </table>
-        <div id="alert-history-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:#6b8579;"></div>
+        <div id="alert-history-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text-secondary);"></div>
       </div>
     </div>
 
@@ -479,12 +673,12 @@
     <div id="tab-subnets" style="display:none;">
       <h1>TrueID :: Subnets</h1>
       <div class="panel">
-        <div id="subnets-stats" style="display:flex;gap:24px;margin-bottom:12px;font-size:13px;color:#6b8579;"></div>
+        <div id="subnets-stats" style="display:flex;gap:24px;margin-bottom:12px;font-size:13px;color:var(--text-secondary);"></div>
         <div style="display:flex;gap:8px;margin-bottom:12px;">
           <button class="btn btn-sm role-operator" onclick="showSubnetForm()">+ Add Subnet</button>
           <button class="btn btn-sm" onclick="loadSubnets()">Refresh</button>
         </div>
-        <div id="subnet-form-wrap" style="display:none;margin-bottom:16px;padding:12px;border:1px solid #1e2a24;border-radius:4px;">
+        <div id="subnet-form-wrap" style="display:none;margin-bottom:16px;padding:12px;border:1px solid var(--border-dim);border-radius:4px;">
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
             <input id="subnet-name" class="setting-input" style="width:200px;" placeholder="Name">
             <input id="subnet-cidr" class="setting-input" style="width:180px;" placeholder="CIDR">
@@ -514,7 +708,7 @@
           </thead>
           <tbody id="subnets-body"><tr><td colspan="7" class="muted">Loading...</td></tr></tbody>
         </table>
-        <div id="subnets-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:#6b8579;"></div>
+        <div id="subnets-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text-secondary);"></div>
 
         <div class="setting-divider" style="margin:16px 0;"></div>
         <h2 class="section-title">Discovered Subnets</h2>
@@ -541,12 +735,12 @@
     <div id="tab-switches" style="display:none;">
       <h1>TrueID :: SNMP Switches</h1>
       <div class="panel">
-        <div id="switches-stats" style="display:flex;gap:24px;margin-bottom:12px;font-size:13px;color:#6b8579;"></div>
+        <div id="switches-stats" style="display:flex;gap:24px;margin-bottom:12px;font-size:13px;color:var(--text-secondary);"></div>
         <div style="display:flex;gap:8px;margin-bottom:12px;">
           <button class="btn btn-sm role-operator" onclick="showSwitchForm()">+ Add Switch</button>
           <button class="btn btn-sm" onclick="loadSwitches()">Refresh</button>
         </div>
-        <div id="switch-form-wrap" style="display:none;margin-bottom:16px;padding:12px;border:1px solid #1e2a24;border-radius:4px;">
+        <div id="switch-form-wrap" style="display:none;margin-bottom:16px;padding:12px;border:1px solid var(--border-dim);border-radius:4px;">
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
             <input id="switch-name" class="setting-input" style="width:220px;" placeholder="Name">
             <input id="switch-ip" class="setting-input" style="width:160px;" placeholder="IP">
@@ -586,7 +780,7 @@
           </thead>
           <tbody id="switches-body"><tr><td colspan="9" class="muted">Loading...</td></tr></tbody>
         </table>
-        <div id="switches-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:#6b8579;"></div>
+        <div id="switches-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text-secondary);"></div>
       </div>
     </div>
 
@@ -594,13 +788,13 @@
     <div id="tab-fingerprints" style="display:none;">
       <h1>TrueID :: DHCP Fingerprints</h1>
       <div class="panel">
-        <div id="fp-stats" style="display:flex;gap:24px;margin-bottom:12px;font-size:13px;color:#6b8579;"></div>
+        <div id="fp-stats" style="display:flex;gap:24px;margin-bottom:12px;font-size:13px;color:var(--text-secondary);"></div>
         <div style="display:flex;gap:8px;margin-bottom:12px;">
           <button class="btn btn-sm role-admin" onclick="showFingerprintForm()">+ Add Fingerprint</button>
           <button class="btn btn-sm role-admin" onclick="runFingerprintBackfill()">Backfill</button>
           <button class="btn btn-sm" onclick="loadFingerprintsTab()">Refresh</button>
         </div>
-        <div id="fp-form-wrap" style="display:none;margin-bottom:16px;padding:12px;border:1px solid #1e2a24;border-radius:4px;">
+        <div id="fp-form-wrap" style="display:none;margin-bottom:16px;padding:12px;border:1px solid var(--border-dim);border-radius:4px;">
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
             <input id="fp-fingerprint" class="setting-input" style="width:260px;" placeholder="Fingerprint (DHCP option 55)">
             <input id="fp-device-type" class="setting-input" style="width:220px;" placeholder="Device Type">
@@ -629,7 +823,7 @@
           </thead>
           <tbody id="fp-body"><tr><td colspan="6" class="muted">Loading...</td></tr></tbody>
         </table>
-        <div id="fp-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:#6b8579;"></div>
+        <div id="fp-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text-secondary);"></div>
 
         <div class="setting-divider" style="margin:16px 0;"></div>
 
@@ -648,7 +842,7 @@
           </thead>
           <tbody id="fp-obs-body"><tr><td colspan="7" class="muted">Loading...</td></tr></tbody>
         </table>
-        <div id="fp-obs-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:#6b8579;"></div>
+        <div id="fp-obs-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text-secondary);"></div>
       </div>
     </div>
 
@@ -656,7 +850,7 @@
     <div id="tab-dns" style="display:none;">
       <h1>TrueID :: DNS Cache</h1>
       <div class="panel">
-        <div id="dns-stats" style="display:flex;gap:24px;margin-bottom:12px;font-size:13px;color:#6b8579;"></div>
+        <div id="dns-stats" style="display:flex;gap:24px;margin-bottom:12px;font-size:13px;color:var(--text-secondary);"></div>
         <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap;">
           <input id="dns-lookup-ip" class="setting-input" style="width:180px;" placeholder="IP for lookup" onkeydown="if(event.key==='Enter')dnsLookupIp()">
           <button class="btn btn-sm" onclick="dnsLookupIp()">Lookup</button>
@@ -675,7 +869,7 @@
           </thead>
           <tbody id="dns-body"><tr><td colspan="4" class="muted">Loading...</td></tr></tbody>
         </table>
-        <div id="dns-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:#6b8579;"></div>
+        <div id="dns-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text-secondary);"></div>
       </div>
     </div>
 
@@ -744,7 +938,7 @@
         <div class="role-admin" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
           <input id="status-tag-ip" class="setting-input" style="width:170px;" placeholder="IP">
           <input id="status-tag-name" class="setting-input" style="width:150px;" placeholder="Tag">
-          <input id="status-tag-color" class="setting-input" style="width:110px;" placeholder="#3b82f6">
+          <input id="status-tag-color" class="setting-input" style="width:110px;" placeholder="var(--status-info)">
           <button class="btn btn-sm" onclick="quickAddTag()">Add Tag</button>
         </div>
         <div id="status-tags-list" class="sync-status-box role-admin">Loading...</div>
@@ -763,12 +957,12 @@
     <div id="tab-firewall" style="display:none;">
       <h1>TrueID :: Firewall Targets</h1>
       <div class="panel">
-        <div id="firewall-stats" style="display:flex;gap:24px;margin-bottom:12px;font-size:13px;color:#6b8579;"></div>
+        <div id="firewall-stats" style="display:flex;gap:24px;margin-bottom:12px;font-size:13px;color:var(--text-secondary);"></div>
         <div style="display:flex;gap:8px;margin-bottom:12px;">
           <button class="btn btn-sm role-admin" onclick="showFirewallForm()">+ Add Target</button>
           <button class="btn btn-sm" onclick="loadFirewallTargets()">Refresh</button>
         </div>
-        <div id="firewall-form-wrap" style="display:none;margin-bottom:16px;padding:12px;border:1px solid #1e2a24;border-radius:4px;">
+        <div id="firewall-form-wrap" style="display:none;margin-bottom:16px;padding:12px;border:1px solid var(--border-dim);border-radius:4px;">
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
             <input id="fw-name" class="setting-input" style="width:220px;" placeholder="Name">
             <select id="fw-type" class="setting-input" style="width:140px;" onchange="toggleFirewallUsername()">
@@ -818,12 +1012,12 @@
     <div id="tab-siem" style="display:none;">
       <h1>TrueID :: SIEM Targets</h1>
       <div class="panel">
-        <div id="siem-stats" style="display:flex;gap:24px;margin-bottom:12px;font-size:13px;color:#6b8579;"></div>
+        <div id="siem-stats" style="display:flex;gap:24px;margin-bottom:12px;font-size:13px;color:var(--text-secondary);"></div>
         <div style="display:flex;gap:8px;margin-bottom:12px;">
           <button class="btn btn-sm role-admin" onclick="showSiemForm()">+ Add Target</button>
           <button class="btn btn-sm" onclick="loadSiemTargets()">Refresh</button>
         </div>
-        <div id="siem-form-wrap" style="display:none;margin-bottom:16px;padding:12px;border:1px solid #1e2a24;border-radius:4px;">
+        <div id="siem-form-wrap" style="display:none;margin-bottom:16px;padding:12px;border:1px solid var(--border-dim);border-radius:4px;">
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
             <input id="siem-name" class="setting-input" style="width:220px;" placeholder="Name">
             <select id="siem-format" class="setting-input" style="width:130px;">
@@ -944,7 +1138,7 @@
           <button class="btn btn-sm role-admin" onclick="showNotificationForm()">+ Add Channel</button>
           <button class="btn btn-sm" onclick="loadNotificationsTab()">Refresh</button>
         </div>
-        <div id="notification-form" style="display:none;margin-bottom:12px;padding:12px;border:1px solid #1e2a24;border-radius:4px;">
+        <div id="notification-form" style="display:none;margin-bottom:12px;padding:12px;border:1px solid var(--border-dim);border-radius:4px;">
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
             <input id="notif-name" class="setting-input" style="width:180px;" placeholder="Name">
             <select id="notif-type" class="setting-input" style="width:140px;" onchange="renderNotificationConfigForm()">
@@ -1107,7 +1301,7 @@
       <h1>TrueID :: Audit Log</h1>
       <div class="panel">
         <!-- Stats summary -->
-        <div id="audit-stats" style="display:flex;gap:24px;margin-bottom:16px;font-size:13px;color:#6b8579;">
+        <div id="audit-stats" style="display:flex;gap:24px;margin-bottom:16px;font-size:13px;color:var(--text-secondary);">
         </div>
         <!-- Filters -->
         <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">
@@ -1135,33 +1329,33 @@
           </tbody>
         </table>
         <!-- Pagination -->
-        <div id="audit-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:#6b8579;">
+        <div id="audit-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text-secondary);">
         </div>
       </div>
     </div>
 
     <!-- Timeline slide-in panel -->
-    <div id="timeline-panel" style="display:none;position:fixed;top:0;right:0;width:500px;height:100vh;background:#0f1512;border-left:2px solid #80ffdb;overflow-y:auto;padding:24px;z-index:100;box-shadow:-4px 0 24px rgba(0,0,0,0.5);">
+    <div id="timeline-panel" style="display:none;position:fixed;top:0;right:0;width:500px;height:100vh;background:var(--bg-panel);border-left:2px solid var(--green-bright);overflow-y:auto;padding:24px;z-index:100;box-shadow:-4px 0 24px var(--green-ghost);">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-        <h2 style="margin:0;color:#80ffdb;font-size:16px;" id="timeline-title">Timeline</h2>
+        <h2 style="margin:0;color:var(--green-bright);font-size:16px;text-shadow:var(--text-glow);" id="timeline-title">Timeline</h2>
         <button class="btn btn-sm" onclick="closeTimeline()">✕ Close</button>
       </div>
       <div id="timeline-content">Loading...</div>
     </div>
 
     <!-- Analytics report JSON modal -->
-    <div id="analytics-report-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:120;">
-      <div style="max-width:900px;margin:40px auto;background:#0f1512;border:1px solid #1e2a24;border-radius:8px;padding:16px;">
+    <div id="analytics-report-modal" style="display:none;position:fixed;inset:0;background:rgba(2,10,6,0.65);z-index:120;">
+      <div style="max-width:900px;margin:40px auto;background:var(--bg-panel);border:1px solid var(--border-dim);border-radius:8px;padding:16px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-          <h2 style="margin:0;color:#80ffdb;font-size:16px;">Report JSON</h2>
+          <h2 style="margin:0;color:var(--green-bright);font-size:16px;text-shadow:var(--text-glow);">Report JSON</h2>
           <button class="btn btn-sm" onclick="closeAnalyticsReportModal()">Close</button>
         </div>
-        <pre id="analytics-report-json" style="max-height:70vh;overflow:auto;white-space:pre-wrap;color:#c7f9cc;"></pre>
+        <pre id="analytics-report-json" style="max-height:70vh;overflow:auto;white-space:pre-wrap;color:var(--text-primary);"></pre>
       </div>
     </div>
     <div id="live-indicator" style="position:fixed;bottom:16px;right:16px;z-index:200;"></div>
-    <div id="security-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:300;">
-      <div style="max-width:640px;margin:6vh auto;background:#0f1512;border:1px solid #1e2a24;border-radius:8px;padding:16px;">
+    <div id="security-modal" style="display:none;position:fixed;inset:0;background:rgba(2,10,6,0.68);z-index:300;">
+      <div class="security-modal-panel">
         <div style="display:flex;justify-content:space-between;align-items:center;">
           <h2 class="section-title" style="margin:0;">Security Settings</h2>
           <button class="btn btn-sm" onclick="closeSecurityModal()">Close</button>
@@ -1169,7 +1363,9 @@
         <div id="totp-status-box" class="sync-status-box" style="margin-top:12px;">Loading...</div>
         <div id="totp-setup-box" style="display:none;margin-top:12px;">
           <div class="sync-status-box">
-            <img id="totp-qr" alt="TOTP QR" style="max-width:180px;max-height:180px;display:block;margin-bottom:8px;">
+            <div class="qr-box">
+              <img id="totp-qr" alt="TOTP QR" style="max-width:180px;max-height:180px;display:block;">
+            </div>
             <div class="muted" id="totp-secret-line"></div>
             <input id="totp-verify-code" class="setting-input" style="width:220px;margin-top:8px;" placeholder="Enter 2FA code">
             <button class="btn btn-sm" style="margin-top:8px;" onclick="verifyTotpSetup()">Verify & Enable</button>
@@ -1185,6 +1381,8 @@
       var notificationEditingId = null;
       var evtSource = null;
       var sseConnected = false;
+      var matrixRainTimer = null;
+      var matrixRainEnabled = localStorage.getItem('trueid_matrix_rain') !== 'false';
       var tabLoaded = {
         mappings: false, search: false, conflicts: false, alerts: false, analytics: false, status: false,
         subnets: false, switches: false, fingerprints: false, dns: false,
@@ -1220,6 +1418,79 @@
       var fpPageSize = 50;
       var fpObsCurrentPage = 1;
       var dnsCurrentPage = 1;
+
+      function themeColor(name) {
+        return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+      }
+
+      function updateMatrixToggleUi() {
+        var btn = document.getElementById('matrix-toggle');
+        if (!btn) return;
+        btn.textContent = matrixRainEnabled ? '◈' : '◇';
+        btn.style.color = matrixRainEnabled ? 'var(--green-bright)' : 'var(--text-secondary)';
+      }
+
+      function stopMatrixRain() {
+        if (matrixRainTimer) {
+          clearInterval(matrixRainTimer);
+          matrixRainTimer = null;
+        }
+        var canvas = document.getElementById('matrix-bg');
+        if (canvas) canvas.style.display = 'none';
+      }
+
+      function startMatrixRain() {
+        var canvas = document.getElementById('matrix-bg');
+        if (!canvas) return;
+        canvas.style.display = '';
+        var ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        function resize() {
+          canvas.width = window.innerWidth;
+          canvas.height = window.innerHeight;
+        }
+        resize();
+        window.addEventListener('resize', resize);
+        var fontSize = 14;
+        var columns = Math.max(1, Math.floor(canvas.width / fontSize));
+        var drops = new Array(columns).fill(1);
+        var chars = 'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン0123456789ABCDEF';
+        function draw() {
+          ctx.fillStyle = 'rgba(2, 10, 6, 0.05)';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.fillStyle = themeColor('--green-bright');
+          ctx.font = fontSize + 'px monospace';
+          for (var i = 0; i < drops.length; i++) {
+            var char = chars[Math.floor(Math.random() * chars.length)];
+            ctx.fillText(char, i * fontSize, drops[i] * fontSize);
+            if (drops[i] * fontSize > canvas.height && Math.random() > 0.975) {
+              drops[i] = 0;
+            }
+            drops[i]++;
+          }
+        }
+        matrixRainTimer = setInterval(draw, 50);
+      }
+
+      function toggleMatrixRain() {
+        matrixRainEnabled = !matrixRainEnabled;
+        localStorage.setItem('trueid_matrix_rain', matrixRainEnabled ? 'true' : 'false');
+        if (matrixRainEnabled) {
+          startMatrixRain();
+        } else {
+          stopMatrixRain();
+        }
+        updateMatrixToggleUi();
+      }
+
+      (function initMatrixRain() {
+        updateMatrixToggleUi();
+        if (matrixRainEnabled) {
+          startMatrixRain();
+        } else {
+          stopMatrixRain();
+        }
+      })();
 
       function getCsrfToken() {
         var match = document.cookie.match(/trueid_csrf_token=([^;]+)/);
@@ -1307,7 +1578,7 @@
       function renderTagsBadges(tags) {
         if (!Array.isArray(tags) || tags.length === 0) return '<span class="muted">-</span>';
         return tags.slice(0, 4).map(function (t) {
-          var color = t && t.color ? t.color : '#6b8579';
+          var color = t && t.color ? t.color : 'var(--text-secondary)';
           var label = t && t.tag ? t.tag : '-';
           return '<span class="badge" style="margin-right:4px;border:1px solid ' + escapeHtml(color) + ';color:' + escapeHtml(color) + ';">' +
             escapeHtml(label) + '</span>';
@@ -1340,15 +1611,16 @@
       function showLiveIndicator(type, message) {
         var host = document.getElementById('live-indicator');
         if (!host) return;
-        var color = '#22c55e';
-        if (type === 'alert') color = '#ef4444';
-        if (type === 'conflict') color = '#f59e0b';
-        if (type === 'firewall') color = '#60a5fa';
+        var color = 'var(--status-ok)';
+        if (type === 'alert') color = 'var(--status-error)';
+        if (type === 'conflict') color = 'var(--status-warn)';
+        if (type === 'firewall') color = 'var(--status-info)';
         var toast = document.createElement('div');
-        toast.style.cssText = 'background:#0f1512;border:1px solid ' + color +
+        toast.className = 'live-toast';
+        toast.style.cssText = 'background:var(--bg-panel);border:1px solid ' + color +
           ';border-radius:6px;padding:8px 12px;margin-top:8px;font-size:12px;color:' +
-          color + ';max-width:320px;';
-        toast.textContent = 'LIVE ' + message;
+          color + ';max-width:320px;text-shadow:var(--text-glow);';
+        toast.textContent = '⚡ ' + message;
         host.appendChild(toast);
         setTimeout(function () { toast.remove(); }, 5000);
       }
@@ -1490,7 +1762,7 @@
           var data = await resp.json();
           var enabled = !!data.enabled;
           box.innerHTML =
-            '<div>2FA status: <strong style="color:' + (enabled ? '#22c55e' : '#f59e0b') + ';">' + (enabled ? 'Enabled' : 'Disabled') + '</strong></div>' +
+            '<div>2FA status: <strong style="color:' + (enabled ? 'var(--status-ok)' : 'var(--status-warn)') + ';">' + (enabled ? 'Enabled' : 'Disabled') + '</strong></div>' +
             '<div class="muted" style="margin-top:6px;">Verified at: ' + escapeHtml(data.verified_at || '-') + '</div>' +
             '<div style="display:flex;gap:8px;margin-top:10px;">' +
               (enabled
@@ -1498,7 +1770,7 @@
                 : '<button class="btn btn-sm" onclick="startTotpSetup()">Enable 2FA</button>') +
             '</div>';
         } catch (e) {
-          box.innerHTML = '<span style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</span>';
+          box.innerHTML = '<span style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</span>';
         }
       }
 
@@ -1595,7 +1867,7 @@
             '<div class="setting-row"><span class="setting-title">Session Max Hours</span><input id="sec-max-hours" class="setting-input" style="width:120px;" type="number" min="1" value="' + escapeHtml(p.session_absolute_max_hours) + '"></div>' +
             '<div class="setting-row"><span class="setting-title">TOTP Required for Admins</span><input id="sec-totp-required" type="checkbox" ' + (p.totp_required_for_admins ? 'checked' : '') + '></div>';
         } catch (e) {
-          document.getElementById('admin-security-policy').innerHTML = '<span style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</span>';
+          document.getElementById('admin-security-policy').innerHTML = '<span style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</span>';
         }
         try {
           var sRes = await fetch('/api/v2/admin/security/sessions', { credentials: 'include' });
@@ -1606,14 +1878,14 @@
             return;
           }
           document.getElementById('admin-security-sessions').innerHTML = sessions.map(function (s) {
-            return '<div style="padding:6px 0;border-bottom:1px solid #1e2a24;">' +
+            return '<div style="padding:6px 0;border-bottom:1px solid var(--border-dim);">' +
               '<strong>' + escapeHtml(s.username) + '</strong> @ ' + escapeHtml(s.ip_address || '-') +
               ' <span class="muted">' + escapeHtml(timeAgo(s.last_active_at)) + '</span> ' +
               '<button class="btn btn-sm role-admin" onclick="terminateAdminSession(' + s.id + ')">Terminate</button>' +
               '</div>';
           }).join('');
         } catch (e2) {
-          document.getElementById('admin-security-sessions').innerHTML = '<span style="color:#ef4444;">Failed: ' + escapeHtml(e2.message) + '</span>';
+          document.getElementById('admin-security-sessions').innerHTML = '<span style="color:var(--status-error);">Failed: ' + escapeHtml(e2.message) + '</span>';
         }
       }
 
@@ -1640,11 +1912,11 @@
           });
           if (!resp.ok) throw new Error('HTTP ' + resp.status);
           document.getElementById('admin-security-result').textContent = 'Saved';
-          document.getElementById('admin-security-result').style.color = '#22c55e';
+          document.getElementById('admin-security-result').style.color = 'var(--status-ok)';
           await loadAdminSecuritySection();
         } catch (e) {
           document.getElementById('admin-security-result').textContent = 'Failed: ' + e.message;
-          document.getElementById('admin-security-result').style.color = '#ef4444';
+          document.getElementById('admin-security-result').style.color = 'var(--status-error)';
         }
       }
 
@@ -1925,7 +2197,7 @@
           loadMappingsStats();
         } catch (err) {
           document.getElementById('mappings-body').innerHTML =
-            '<tr><td colspan="10" style="color:#ef4444;">Failed: ' + escapeHtml(err.message) + '</td></tr>';
+            '<tr><td colspan="10" style="color:var(--status-error);">Failed: ' + escapeHtml(err.message) + '</td></tr>';
           status.textContent = 'Last update failed';
         }
       }
@@ -2049,7 +2321,7 @@
         } catch (err) {
           mappingsSection.style.display = '';
           eventsSection.style.display = 'none';
-          mappingsBody.innerHTML = '<tr><td colspan="8" style="color:#ef4444;">Search failed: ' + escapeHtml(err.message) + '</td></tr>';
+          mappingsBody.innerHTML = '<tr><td colspan="8" style="color:var(--status-error);">Search failed: ' + escapeHtml(err.message) + '</td></tr>';
           document.getElementById('search-meta').textContent = '';
           document.getElementById('search-paging').innerHTML = '';
         }
@@ -2624,7 +2896,7 @@
             content.innerHTML = '<pre style="white-space:pre-wrap;">' + escapeHtml(JSON.stringify(data, null, 2)) + '</pre>';
           }
         } catch (err) {
-          content.innerHTML = '<span style="color:#ef4444;">Failed to load timeline: ' + escapeHtml(err.message) + '</span>';
+          content.innerHTML = '<span style="color:var(--status-error);">Failed to load timeline: ' + escapeHtml(err.message) + '</span>';
         }
       }
 
@@ -2658,7 +2930,11 @@
         var gap = 8;
         var height = 120;
         var width = data.length * (barWidth + gap);
+        var axisColor = themeColor('--border-dim');
+        var labelColor = themeColor('--text-secondary');
+        var valueColor = themeColor('--text-primary');
         var svg = '<svg width="' + width + '" height="' + (height + 30) + '">';
+        svg += '<line x1="0" y1="' + height + '" x2="' + width + '" y2="' + height + '" stroke="' + axisColor + '" stroke-width="1"/>';
         data.forEach(function (d, i) {
           var count = d.count || 0;
           var barH = (count / max) * height;
@@ -2666,8 +2942,8 @@
           var y = height - barH;
           var label = String(d.timestamp || '').slice(5, 10);
           svg += '<rect x="' + x + '" y="' + y + '" width="' + barWidth + '" height="' + barH + '" fill="' + color + '" rx="3"/>';
-          svg += '<text x="' + (x + barWidth / 2) + '" y="' + (height + 16) + '" fill="#6b8579" font-size="11" text-anchor="middle">' + escapeHtml(label) + '</text>';
-          svg += '<text x="' + (x + barWidth / 2) + '" y="' + (y - 4) + '" fill="#c7f9cc" font-size="11" text-anchor="middle">' + count + '</text>';
+          svg += '<text x="' + (x + barWidth / 2) + '" y="' + (height + 16) + '" fill="' + labelColor + '" font-size="11" text-anchor="middle">' + escapeHtml(label) + '</text>';
+          svg += '<text x="' + (x + barWidth / 2) + '" y="' + (y - 4) + '" fill="' + valueColor + '" font-size="11" text-anchor="middle">' + count + '</text>';
         });
         svg += '</svg>';
         el.innerHTML = svg;
@@ -2683,7 +2959,13 @@
         var total = rows.reduce(function (acc, r) { return acc + (r.count || 0); }, 0) || 1;
         var radius = 56;
         var circ = 2 * Math.PI * radius;
-        var colors = ['#22c55e', '#80ffdb', '#facc15', '#ef4444', '#60a5fa', '#a78bfa', '#f472b6'];
+        var colors = [
+          themeColor('--green-mid'),
+          themeColor('--status-info'),
+          themeColor('--status-warn'),
+          themeColor('--status-error'),
+          'mediumpurple'
+        ];
         var offset = 0;
         var svg = '<svg width="180" height="180" viewBox="0 0 180 180">';
         rows.forEach(function (r, idx) {
@@ -2692,9 +2974,9 @@
           svg += '<circle cx="90" cy="90" r="' + radius + '" fill="none" stroke="' + colors[idx % colors.length] + '" stroke-width="22" stroke-dasharray="' + seg + ' ' + (circ - seg) + '" stroke-dashoffset="' + (-offset) + '" transform="rotate(-90 90 90)"/>';
           offset += seg;
         });
-        svg += '<circle cx="90" cy="90" r="35" fill="#0f1512"></circle>';
-        svg += '<text x="90" y="92" fill="#c7f9cc" font-size="12" text-anchor="middle">' + total + '</text>';
-        svg += '<text x="90" y="107" fill="#6b8579" font-size="10" text-anchor="middle">events</text>';
+        svg += '<circle cx="90" cy="90" r="35" fill="' + themeColor('--bg-panel') + '"></circle>';
+        svg += '<text x="90" y="92" fill="' + themeColor('--text-primary') + '" font-size="12" text-anchor="middle">' + total + '</text>';
+        svg += '<text x="90" y="107" fill="' + themeColor('--text-secondary') + '" font-size="10" text-anchor="middle">events</text>';
         svg += '</svg>';
         var legend = '<div style="display:flex;flex-direction:column;gap:4px;">' + rows.map(function (r, idx) {
           return '<div><span style="display:inline-block;width:10px;height:10px;background:' + colors[idx % colors.length] + ';margin-right:6px;border-radius:2px;"></span>' +
@@ -2704,7 +2986,7 @@
       }
 
       function complianceCard(label, value, color) {
-        return '<div style="border:1px solid #1e2a24;border-radius:6px;padding:10px;min-width:180px;">' +
+        return '<div class="stat-card" style="min-width:180px;">' +
           '<div class="muted" style="font-size:11px;">' + escapeHtml(label) + '</div>' +
           '<div style="font-size:20px;color:' + color + ';font-weight:700;">' + escapeHtml(value) + '</div>' +
           '</div>';
@@ -2721,9 +3003,9 @@
 
       async function loadAnalyticsTrends() {
         var metrics = [
-          { metric: 'events', id: 'analytics-trend-events', color: '#22c55e' },
-          { metric: 'conflicts', id: 'analytics-trend-conflicts', color: '#facc15' },
-          { metric: 'alerts', id: 'analytics-trend-alerts', color: '#ef4444' }
+          { metric: 'events', id: 'analytics-trend-events', color: themeColor('--green-mid') },
+          { metric: 'conflicts', id: 'analytics-trend-conflicts', color: themeColor('--status-warn') },
+          { metric: 'alerts', id: 'analytics-trend-alerts', color: themeColor('--status-error') }
         ];
         await Promise.all(metrics.map(async function (cfg) {
           try {
@@ -2732,7 +3014,7 @@
             var data = await res.json();
             renderBarChart(cfg.id, data.data || [], cfg.color);
           } catch (e) {
-            document.getElementById(cfg.id).innerHTML = '<span style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</span>';
+            document.getElementById(cfg.id).innerHTML = '<span style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</span>';
           }
         }));
       }
@@ -2744,7 +3026,7 @@
           var data = await res.json();
           renderDonutChart('analytics-sources-chart', data.sources || []);
         } catch (e) {
-          document.getElementById('analytics-sources-chart').innerHTML = '<span style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</span>';
+          document.getElementById('analytics-sources-chart').innerHTML = '<span style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</span>';
         }
       }
 
@@ -2758,15 +3040,15 @@
           var fwOk = c.integrations && c.integrations.firewall_last_push_ok;
           var ldapOk = c.integrations && c.integrations.ldap_last_sync_ok;
           var cards =
-            complianceCard('Active Mappings', (c.mappings && c.mappings.active) || 0, '#22c55e') +
-            complianceCard('Unresolved Conflicts', unresolved, unresolved > 0 ? '#ef4444' : '#22c55e') +
-            complianceCard('Stale 24h', stale, stale > 10 ? '#facc15' : '#c7f9cc') +
-            complianceCard('IPs Without Subnet', (c.coverage && c.coverage.ips_without_subnet) || 0, '#c7f9cc') +
-            complianceCard('Firewall Status', fwOk ? 'OK' : 'Issue', fwOk ? '#22c55e' : '#ef4444') +
-            complianceCard('LDAP Status', ldapOk ? 'OK' : 'Issue', ldapOk ? '#22c55e' : '#ef4444');
+            complianceCard('Active Mappings', (c.mappings && c.mappings.active) || 0, 'var(--status-ok)') +
+            complianceCard('Unresolved Conflicts', unresolved, unresolved > 0 ? 'var(--status-error)' : 'var(--status-ok)') +
+            complianceCard('Stale 24h', stale, stale > 10 ? 'var(--status-warn)' : 'var(--text-primary)') +
+            complianceCard('IPs Without Subnet', (c.coverage && c.coverage.ips_without_subnet) || 0, 'var(--text-primary)') +
+            complianceCard('Firewall Status', fwOk ? 'OK' : 'Issue', fwOk ? 'var(--status-ok)' : 'var(--status-error)') +
+            complianceCard('LDAP Status', ldapOk ? 'OK' : 'Issue', ldapOk ? 'var(--status-ok)' : 'var(--status-error)');
           document.getElementById('analytics-compliance-cards').innerHTML = cards;
         } catch (e) {
-          document.getElementById('analytics-compliance-cards').innerHTML = '<span style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</span>';
+          document.getElementById('analytics-compliance-cards').innerHTML = '<span style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</span>';
         }
       }
 
@@ -2792,7 +3074,7 @@
           }).join('');
         } catch (e) {
           document.getElementById('analytics-reports-body').innerHTML =
-            '<tr><td colspan="4" style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+            '<tr><td colspan="4" style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</td></tr>';
         }
       }
 
@@ -2886,7 +3168,7 @@
           applyRoleVisibility(currentUser.role);
         } catch (e) {
           document.getElementById('subnets-body').innerHTML =
-            '<tr><td colspan="7" style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+            '<tr><td colspan="7" style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</td></tr>';
         }
       }
 
@@ -2987,7 +3269,7 @@
                 '</tr>';
             }).join('') + '</tbody></table>';
         } catch (e) {
-          document.getElementById('subnet-map-' + id).innerHTML = '<span style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</span>';
+          document.getElementById('subnet-map-' + id).innerHTML = '<span style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</span>';
         }
       }
 
@@ -3019,7 +3301,7 @@
           applyRoleVisibility(currentUser.role);
         } catch (e) {
           document.getElementById('discovered-subnets-body').innerHTML =
-            '<tr><td colspan="6" style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+            '<tr><td colspan="6" style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</td></tr>';
         }
       }
 
@@ -3065,7 +3347,7 @@
             method: 'POST',
             headers: mutHeaders(),
             credentials: 'include',
-            body: JSON.stringify({ ip: ip, tag: tag, color: color || '#6b8579' })
+            body: JSON.stringify({ ip: ip, tag: tag, color: color || 'var(--text-secondary)' })
           });
           if (!res.ok) throw new Error('HTTP ' + res.status);
           document.getElementById('status-tag-ip').value = '';
@@ -3089,13 +3371,13 @@
             return;
           }
           el.innerHTML = rows.map(function (r) {
-            return '<div style="padding:4px 0;border-bottom:1px solid #1e2a24;">' +
-              '<span class="badge" style="border:1px solid ' + escapeHtml(r.color || '#6b8579') + ';color:' + escapeHtml(r.color || '#6b8579') + ';">' + escapeHtml(r.tag) + '</span> ' +
+            return '<div style="padding:4px 0;border-bottom:1px solid var(--border-dim);">' +
+              '<span class="badge" style="border:1px solid ' + escapeHtml(r.color || 'var(--text-secondary)') + ';color:' + escapeHtml(r.color || 'var(--text-secondary)') + ';">' + escapeHtml(r.tag) + '</span> ' +
               '<span class="muted">' + escapeHtml(r.ip_count || 0) + ' IPs</span>' +
               '</div>';
           }).join('');
         } catch (e) {
-          el.innerHTML = '<span style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</span>';
+          el.innerHTML = '<span style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</span>';
         }
       }
 
@@ -3156,7 +3438,7 @@
           applyRoleVisibility(currentUser.role);
         } catch (e) {
           document.getElementById('switches-body').innerHTML =
-            '<tr><td colspan="9" style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+            '<tr><td colspan="9" style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</td></tr>';
         }
       }
 
@@ -3255,15 +3537,15 @@
           var el = document.getElementById('sw-msg-' + id);
           if (res.ok) {
             el.textContent = data.message || 'Poll queued';
-            el.style.color = '#22c55e';
+            el.style.color = 'var(--status-ok)';
           } else {
             el.textContent = data.message || ('HTTP ' + res.status);
-            el.style.color = '#ef4444';
+            el.style.color = 'var(--status-error)';
           }
         } catch (e) {
           var el2 = document.getElementById('sw-msg-' + id);
           el2.textContent = 'Poll failed: ' + e.message;
-          el2.style.color = '#ef4444';
+          el2.style.color = 'var(--status-error)';
         }
       }
 
@@ -3297,7 +3579,7 @@
                 '</tr>';
             }).join('') + '</tbody></table>';
         } catch (e) {
-          document.getElementById('sw-ports-' + id).innerHTML = '<span style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</span>';
+          document.getElementById('sw-ports-' + id).innerHTML = '<span style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</span>';
         }
       }
 
@@ -3394,7 +3676,7 @@
           applyRoleVisibility(currentUser.role);
         } catch (e) {
           document.getElementById('fp-body').innerHTML =
-            '<tr><td colspan="6" style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+            '<tr><td colspan="6" style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</td></tr>';
         }
       }
 
@@ -3456,7 +3738,7 @@
           renderPager('fp-obs-paging', fpObsCurrentPage, 50, data.total || 0, 'loadFingerprintObservations');
         } catch (e) {
           document.getElementById('fp-obs-body').innerHTML =
-            '<tr><td colspan="7" style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+            '<tr><td colspan="7" style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</td></tr>';
         }
       }
 
@@ -3503,7 +3785,7 @@
           renderPager('dns-paging', dnsCurrentPage, 50, data.total || 0, 'loadDnsList');
         } catch (e) {
           document.getElementById('dns-body').innerHTML =
-            '<tr><td colspan="4" style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+            '<tr><td colspan="4" style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</td></tr>';
         }
       }
 
@@ -3515,16 +3797,16 @@
           var res = await fetch('/api/v2/dns/' + encodeURIComponent(ip), { credentials: 'include' });
           if (res.status === 404) {
             out.textContent = 'not cached';
-            out.style.color = '#6b8579';
+            out.style.color = 'var(--text-secondary)';
             return;
           }
           if (!res.ok) throw new Error('HTTP ' + res.status);
           var data = await res.json();
           out.textContent = 'hostname: ' + (data.hostname || 'not cached');
-          out.style.color = '#22c55e';
+          out.style.color = 'var(--status-ok)';
         } catch (e) {
           out.textContent = 'lookup failed: ' + e.message;
-          out.style.color = '#ef4444';
+          out.style.color = 'var(--status-error)';
         }
       }
 
@@ -3573,7 +3855,7 @@
           }).join('');
         } catch (e) {
           document.getElementById('retention-body').innerHTML =
-            '<tr><td colspan="6" style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+            '<tr><td colspan="6" style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</td></tr>';
         }
       }
 
@@ -3617,11 +3899,11 @@
           var rows = body.results || [];
           var changed = rows.filter(function (r) { return (r.deleted || 0) > 0; }).length;
           result.textContent = 'Done. Policies with deletions: ' + changed;
-          result.style.color = '#22c55e';
+          result.style.color = 'var(--status-ok)';
           await loadRetentionSection();
         } catch (e) {
           result.textContent = 'Failed: ' + e.message;
-          result.style.color = '#ef4444';
+          result.style.color = 'var(--status-error)';
         }
       }
 
@@ -3642,7 +3924,7 @@
           document.getElementById('retention-stats').innerHTML = top + list;
         } catch (e) {
           document.getElementById('retention-stats').innerHTML =
-            '<span style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</span>';
+            '<span style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</span>';
         }
       }
 
@@ -3659,7 +3941,7 @@
               var status = a.status || 'unknown';
               var dot = '<span class="dot offline"></span>';
               if (status === 'listening') dot = '<span class="dot online"></span>';
-              if (status === 'starting') dot = '<span class="dot" style="background:#f59e0b;box-shadow:0 0 6px #f59e0b;"></span>';
+              if (status === 'starting') dot = '<span class="dot" style="background:var(--status-warn);box-shadow:0 0 6px var(--status-warn);"></span>';
               return '<tr>' +
                 '<td>' + escapeHtml(a.name || '-') + '</td>' +
                 '<td>' + escapeHtml(a.bind || '-') + '</td>' +
@@ -3671,7 +3953,7 @@
           }
         } catch (e) {
           document.getElementById('status-adapters-body').innerHTML =
-            '<tr><td colspan="5" style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+            '<tr><td colspan="5" style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</td></tr>';
         }
 
         try {
@@ -3696,7 +3978,7 @@
           }).join('');
         } catch (e2) {
           document.getElementById('status-runtime').innerHTML =
-            '<span style="color:#ef4444;">Failed: ' + escapeHtml(e2.message) + '</span>';
+            '<span style="color:var(--status-error);">Failed: ' + escapeHtml(e2.message) + '</span>';
         }
 
         await loadRetentionSection();
@@ -3838,7 +4120,7 @@
           }
         } catch (e) {
           document.getElementById('firewall-body').innerHTML =
-            '<tr><td colspan="7" style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+            '<tr><td colspan="7" style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</td></tr>';
         }
       }
 
@@ -3875,15 +4157,15 @@
           var el = document.getElementById('fw-result-' + id);
           if (res.ok && data.status === 'ok') {
             el.textContent = 'Connection test: OK';
-            el.style.color = '#22c55e';
+            el.style.color = 'var(--status-ok)';
           } else {
             el.textContent = 'Connection test: ' + (data.message || ('HTTP ' + res.status));
-            el.style.color = '#ef4444';
+            el.style.color = 'var(--status-error)';
           }
         } catch (e) {
           var el2 = document.getElementById('fw-result-' + id);
           el2.textContent = 'Connection test failed: ' + e.message;
-          el2.style.color = '#ef4444';
+          el2.style.color = 'var(--status-error)';
         }
       }
 
@@ -3899,16 +4181,16 @@
           var el = document.getElementById('fw-result-' + id);
           if (res.ok) {
             el.textContent = 'Push initiated: ' + (data.pushed_count || 0) + ' entries';
-            el.style.color = '#22c55e';
+            el.style.color = 'var(--status-ok)';
           } else {
             el.textContent = 'Push failed: ' + (data.message || ('HTTP ' + res.status));
-            el.style.color = '#ef4444';
+            el.style.color = 'var(--status-error)';
           }
           await loadFirewallTargets();
         } catch (e) {
           var el2 = document.getElementById('fw-result-' + id);
           el2.textContent = 'Push failed: ' + e.message;
-          el2.style.color = '#ef4444';
+          el2.style.color = 'var(--status-error)';
         }
       }
 
@@ -3943,7 +4225,7 @@
             }).join('') +
             '</tbody></table>';
         } catch (e) {
-          box.innerHTML = '<span style="color:#ef4444;">Failed to load history: ' + escapeHtml(e.message) + '</span>';
+          box.innerHTML = '<span style="color:var(--status-error);">Failed to load history: ' + escapeHtml(e.message) + '</span>';
         }
       }
 
@@ -4060,7 +4342,7 @@
           applyRoleVisibility(currentUser.role);
         } catch (e) {
           document.getElementById('siem-body').innerHTML =
-            '<tr><td colspan="6" style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+            '<tr><td colspan="6" style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</td></tr>';
         }
       }
 
@@ -4103,7 +4385,7 @@
           document.getElementById('ldap-interval').value = cfg.sync_interval_secs || 300;
           var ps = document.getElementById('ldap-pass-status');
           ps.textContent = cfg.password_set ? 'Password saved' : 'Not set';
-          ps.style.color = cfg.password_set ? '#22c55e' : '#ef4444';
+          ps.style.color = cfg.password_set ? 'var(--status-ok)' : 'var(--status-error)';
         } catch (e) {
           document.getElementById('ldap-sync-msg').textContent = 'Failed to load LDAP config: ' + e.message;
         }
@@ -4143,7 +4425,7 @@
           input.value = '';
           var ps = document.getElementById('ldap-pass-status');
           ps.textContent = 'Password saved';
-          ps.style.color = '#22c55e';
+          ps.style.color = 'var(--status-ok)';
         } catch (e) {
           alert('Failed to save password: ' + e.message);
         }
@@ -4159,10 +4441,10 @@
           });
           if (!res.ok) throw new Error('HTTP ' + res.status);
           document.getElementById('ldap-sync-msg').textContent = 'Sync initiated';
-          document.getElementById('ldap-sync-msg').style.color = '#22c55e';
+          document.getElementById('ldap-sync-msg').style.color = 'var(--status-ok)';
         } catch (e) {
           document.getElementById('ldap-sync-msg').textContent = 'Sync failed: ' + e.message;
-          document.getElementById('ldap-sync-msg').style.color = '#ef4444';
+          document.getElementById('ldap-sync-msg').style.color = 'var(--status-error)';
         }
       }
 
@@ -4181,7 +4463,7 @@
             return '<div style="margin:4px 0;"><a class="ip-link" href="#" onclick="loadLdapGroupMembers(\'' + escJs(name) + '\');return false;">' + escapeHtml(name) + '</a></div>';
           }).join('');
         } catch (e) {
-          document.getElementById('ldap-groups-list').innerHTML = '<span style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</span>';
+          document.getElementById('ldap-groups-list').innerHTML = '<span style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</span>';
         }
       }
 
@@ -4200,7 +4482,7 @@
               return '<div style="margin:4px 0;">' + escapeHtml(r.username || '-') + '</div>';
             }).join('');
         } catch (e) {
-          document.getElementById('ldap-members-list').innerHTML = '<span style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</span>';
+          document.getElementById('ldap-members-list').innerHTML = '<span style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</span>';
         }
       }
 
@@ -4220,7 +4502,7 @@
             return '<div style="margin:4px 0;">' + escapeHtml(r.group_name || '-') + '</div>';
           }).join('');
         } catch (e) {
-          document.getElementById('ldap-user-groups').innerHTML = '<span style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</span>';
+          document.getElementById('ldap-user-groups').innerHTML = '<span style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</span>';
         }
       }
 
@@ -4241,17 +4523,17 @@
           var passStatus = document.getElementById('pass-status');
           if (cfg.sycope_pass_set) {
             passStatus.textContent = 'Password saved';
-            passStatus.style.color = '#22c55e';
+            passStatus.style.color = 'var(--status-ok)';
           } else {
             passStatus.textContent = 'Not set';
-            passStatus.style.color = '#ef4444';
+            passStatus.style.color = 'var(--status-error)';
           }
 
           renderSyncStatus(cfg.last_sync);
         } catch (err) {
           console.error('Failed to load Sycope config:', err);
           document.getElementById('sync-status').innerHTML =
-            '<span style="color:#ef4444;">Failed to load config: ' + err.message + '</span>';
+            '<span style="color:var(--status-error);">Failed to load config: ' + err.message + '</span>';
         }
       }
 
@@ -4295,7 +4577,7 @@
           input.value = '';
           var passStatus = document.getElementById('pass-status');
           passStatus.textContent = 'Password saved';
-          passStatus.style.color = '#22c55e';
+          passStatus.style.color = 'var(--status-ok)';
         } catch (err) {
           console.error('Password save failed:', err);
           alert('Failed to save password: ' + err.message);
@@ -4332,8 +4614,8 @@
         var el = document.getElementById('test-result');
         el.style.display = 'block';
         el.style.background = ok ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)';
-        el.style.border = '1px solid ' + (ok ? '#22c55e' : '#ef4444');
-        el.style.color = ok ? '#22c55e' : '#ef4444';
+        el.style.border = '1px solid ' + (ok ? 'var(--status-ok)' : 'var(--status-error)');
+        el.style.color = ok ? 'var(--status-ok)' : 'var(--status-error)';
         el.textContent = (ok ? 'OK: ' : 'Error: ') + message;
       }
 
@@ -4353,7 +4635,7 @@
           renderAuditPaging(data.page, data.per_page, data.total);
         } catch (err) {
           document.getElementById('audit-body').innerHTML =
-            '<tr><td colspan="7" style="color:#ef4444;">Failed: ' + err.message + '</td></tr>';
+            '<tr><td colspan="7" style="color:var(--status-error);">Failed: ' + err.message + '</td></tr>';
         }
       }
 
@@ -4384,7 +4666,7 @@
             '<td>' + (e.action || '-') + '</td>' +
             '<td>' + (e.target || '-') + '</td>' +
             '<td>' + (e.ip_address || '-') + '</td>' +
-            '<td style="font-size:11px;color:#6b8579;">' + (e.request_id || '-') + '</td>' +
+            '<td style="font-size:11px;color:var(--text-secondary);">' + (e.request_id || '-') + '</td>' +
             '</tr>';
         }).join('');
       }
@@ -4403,12 +4685,12 @@
         if (!sync || !sync.status) {
           el.innerHTML = '<span class="muted">No sync has been performed yet. ' +
             'Configure the settings above and run the connector:<br>' +
-            '<code style="color:#80ffdb;">cd integrations/sycope && python3 trueid_sync.py</code></span>';
+            '<code style="color:var(--green-bright);">cd integrations/sycope && python3 trueid_sync.py</code></span>';
           return;
         }
         var when = sync.last_run_at ? new Date(sync.last_run_at).toLocaleString() : 'unknown';
         var ok = sync.status === 'ok';
-        var color = ok ? '#22c55e' : '#ef4444';
+        var color = ok ? 'var(--status-ok)' : 'var(--status-error)';
         var html = '<div style="display:flex;gap:16px;align-items:baseline;">' +
           '<span style="color:' + color + ';font-size:16px;">' + (ok ? '●' : '✗') + '</span>' +
           '<div>' +
@@ -4418,7 +4700,7 @@
           html += '<div>Records synced: ' + sync.records_synced + '</div>';
         }
         if (sync.message) {
-          html += '<div style="color:#ef4444;margin-top:4px;">Message: ' + sync.message + '</div>';
+          html += '<div style="color:var(--status-error);margin-top:4px;">Message: ' + sync.message + '</div>';
         }
         html += '</div></div>';
         el.innerHTML = html;

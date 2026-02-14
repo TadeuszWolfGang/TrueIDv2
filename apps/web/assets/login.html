@@ -5,10 +5,33 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>TrueID — Login</title>
     <style>
-      :root { color-scheme: dark; }
+      :root {
+        color-scheme: dark;
+        --bg-deep: #020a06;
+        --bg-panel: #091a11;
+        --bg-surface: #0d2818;
+        --bg-hover: #0f3d1f;
+        --green-bright: #00ff41;
+        --green-mid: #00cc33;
+        --green-dim: #0a8a2e;
+        --green-ghost: rgba(0, 255, 65, 0.08);
+        --green-glow: 0 0 8px rgba(0, 255, 65, 0.4);
+        --text-glow: 0 0 6px rgba(0, 255, 65, 0.5);
+        --text-primary: #c8f7d0;
+        --text-secondary: #5a9a6b;
+        --text-heading: #00ff41;
+        --status-ok: #00ff41;
+        --status-warn: #ffb800;
+        --status-error: #ff2d2d;
+        --status-info: #00b4ff;
+        --border-dim: #0f3d1f;
+        --border-bright: #00ff41;
+        --scrollbar-thumb: #0a8a2e;
+        --scrollbar-track: #020a06;
+      }
       body {
-        background: #0b0f0d;
-        color: #c7f9cc;
+        background: var(--bg-deep);
+        color: var(--text-primary);
         font-family: "SFMono-Regular", ui-monospace, Menlo, Monaco, Consolas,
           "Liberation Mono", "Courier New", monospace;
         margin: 0;
@@ -17,62 +40,81 @@
         justify-content: center;
         min-height: 100vh;
       }
-      .login-box {
-        border: 1px solid #1e2a24;
-        border-radius: 8px;
-        background: #0f1512;
-        padding: 32px;
-        width: 340px;
-        box-shadow: 0 0 18px rgba(0, 255, 128, 0.08);
+      #matrix-bg {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        z-index: 0;
+        opacity: 0.08;
+        pointer-events: none;
       }
-      h1 {
-        margin: 0 0 24px;
-        font-size: 20px;
-        color: #80ffdb;
+      .login-card {
+        position: relative;
+        z-index: 1;
+        background: var(--bg-panel);
+        border: 1px solid var(--green-dim);
+        box-shadow: 0 0 20px rgba(0, 255, 65, 0.1), 0 0 60px rgba(0, 255, 65, 0.05);
+        border-radius: 6px;
+        padding: 32px;
+        width: 360px;
+      }
+      .lock-icon::before {
+        content: '🔒';
+        font-size: 32px;
+        display: block;
         text-align: center;
-        letter-spacing: 0.02em;
+        margin-bottom: 16px;
+        filter: hue-rotate(90deg) brightness(1.5);
       }
       label {
         display: block;
         font-size: 13px;
-        color: #6b8579;
+        color: var(--text-secondary);
         margin-bottom: 4px;
       }
       input[type="text"],
       input[type="password"] {
         width: 100%;
         box-sizing: border-box;
-        background: #0b0f0d;
-        border: 1px solid #1e2a24;
-        border-radius: 4px;
-        color: #c7f9cc;
+        background: var(--bg-deep);
+        border: 1px solid var(--border-dim);
+        border-radius: 3px;
+        color: var(--text-primary);
         padding: 10px 12px;
         font-family: inherit;
         font-size: 14px;
         margin-bottom: 16px;
-        transition: border-color 0.2s;
       }
-      input:focus { outline: none; border-color: #80ffdb; }
+      input:focus {
+        outline: none;
+        border-color: var(--green-bright);
+        box-shadow: var(--green-glow);
+      }
       .btn {
         width: 100%;
-        background: #1e2a24;
-        color: #80ffdb;
-        border: 1px solid #80ffdb;
-        border-radius: 4px;
+        background: transparent;
+        color: var(--green-bright);
+        border: 1px solid var(--green-dim);
+        border-radius: 3px;
         padding: 10px 16px;
         font-family: inherit;
         font-size: 14px;
         cursor: pointer;
         transition: all 0.2s;
       }
-      .btn:hover { background: #80ffdb; color: #0b0f0d; }
+      .btn:hover {
+        border-color: var(--green-bright);
+        box-shadow: var(--green-glow);
+        text-shadow: var(--text-glow);
+      }
       .btn:disabled { opacity: 0.5; cursor: not-allowed; }
       .error-msg {
         display: none;
-        background: rgba(239, 68, 68, 0.1);
-        border: 1px solid #ef4444;
+        background: rgba(255, 45, 45, 0.1);
+        border: 1px solid var(--status-error);
         border-radius: 4px;
-        color: #ef4444;
+        color: var(--status-error);
         padding: 10px;
         margin-bottom: 16px;
         font-size: 13px;
@@ -82,23 +124,40 @@
         display: none;
         margin-top: 16px;
         padding-top: 16px;
-        border-top: 1px solid #1e2a24;
+        border-top: 1px solid var(--border-dim);
       }
       .change-pw-section h2 {
         font-size: 15px;
-        color: #f59e0b;
+        color: var(--status-warn);
         margin: 0 0 8px;
       }
       .change-pw-section p {
         font-size: 12px;
-        color: #6b8579;
+        color: var(--text-secondary);
         margin: 0 0 12px;
       }
+      ::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+      }
+      ::-webkit-scrollbar-track { background: var(--scrollbar-track); }
+      ::-webkit-scrollbar-thumb {
+        background: var(--scrollbar-thumb);
+        border-radius: 3px;
+      }
+      ::-webkit-scrollbar-thumb:hover { background: var(--green-mid); }
     </style>
   </head>
   <body>
-    <div class="login-box">
-      <h1>TrueID</h1>
+    <canvas id="matrix-bg"></canvas>
+    <div class="login-card">
+      <div class="lock-icon"></div>
+      <h1 style="color:var(--green-bright);text-shadow:0 0 10px rgba(0,255,65,0.6);font-size:28px;letter-spacing:4px;text-align:center;margin:0;">
+        ▸ TRUE<span style="color:var(--text-primary)">ID</span>
+      </h1>
+      <p style="color:var(--text-secondary);text-align:center;font-size:12px;letter-spacing:2px;margin:8px 0 22px;">
+        IDENTITY CORRELATION ENGINE
+      </p>
 
       <div id="error-msg" class="error-msg"></div>
 
@@ -138,6 +197,39 @@
     <script>
       var currentUser = null;
       var requires2fa = false;
+
+      (function initMatrixRain() {
+        var canvas = document.getElementById('matrix-bg');
+        if (!canvas) return;
+        var ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        var matrixColor = getComputedStyle(document.documentElement).getPropertyValue('--green-bright').trim();
+        function resize() {
+          canvas.width = window.innerWidth;
+          canvas.height = window.innerHeight;
+        }
+        resize();
+        window.addEventListener('resize', resize);
+        var fontSize = 14;
+        var columns = Math.max(1, Math.floor(canvas.width / fontSize));
+        var drops = new Array(columns).fill(1);
+        var chars = 'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン0123456789ABCDEF';
+        function draw() {
+          ctx.fillStyle = 'rgba(2, 10, 6, 0.05)';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.fillStyle = matrixColor;
+          ctx.font = fontSize + 'px monospace';
+          for (var i = 0; i < drops.length; i++) {
+            var char = chars[Math.floor(Math.random() * chars.length)];
+            ctx.fillText(char, i * fontSize, drops[i] * fontSize);
+            if (drops[i] * fontSize > canvas.height && Math.random() > 0.975) {
+              drops[i] = 0;
+            }
+            drops[i]++;
+          }
+        }
+        setInterval(draw, 50);
+      })();
 
       function showError(msg) {
         var el = document.getElementById('error-msg');

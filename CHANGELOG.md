@@ -6,6 +6,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 ## [0.6.0] — 2026-02-13
 
 ### Added
+- Matrix/Cyber UI redesign for dashboard and login pages: neon-green palette variables, glow/scan-line effects, custom scrollbars, and security modal visual refresh
+- Subtle Matrix rain canvas background for dashboard and login, with dashboard toggle persisted via `localStorage` (`trueid_matrix_rain`)
 - Phase 5 test expansion: +14 web E2E tests (SSE, notification channels, retention run/stats/validation, import batch/partial failure, password history reuse, absolute session timeout, duplicate tags, geo field presence)
 - 3 new unit tests: Geo resolver private IP path, retention executor empty tables, password policy validator behavior
 - New shared runtime config model: `crates/common/src/app_config.rs` with in-memory reload support in web state
@@ -58,6 +60,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - VPN dispatcher not matching `Username = ..., IP = ...` format
 
 ### Changed
+- Analytics SVG styling updated to cyber theme colors (bars/donut/labels) and live SSE toasts switched to neon flash style
 - Web routing refactor: extracted grouped routers to `apps/web/src/routes.rs`, reduced `build_router()` complexity in `apps/web/src/lib.rs`
 - Session hardening reads idle/absolute timeout from shared runtime config and supports immediate expiry (`session_absolute_max_hours <= 0`) for tests/ops
 - SSE proxy errors now return unified `ApiError` format (instead of raw status codes)
