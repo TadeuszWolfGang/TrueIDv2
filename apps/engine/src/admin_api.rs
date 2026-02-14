@@ -23,7 +23,7 @@ use std::time::Instant;
 use tokio::sync::broadcast;
 use tokio::sync::RwLock;
 use tokio_stream::wrappers::BroadcastStream;
-use tracing::info;
+use tracing::{info, warn};
 use trueid_common::db::Db;
 use trueid_common::live_event::LiveEvent;
 use trueid_common::model::{AdapterStatus, IdentityEvent, SourceType};
@@ -109,6 +109,10 @@ pub fn admin_router(state: EngineAdminState) -> Router {
         .route("/engine/mappings", post(create_manual_mapping))
         .route("/engine/mappings/{ip}", delete(delete_mapping))
         .route("/engine/ldap/sync", post(force_ldap_sync))
+        .route(
+            "/engine/notifications/channels/{id}/test",
+            post(test_notification_channel),
+        )
         .route("/engine/events/stream", get(sse_stream))
         .layer(axum_mw::from_fn_with_state(
             state.clone(),
@@ -567,4 +571,28 @@ async fn set_sycope_config(
     }
     info!("Sycope config updated");
     get_sycope_config(State(s)).await
+}
+
+/// Sends test message to a notification channel.
+///
+/// Parameters: `s` - admin state, `id` - notification channel id.
+/// Returns: JSON status payload.
+async fn test_notification_channel(
+    State(s): State<EngineAdminState>,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    let dispatcher = crate::notifications::NotificationDispatcher::new(
+        s.db.clone(),
+        reqwest::Client::new(),
+    );
+    match dispatcher.send_test_channel(id).await {
+        Ok(()) => Json(serde_json::json!({ "success": true })),
+        Err(e) => {
+            warn!(error = %e, channel_id = id, "Notification channel test failed");
+            Json(serde_json::json!({
+                "success": false,
+                "error": e.to_string()
+            }))
+        }
+    }
 }

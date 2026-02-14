@@ -9,7 +9,7 @@ use axum::{
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tracing::warn;
 
 use crate::error::{self, ApiError};
@@ -30,8 +30,17 @@ pub struct AlertRuleRecord {
     pub action_webhook_headers: Option<String>,
     pub action_log: bool,
     pub cooldown_seconds: i64,
+    pub channels: Vec<RuleChannelInfo>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+/// Notification channel linked to a rule.
+#[derive(Debug, Clone, Serialize)]
+pub struct RuleChannelInfo {
+    pub id: i64,
+    pub name: String,
+    pub channel_type: String,
 }
 
 /// Alert history row returned by API.
@@ -69,6 +78,7 @@ pub struct CreateRuleRequest {
     pub action_webhook_headers: Option<String>,
     pub action_log: bool,
     pub cooldown_seconds: i64,
+    pub channel_ids: Option<Vec<i64>>,
 }
 
 /// Partial update payload for alert rule.
@@ -83,6 +93,7 @@ pub struct UpdateRuleRequest {
     pub action_webhook_headers: Option<String>,
     pub action_log: Option<bool>,
     pub cooldown_seconds: Option<i64>,
+    pub channel_ids: Option<Vec<i64>>,
 }
 
 /// Query parameters for alert history listing.
@@ -271,9 +282,134 @@ fn map_rule_row(row: &sqlx::sqlite::SqliteRow) -> AlertRuleRecord {
         action_webhook_headers: row.try_get("action_webhook_headers").ok(),
         action_log: row.try_get("action_log").unwrap_or(true),
         cooldown_seconds: row.try_get("cooldown_seconds").unwrap_or(300),
+        channels: Vec::new(),
         created_at: row.try_get("created_at").unwrap_or_else(|_| Utc::now()),
         updated_at: row.try_get("updated_at").unwrap_or_else(|_| Utc::now()),
     }
+}
+
+/// Loads notification channel links for one or more rule IDs.
+///
+/// Parameters: `db` - database handle, `rule_ids` - list of rule IDs.
+/// Returns: map of `rule_id -> channels`.
+async fn load_rule_channels(
+    db: &trueid_common::db::Db,
+    rule_ids: &[i64],
+) -> Result<HashMap<i64, Vec<RuleChannelInfo>>, sqlx::Error> {
+    if rule_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let placeholders = std::iter::repeat_n("?", rule_ids.len())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT arc.rule_id, nc.id, nc.name, nc.channel_type
+         FROM alert_rule_channels arc
+         JOIN notification_channels nc ON nc.id = arc.channel_id
+         WHERE arc.rule_id IN ({placeholders})
+         ORDER BY nc.name ASC"
+    );
+    let mut q = sqlx::query(&sql);
+    for id in rule_ids {
+        q = q.bind(*id);
+    }
+    let rows = q.fetch_all(db.pool()).await?;
+    let mut out: HashMap<i64, Vec<RuleChannelInfo>> = HashMap::new();
+    for row in rows {
+        let rid: i64 = row.try_get("rule_id").unwrap_or_default();
+        out.entry(rid).or_default().push(RuleChannelInfo {
+            id: row.try_get("id").unwrap_or_default(),
+            name: row.try_get("name").unwrap_or_default(),
+            channel_type: row.try_get("channel_type").unwrap_or_default(),
+        });
+    }
+    Ok(out)
+}
+
+/// Replaces rule-to-channel links with the provided channel IDs.
+///
+/// Parameters: `db` - database handle, `rule_id` - alert rule id, `channel_ids` - selected channels, `request_id` - request id.
+/// Returns: success or API error on invalid channel ID.
+async fn set_rule_channels(
+    db: &trueid_common::db::Db,
+    rule_id: i64,
+    channel_ids: &[i64],
+    request_id: &str,
+) -> Result<(), ApiError> {
+    let unique_ids = channel_ids
+        .iter()
+        .copied()
+        .filter(|id| *id > 0)
+        .collect::<HashSet<_>>();
+    let mut tx = db.pool().begin().await.map_err(|e| {
+        warn!(error = %e, rule_id, "Failed to start rule-channel transaction");
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error::INTERNAL_ERROR,
+            "Failed to save alert rule channels",
+        )
+        .with_request_id(request_id)
+    })?;
+    sqlx::query("DELETE FROM alert_rule_channels WHERE rule_id = ?")
+        .bind(rule_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| {
+            warn!(error = %e, rule_id, "Failed to clear rule channels");
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error::INTERNAL_ERROR,
+                "Failed to save alert rule channels",
+            )
+            .with_request_id(request_id)
+        })?;
+    for channel_id in unique_ids {
+        let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM notification_channels WHERE id = ?")
+            .bind(channel_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(|e| {
+                warn!(error = %e, channel_id, "Failed to validate notification channel");
+                ApiError::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    error::INTERNAL_ERROR,
+                    "Failed to save alert rule channels",
+                )
+                .with_request_id(request_id)
+            })?;
+        if exists == 0 {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                error::INVALID_INPUT,
+                "One or more channel_ids do not exist",
+            )
+            .with_request_id(request_id));
+        }
+        sqlx::query("INSERT INTO alert_rule_channels (rule_id, channel_id) VALUES (?, ?)")
+            .bind(rule_id)
+            .bind(channel_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| {
+                warn!(error = %e, rule_id, channel_id, "Failed to insert alert rule channel");
+                ApiError::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    error::INTERNAL_ERROR,
+                    "Failed to save alert rule channels",
+                )
+                .with_request_id(request_id)
+            })?;
+    }
+    tx.commit().await.map_err(|e| {
+        warn!(error = %e, rule_id, "Failed to commit rule-channel transaction");
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error::INTERNAL_ERROR,
+            "Failed to save alert rule channels",
+        )
+        .with_request_id(request_id)
+    })?;
+    Ok(())
 }
 
 /// Lists all alert rules.
@@ -305,7 +441,20 @@ pub async fn list_rules(
         .with_request_id(&auth.request_id)
     })?;
 
-    let rules = rows.iter().map(map_rule_row).collect();
+    let mut rules: Vec<AlertRuleRecord> = rows.iter().map(map_rule_row).collect();
+    let rule_ids = rules.iter().map(|r| r.id).collect::<Vec<_>>();
+    let channels_map = load_rule_channels(db, &rule_ids).await.map_err(|e| {
+        warn!(error = %e, "Failed to load alert rule channels");
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error::INTERNAL_ERROR,
+            "Failed to list alert rules",
+        )
+        .with_request_id(&auth.request_id)
+    })?;
+    for rule in &mut rules {
+        rule.channels = channels_map.get(&rule.id).cloned().unwrap_or_default();
+    }
     Ok(Json(RulesResponse { rules }))
 }
 
@@ -369,6 +518,13 @@ pub async fn create_rule(
     };
 
     let id = result.last_insert_rowid();
+    set_rule_channels(
+        db,
+        id,
+        body.channel_ids.as_deref().unwrap_or(&[]),
+        &auth.request_id,
+    )
+    .await?;
     let row = sqlx::query(
         "SELECT id, name, enabled, rule_type, severity, conditions,
                 action_webhook_url, action_webhook_headers, action_log,
@@ -388,7 +544,17 @@ pub async fn create_rule(
         )
         .with_request_id(&auth.request_id)
     })?;
-    let created = map_rule_row(&row);
+    let mut created = map_rule_row(&row);
+    let channels_map = load_rule_channels(db, &[id]).await.map_err(|e| {
+        warn!(error = %e, rule_id = id, "Failed to load created rule channels");
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error::INTERNAL_ERROR,
+            "Failed to create alert rule",
+        )
+        .with_request_id(&auth.request_id)
+    })?;
+    created.channels = channels_map.get(&id).cloned().unwrap_or_default();
 
     let target_id = id.to_string();
     let details = format!(
@@ -418,6 +584,7 @@ pub async fn update_rule(
     Json(body): Json<UpdateRuleRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let db = helpers::require_db(&state, &auth.request_id)?;
+    let requested_channel_ids = body.channel_ids.clone();
 
     let existing = sqlx::query(
         "SELECT id, name, enabled, rule_type, severity, conditions,
@@ -527,7 +694,7 @@ pub async fn update_rule(
     }
     sets.push("updated_at = datetime('now')".to_string());
 
-    if sets.len() == 1 {
+    if sets.len() == 1 && requested_channel_ids.is_none() {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
             error::INVALID_INPUT,
@@ -550,6 +717,9 @@ pub async fn update_rule(
             )
             .with_request_id(&auth.request_id)
         })?;
+    if let Some(channel_ids) = requested_channel_ids {
+        set_rule_channels(db, id, &channel_ids, &auth.request_id).await?;
+    }
 
     let row = sqlx::query(
         "SELECT id, name, enabled, rule_type, severity, conditions,
@@ -570,7 +740,17 @@ pub async fn update_rule(
         )
         .with_request_id(&auth.request_id)
     })?;
-    let updated = map_rule_row(&row);
+    let mut updated = map_rule_row(&row);
+    let channels_map = load_rule_channels(db, &[id]).await.map_err(|e| {
+        warn!(error = %e, rule_id = id, "Failed to load updated rule channels");
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error::INTERNAL_ERROR,
+            "Failed to update alert rule",
+        )
+        .with_request_id(&auth.request_id)
+    })?;
+    updated.channels = channels_map.get(&id).cloned().unwrap_or_default();
 
     let target_id = id.to_string();
     helpers::audit(

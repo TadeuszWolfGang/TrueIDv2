@@ -200,6 +200,7 @@
       <button class="tab" id="tab-btn-firewall" onclick="switchTab('firewall')" style="display:none;">Firewall</button>
       <button class="tab" id="tab-btn-siem" onclick="switchTab('siem')" style="display:none;">SIEM</button>
       <button class="tab" id="tab-btn-ldap" onclick="switchTab('ldap')" style="display:none;">LDAP</button>
+      <button class="tab" id="tab-btn-notifications" onclick="switchTab('notifications')" style="display:none;">Notifications</button>
       <button class="tab" id="tab-btn-sycope" onclick="switchTab('sycope')">Sycope</button>
       <button class="tab" id="tab-btn-audit" onclick="switchTab('audit')" style="display:none;">Audit Log</button>
     </nav>
@@ -382,6 +383,10 @@
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
               <input type="text" id="rule-webhook" class="setting-input" style="width:400px;" placeholder="Webhook URL (optional)">
+            </div>
+            <div style="margin-bottom:8px;">
+              <div class="muted" style="margin-bottom:4px;">Notification channels</div>
+              <div id="rule-channel-list" class="sync-status-box">Loading channels...</div>
             </div>
             <div style="display:flex;gap:8px;">
               <button class="btn btn-sm" onclick="saveAlertRule()">Save</button>
@@ -861,6 +866,45 @@
       </div>
     </div>
 
+    <!-- ═══ TAB: Notifications ═══ -->
+    <div id="tab-notifications" style="display:none;">
+      <h1>TrueID :: Notifications</h1>
+      <div class="panel">
+        <h2 class="section-title">Channels</h2>
+        <div style="display:flex;gap:8px;margin-bottom:10px;">
+          <button class="btn btn-sm role-admin" onclick="showNotificationForm()">+ Add Channel</button>
+          <button class="btn btn-sm" onclick="loadNotificationsTab()">Refresh</button>
+        </div>
+        <div id="notification-form" style="display:none;margin-bottom:12px;padding:12px;border:1px solid #1e2a24;border-radius:4px;">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+            <input id="notif-name" class="setting-input" style="width:180px;" placeholder="Name">
+            <select id="notif-type" class="setting-input" style="width:140px;" onchange="renderNotificationConfigForm()">
+              <option value="email">Email</option>
+              <option value="slack">Slack</option>
+              <option value="teams">Teams</option>
+              <option value="webhook">Webhook</option>
+            </select>
+            <label class="setting-desc" style="display:flex;align-items:center;gap:6px;">
+              <input id="notif-enabled" type="checkbox" checked> Enabled
+            </label>
+          </div>
+          <div id="notif-config-fields" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;"></div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-sm role-admin" onclick="saveNotificationChannel()">Save</button>
+            <button class="btn btn-sm" onclick="hideNotificationForm()">Cancel</button>
+          </div>
+        </div>
+        <table>
+          <thead><tr><th>Name</th><th>Type</th><th>Status</th><th>Summary</th><th>Actions</th></tr></thead>
+          <tbody id="notifications-body"><tr><td colspan="5" class="muted">Loading...</td></tr></tbody>
+        </table>
+
+        <div class="setting-divider" style="margin:16px 0;"></div>
+        <h2 class="section-title">Delivery Log</h2>
+        <div id="notifications-deliveries" class="sync-status-box">Select channel to see deliveries.</div>
+      </div>
+    </div>
+
     <!-- ═══ TAB: Sycope ═══ -->
     <div id="tab-sycope" style="display:none;">
       <h1>TrueID :: Sycope Integration</h1>
@@ -1051,12 +1095,13 @@
     <script>
       var currentUser = null;
       var activeTab = 'mappings';
+      var notificationEditingId = null;
       var evtSource = null;
       var sseConnected = false;
       var tabLoaded = {
         mappings: false, search: false, conflicts: false, alerts: false, analytics: false, status: false,
         subnets: false, switches: false, fingerprints: false, dns: false,
-        firewall: false, siem: false, ldap: false, sycope: false, audit: false
+        firewall: false, siem: false, ldap: false, notifications: false, sycope: false, audit: false
       };
       var tabRefreshTimers = { mappings: null, conflicts: null, alerts: null, analytics: null, status: null, audit: null };
 
@@ -1292,6 +1337,7 @@
         document.getElementById('tab-btn-firewall').style.display = isOperatorOrAdmin ? '' : 'none';
         document.getElementById('tab-btn-siem').style.display = isOperatorOrAdmin ? '' : 'none';
         document.getElementById('tab-btn-ldap').style.display = isOperatorOrAdmin ? '' : 'none';
+        document.getElementById('tab-btn-notifications').style.display = isAdmin ? '' : 'none';
         document.getElementById('tab-btn-sycope').style.display = isAdmin ? '' : 'none';
         document.getElementById('tab-btn-audit').style.display = isAdmin ? '' : 'none';
         document.querySelectorAll('.role-operator').forEach(function (el) {
@@ -1348,7 +1394,7 @@
 
       function switchTab(name) {
         activeTab = name;
-        ['mappings', 'search', 'conflicts', 'alerts', 'analytics', 'subnets', 'switches', 'fingerprints', 'dns', 'status', 'firewall', 'siem', 'ldap', 'sycope', 'audit'].forEach(function (n) {
+        ['mappings', 'search', 'conflicts', 'alerts', 'analytics', 'subnets', 'switches', 'fingerprints', 'dns', 'status', 'firewall', 'siem', 'ldap', 'notifications', 'sycope', 'audit'].forEach(function (n) {
           var panel = document.getElementById('tab-' + n);
           if (panel) panel.style.display = n === name ? 'block' : 'none';
         });
@@ -1449,6 +1495,10 @@
           if (!tabLoaded.ldap) tabLoaded.ldap = true;
           clearTabTimers();
           loadLdapTab();
+        } else if (name === 'notifications') {
+          if (!tabLoaded.notifications) tabLoaded.notifications = true;
+          clearTabTimers();
+          loadNotificationsTab();
         } else if (name === 'sycope') {
           clearTabTimers();
           loadSycopeConfig();
@@ -1810,11 +1860,34 @@
       function showAddRuleForm() {
         editingRuleId = null;
         document.getElementById('alert-rule-form').style.display = '';
+        loadRuleChannelOptions([]);
       }
 
       function hideRuleForm() {
         editingRuleId = null;
         document.getElementById('alert-rule-form').style.display = 'none';
+      }
+
+      async function loadRuleChannelOptions(selected) {
+        if (!currentUser || currentUser.role !== 'Admin') return;
+        selected = selected || [];
+        var selectedMap = {};
+        selected.forEach(function (id) { selectedMap[String(id)] = true; });
+        try {
+          var res = await fetch('/api/v2/notifications/channels', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var channels = await res.json();
+          var html = channels.map(function (c) {
+            var checked = selectedMap[String(c.id)] ? 'checked' : '';
+            return '<label class="setting-desc" style="display:inline-flex;align-items:center;gap:6px;margin-right:12px;">' +
+              '<input type="checkbox" class="rule-channel-cb" value="' + c.id + '" ' + checked + '>' +
+              escapeHtml(c.name) + ' (' + escapeHtml(c.channel_type) + ')' +
+              '</label>';
+          }).join('');
+          document.getElementById('rule-channel-list').innerHTML = html || '<span class="muted">No channels configured.</span>';
+        } catch (e) {
+          document.getElementById('rule-channel-list').innerHTML = '<span class="muted">Failed to load channels.</span>';
+        }
       }
 
       async function loadAlertRules() {
@@ -1830,12 +1903,14 @@
             return;
           }
           body.innerHTML = rules.map(function (r) {
+            var channels = Array.isArray(r.channels) ? r.channels.map(function (c) { return c.name; }).join(', ') : '';
             return '<tr>' +
               '<td><label class="toggle"><input type="checkbox" ' + (r.enabled ? 'checked' : '') + ' onchange="toggleRuleEnabled(' + r.id + ', this.checked)"><span class="toggle-slider"></span></label></td>' +
               '<td>' + escapeHtml(r.name) + '</td>' +
               '<td>' + escapeHtml(r.rule_type) + '</td>' +
               '<td><span class="' + badgeClass(r.severity) + '">' + escapeHtml(r.severity) + '</span></td>' +
-              '<td>' + (r.action_webhook_url ? '<span class="muted">configured</span>' : '<span class="muted">none</span>') + '</td>' +
+              '<td>' + (r.action_webhook_url ? '<span class="muted">configured</span>' : '<span class="muted">none</span>') +
+                (channels ? '<div class="muted" style="margin-top:4px;">' + escapeHtml(channels) + '</div>' : '') + '</td>' +
               '<td>' + escapeHtml(r.cooldown_seconds) + 's</td>' +
               '<td><button class="btn btn-sm" onclick="deleteAlertRule(' + r.id + ')">Delete</button></td>' +
               '</tr>';
@@ -1847,6 +1922,9 @@
       }
 
       async function saveAlertRule() {
+        var selectedChannelIds = Array.from(document.querySelectorAll('.rule-channel-cb:checked'))
+          .map(function (el) { return parseInt(el.value, 10); })
+          .filter(function (v) { return !isNaN(v); });
         var payload = {
           name: document.getElementById('rule-name').value.trim(),
           rule_type: document.getElementById('rule-type').value,
@@ -1855,7 +1933,8 @@
           action_webhook_url: document.getElementById('rule-webhook').value.trim() || null,
           action_webhook_headers: null,
           action_log: true,
-          cooldown_seconds: parseInt(document.getElementById('rule-cooldown').value || '300', 10)
+          cooldown_seconds: parseInt(document.getElementById('rule-cooldown').value || '300', 10),
+          channel_ids: selectedChannelIds
         };
         try {
           var url = '/api/v2/alerts/rules';
@@ -1875,6 +1954,7 @@
           document.getElementById('rule-name').value = '';
           document.getElementById('rule-webhook').value = '';
           document.getElementById('rule-cooldown').value = '300';
+          document.getElementById('rule-channel-list').innerHTML = '<span class="muted">Loading channels...</span>';
           loadAlertRules();
           loadAlertStats();
         } catch (err) {
@@ -1957,6 +2037,190 @@
           document.getElementById('alert-history-body').innerHTML =
             '<tr><td colspan="7" class="muted">No data available.</td></tr>';
           document.getElementById('alert-history-paging').innerHTML = '';
+        }
+      }
+
+      function showNotificationForm() {
+        notificationEditingId = null;
+        document.getElementById('notification-form').style.display = '';
+        document.getElementById('notif-name').value = '';
+        document.getElementById('notif-type').value = 'email';
+        document.getElementById('notif-enabled').checked = true;
+        renderNotificationConfigForm();
+      }
+
+      function hideNotificationForm() {
+        notificationEditingId = null;
+        document.getElementById('notification-form').style.display = 'none';
+      }
+
+      function renderNotificationConfigForm() {
+        var type = document.getElementById('notif-type').value;
+        var el = document.getElementById('notif-config-fields');
+        if (type === 'email') {
+          el.innerHTML =
+            '<input id="notif-smtp-host" class="setting-input" style="width:180px;" placeholder="SMTP host">' +
+            '<input id="notif-smtp-port" class="setting-input" style="width:120px;" type="number" value="587" placeholder="Port">' +
+            '<label class="setting-desc" style="display:flex;align-items:center;gap:6px;"><input id="notif-smtp-tls" type="checkbox" checked> STARTTLS</label>' +
+            '<input id="notif-smtp-user" class="setting-input" style="width:180px;" placeholder="SMTP user (optional)">' +
+            '<input id="notif-smtp-pass" class="setting-input" style="width:180px;" type="password" placeholder="SMTP pass (optional)">' +
+            '<input id="notif-from" class="setting-input" style="width:220px;" placeholder="From address">' +
+            '<input id="notif-to" class="setting-input" style="width:280px;" placeholder="Recipients (comma separated)">';
+        } else if (type === 'slack') {
+          el.innerHTML =
+            '<input id="notif-webhook-url" class="setting-input" style="width:420px;" placeholder="https://hooks.slack.com/...">' +
+            '<input id="notif-channel" class="setting-input" style="width:160px;" placeholder="#channel (optional)">' +
+            '<input id="notif-username" class="setting-input" style="width:140px;" placeholder="Username (optional)">' +
+            '<input id="notif-icon-emoji" class="setting-input" style="width:140px;" placeholder=":shield: (optional)">';
+        } else if (type === 'teams') {
+          el.innerHTML = '<input id="notif-webhook-url" class="setting-input" style="width:520px;" placeholder="Teams webhook URL">';
+        } else {
+          el.innerHTML =
+            '<input id="notif-webhook-url" class="setting-input" style="width:360px;" placeholder="http(s)://...">' +
+            '<select id="notif-webhook-method" class="setting-input" style="width:110px;"><option value="POST">POST</option><option value="PUT">PUT</option></select>';
+        }
+      }
+
+      function buildNotificationConfigPayload() {
+        var type = document.getElementById('notif-type').value;
+        if (type === 'email') {
+          return {
+            smtp_host: document.getElementById('notif-smtp-host').value.trim(),
+            smtp_port: parseInt(document.getElementById('notif-smtp-port').value || '587', 10),
+            smtp_tls: document.getElementById('notif-smtp-tls').checked,
+            smtp_user: document.getElementById('notif-smtp-user').value.trim() || null,
+            smtp_pass: document.getElementById('notif-smtp-pass').value.trim() || null,
+            from_address: document.getElementById('notif-from').value.trim(),
+            to_addresses: (document.getElementById('notif-to').value || '').split(',').map(function (v) { return v.trim(); }).filter(function (v) { return v.length > 0; }),
+            subject_prefix: '[TrueID Alert]'
+          };
+        }
+        if (type === 'slack') {
+          return {
+            webhook_url: document.getElementById('notif-webhook-url').value.trim(),
+            channel: (document.getElementById('notif-channel').value || '').trim() || null,
+            username: (document.getElementById('notif-username').value || '').trim() || null,
+            icon_emoji: (document.getElementById('notif-icon-emoji').value || '').trim() || null
+          };
+        }
+        if (type === 'teams') {
+          return { webhook_url: document.getElementById('notif-webhook-url').value.trim() };
+        }
+        return {
+          url: document.getElementById('notif-webhook-url').value.trim(),
+          method: document.getElementById('notif-webhook-method').value,
+          headers: null
+        };
+      }
+
+      async function saveNotificationChannel() {
+        var payload = {
+          name: document.getElementById('notif-name').value.trim(),
+          channel_type: document.getElementById('notif-type').value,
+          enabled: document.getElementById('notif-enabled').checked,
+          config: buildNotificationConfigPayload()
+        };
+        var url = '/api/v2/notifications/channels';
+        var method = 'POST';
+        if (notificationEditingId) {
+          url = '/api/v2/notifications/channels/' + encodeURIComponent(notificationEditingId);
+          method = 'PUT';
+        }
+        try {
+          var res = await fetch(url, {
+            method: method,
+            headers: mutHeaders(),
+            credentials: 'include',
+            body: JSON.stringify(payload)
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          hideNotificationForm();
+          loadNotificationsTab();
+        } catch (e) {
+          alert('Save failed: ' + e.message);
+        }
+      }
+
+      async function testNotificationChannel(id) {
+        try {
+          var res = await fetch('/api/v2/notifications/channels/' + encodeURIComponent(id) + '/test', {
+            method: 'POST',
+            headers: mutHeaders(),
+            credentials: 'include',
+            body: JSON.stringify({})
+          });
+          var body = await res.json().catch(function () { return {}; });
+          if (!res.ok || body.success === false) throw new Error(body.error || ('HTTP ' + res.status));
+          alert('Test sent successfully.');
+        } catch (e) {
+          alert('Test failed: ' + e.message);
+        }
+      }
+
+      async function deleteNotificationChannel(id) {
+        if (!confirm('Delete this channel?')) return;
+        try {
+          var res = await fetch('/api/v2/notifications/channels/' + encodeURIComponent(id), {
+            method: 'DELETE',
+            headers: mutHeaders(),
+            credentials: 'include'
+          });
+          if (!res.ok && res.status !== 204) throw new Error('HTTP ' + res.status);
+          loadNotificationsTab();
+        } catch (e) {
+          alert('Delete failed: ' + e.message);
+        }
+      }
+
+      async function loadChannelDeliveries(id) {
+        try {
+          var res = await fetch('/api/v2/notifications/channels/' + encodeURIComponent(id) + '/deliveries', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var rows = await res.json();
+          if (!Array.isArray(rows) || !rows.length) {
+            document.getElementById('notifications-deliveries').innerHTML = 'No deliveries yet.';
+            return;
+          }
+          var html = '<table><thead><tr><th>Status</th><th>Alert</th><th>Error</th><th>Time</th></tr></thead><tbody>';
+          html += rows.map(function (r) {
+            var cls = r.status === 'sent' ? 'check-yes' : 'check-no';
+            return '<tr><td><span class="' + cls + '">' + escapeHtml(r.status) + '</span></td><td>' +
+              escapeHtml(r.alert_rule_name || '-') + '</td><td>' + escapeHtml(r.error_message || '-') +
+              '</td><td>' + escapeHtml(new Date(r.delivered_at).toLocaleString()) + '</td></tr>';
+          }).join('');
+          html += '</tbody></table>';
+          document.getElementById('notifications-deliveries').innerHTML = html;
+        } catch (e) {
+          document.getElementById('notifications-deliveries').innerHTML = 'Failed to load deliveries.';
+        }
+      }
+
+      async function loadNotificationsTab() {
+        if (!currentUser || currentUser.role !== 'Admin') return;
+        try {
+          var res = await fetch('/api/v2/notifications/channels', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var rows = await res.json();
+          var body = document.getElementById('notifications-body');
+          if (!Array.isArray(rows) || !rows.length) {
+            body.innerHTML = '<tr><td colspan="5" class="muted">No channels configured.</td></tr>';
+            document.getElementById('notifications-deliveries').innerHTML = 'No deliveries yet.';
+            return;
+          }
+          body.innerHTML = rows.map(function (c) {
+            return '<tr>' +
+              '<td>' + escapeHtml(c.name) + '</td>' +
+              '<td><span class="badge badge-info">' + escapeHtml(c.channel_type) + '</span></td>' +
+              '<td>' + (c.enabled ? '<span class="check-yes">enabled</span>' : '<span class="check-no">disabled</span>') + '</td>' +
+              '<td>' + escapeHtml(c.config_summary || '-') + '</td>' +
+              '<td><button class="btn btn-sm" onclick="testNotificationChannel(' + c.id + ')">Test</button> ' +
+              '<button class="btn btn-sm" onclick="loadChannelDeliveries(' + c.id + ')">Deliveries</button> ' +
+              '<button class="btn btn-sm role-admin" onclick="deleteNotificationChannel(' + c.id + ')">Delete</button></td>' +
+              '</tr>';
+          }).join('');
+          loadChannelDeliveries(rows[0].id);
+        } catch (e) {
+          document.getElementById('notifications-body').innerHTML = '<tr><td colspan="5" class="muted">No data available.</td></tr>';
         }
       }
 

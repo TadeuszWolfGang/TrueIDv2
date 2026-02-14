@@ -6,6 +6,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 ## [0.6.0] — 2026-02-13
 
 ### Added
+- **Notification Channels**: email (SMTP), Slack, Teams, webhook channels with encrypted config storage and per-channel delivery logs
+- **Notifications API**: `/api/v2/notifications/channels*` CRUD + test endpoint + deliveries history
+- **Engine Notification Dispatcher**: channel-based alert fan-out with delivery tracking (`notification_deliveries`)
+- 4 new E2E tests for notification channels CRUD/types/validation/deliveries
 - **SSE Live Feed**: engine `/engine/events/stream` + web `/api/v2/events/stream` for real-time mapping/conflict/alert/firewall/heartbeat events
 - Dashboard live updates via native `EventSource` (toast indicator + Live/Polling connection status)
 - **Reporting & Analytics**: `/api/v2/analytics/*` endpoints, compliance summary, daily `report_snapshots` generator, dashboard Analytics tab (SVG charts + report history)
@@ -33,6 +37,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - VPN dispatcher not matching `Username = ..., IP = ...` format
 
 ### Changed
+- Alert rule create/update payload now supports `channel_ids`; rule list now includes linked channels
+- Dashboard adds admin-only **Notifications** tab and alert-rule channel selector
 - Polling for mappings/conflicts/alerts reduced to 120s when SSE is connected (fallback to 30s on disconnect)
 - Graceful shutdown flow for engine/web (drain window, controlled loop stop, graceful server termination)
 - `parse_vpn_syslog` now public for testability

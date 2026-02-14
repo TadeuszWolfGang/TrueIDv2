@@ -1641,6 +1641,202 @@ async fn test_sse_endpoint_returns_stream() {
 }
 
 #[tokio::test]
+async fn test_notification_channel_crud() {
+    ensure_test_encryption_key();
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/notifications/channels",
+        &json!({
+            "name": "Email Ops",
+            "channel_type": "email",
+            "enabled": true,
+            "config": {
+                "smtp_host": "mail.example.com",
+                "smtp_port": 587,
+                "smtp_tls": true,
+                "smtp_user": "svc_trueid",
+                "smtp_pass": "secret123",
+                "from_address": "trueid@example.com",
+                "to_addresses": ["soc@example.com"],
+                "subject_prefix": "[TrueID]"
+            }
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let id = created["id"].as_i64().unwrap_or_default();
+    assert!(id > 0);
+
+    let (status, list) = auth_get(&app, &cookie, "/api/v2/notifications/channels").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(list.as_array().map(|a| !a.is_empty()).unwrap_or(false));
+
+    let (status, one) = auth_get(
+        &app,
+        &cookie,
+        &format!("/api/v2/notifications/channels/{id}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(one["name"], "Email Ops");
+
+    let (status, updated) = auth_put(
+        &app,
+        &cookie,
+        &format!("/api/v2/notifications/channels/{id}"),
+        &json!({
+            "name": "Email Ops Updated",
+            "channel_type": "email",
+            "enabled": false,
+            "config": {
+                "smtp_host": "mail.example.com",
+                "smtp_port": 587,
+                "smtp_tls": true,
+                "smtp_user": "svc_trueid",
+                "smtp_pass": "secret123",
+                "from_address": "trueid@example.com",
+                "to_addresses": ["soc@example.com"],
+                "subject_prefix": "[TrueID]"
+            }
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(updated["name"], "Email Ops Updated");
+    assert_eq!(updated["enabled"], false);
+
+    let (status, _) = auth_delete(
+        &app,
+        &cookie,
+        &format!("/api/v2/notifications/channels/{id}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn test_notification_channel_types() {
+    ensure_test_encryption_key();
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let cases = vec![
+        json!({
+            "name": "email-ch",
+            "channel_type": "email",
+            "config": {
+                "smtp_host": "mail.example.com",
+                "smtp_port": 587,
+                "smtp_tls": true,
+                "from_address": "trueid@example.com",
+                "to_addresses": ["ops@example.com"]
+            }
+        }),
+        json!({
+            "name": "slack-ch",
+            "channel_type": "slack",
+            "config": {
+                "webhook_url": "https://hooks.slack.com/services/T000/B000/XXXX",
+                "channel": "#alerts"
+            }
+        }),
+        json!({
+            "name": "teams-ch",
+            "channel_type": "teams",
+            "config": {
+                "webhook_url": "https://webhook.office.com/webhookb2/tenant/IncomingWebhook/abc/def"
+            }
+        }),
+        json!({
+            "name": "webhook-ch",
+            "channel_type": "webhook",
+            "config": {
+                "url": "https://example.com/hook",
+                "method": "POST"
+            }
+        }),
+    ];
+    for payload in cases {
+        let (status, _) = auth_post(&app, &cookie, "/api/v2/notifications/channels", &payload).await;
+        assert_eq!(status, StatusCode::CREATED);
+    }
+}
+
+#[tokio::test]
+async fn test_notification_channel_validation() {
+    ensure_test_encryption_key();
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, _) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/notifications/channels",
+        &json!({
+            "name": "bad-email",
+            "channel_type": "email",
+            "config": {
+                "smtp_host": "mail.example.com",
+                "smtp_port": 999,
+                "smtp_tls": true,
+                "from_address": "trueid@example.com",
+                "to_addresses": ["ops@example.com"]
+            }
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let (status, _) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/notifications/channels",
+        &json!({
+            "name": "bad-webhook",
+            "channel_type": "webhook",
+            "config": {}
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_notification_deliveries_empty() {
+    ensure_test_encryption_key();
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/notifications/channels",
+        &json!({
+            "name": "webhook-empty",
+            "channel_type": "webhook",
+            "config": {
+                "url": "https://example.com/hook",
+                "method": "POST"
+            }
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let id = created["id"].as_i64().unwrap_or_default();
+    let (status, rows) = auth_get(
+        &app,
+        &cookie,
+        &format!("/api/v2/notifications/channels/{id}/deliveries"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(rows.as_array().map(|v| v.len()).unwrap_or_default(), 0);
+}
+
+#[tokio::test]
 async fn test_firewall_create_target() {
     let (app, _) = build_test_app().await;
     let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;

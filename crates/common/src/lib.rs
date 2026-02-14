@@ -6,6 +6,7 @@ pub mod db_analytics;
 pub mod db_auth;
 pub mod live_event;
 pub mod model;
+pub mod notification;
 
 use anyhow::Result;
 use std::env;

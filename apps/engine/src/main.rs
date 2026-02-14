@@ -15,6 +15,7 @@ mod firewall_push;
 mod ldap_sync;
 mod live_bus;
 mod metrics;
+mod notifications;
 mod report_generator;
 mod siem_forwarder;
 mod snmp_poller;
@@ -74,6 +75,7 @@ struct EventLoopCtx {
     alert_rules: Arc<RwLock<Vec<alerts::AlertRule>>>,
     http_client: reqwest::Client,
     siem_sender: Sender<siem_forwarder::SiemEvent>,
+    notification_dispatcher: Arc<notifications::NotificationDispatcher>,
 }
 
 /// Runs the event processing loop, persisting each event to the database.
@@ -92,6 +94,7 @@ async fn run_event_loop(mut receiver: Receiver<IdentityEvent>, ctx: EventLoopCtx
         alert_rules,
         http_client,
         siem_sender,
+        notification_dispatcher,
     } = ctx;
     while let Some(event) = receiver.recv().await {
         let ip_str = event.ip.to_string();
@@ -190,8 +193,9 @@ async fn run_event_loop(mut receiver: Receiver<IdentityEvent>, ctx: EventLoopCtx
                     message: firing.details.clone(),
                     timestamp: Utc::now(),
                 });
-                let pool = db.pool().clone();
+                let db_for_alert = db.clone();
                 let client = http_client.clone();
+                let dispatcher = notification_dispatcher.clone();
                 live_bus::send(LiveEvent::AlertFired {
                     rule_name: firing.rule_name.clone(),
                     rule_type: firing.rule_type.clone(),
@@ -201,7 +205,8 @@ async fn run_event_loop(mut receiver: Receiver<IdentityEvent>, ctx: EventLoopCtx
                     fired_at: Utc::now(),
                 });
                 tokio::spawn(async move {
-                    alerts::fire_alert(&pool, &client, &firing).await;
+                    alerts::fire_alert(db_for_alert.as_ref(), &client, dispatcher.as_ref(), &firing)
+                        .await;
                 });
             }
         }
@@ -520,6 +525,10 @@ async fn main() -> Result<()> {
         .build()
         .expect("Failed to build HTTP client");
     let (siem_sender, siem_receiver) = siem_forwarder::create_siem_channel();
+    let notification_dispatcher = Arc::new(notifications::NotificationDispatcher::new(
+        db.clone(),
+        http_client.clone(),
+    ));
     let siem_forwarder_handle = {
         let siem_pool = db.pool().clone();
         tokio::spawn(async move {
@@ -545,6 +554,7 @@ async fn main() -> Result<()> {
         alert_rules: event_alert_rules,
         http_client: event_http_client,
         siem_sender: event_siem_sender,
+        notification_dispatcher,
     };
     let event_loop_handle = tokio::spawn(async move {
         if let Err(err) = run_event_loop(receiver, event_ctx).await {

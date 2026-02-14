@@ -9,9 +9,11 @@ use sqlx::{Row, SqlitePool};
 use std::str::FromStr;
 use tokio::time::{timeout, Duration};
 use tracing::warn;
+use trueid_common::db::Db;
 use trueid_common::model::IdentityEvent;
 
 use crate::conflicts::ConflictRecord;
+use crate::notifications::{AlertPayload, NotificationDispatcher};
 
 /// Alert rule loaded from the `alert_rules` table.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -221,13 +223,18 @@ pub async fn evaluate_event(
 
 /// Fires a single alert and records history with webhook delivery metadata.
 ///
-/// Parameters: `pool` - SQLite pool, `http_client` - shared HTTP client, `firing` - alert firing payload.
+/// Parameters: `db` - database handle, `http_client` - shared HTTP client, `dispatcher` - notification dispatcher, `firing` - alert firing payload.
 /// Returns: operation result.
-pub async fn fire_alert(pool: &SqlitePool, http_client: &reqwest::Client, firing: &AlertFiring) {
-    if is_on_cooldown(pool, firing).await {
+pub async fn fire_alert(
+    db: &Db,
+    http_client: &reqwest::Client,
+    dispatcher: &NotificationDispatcher,
+    firing: &AlertFiring,
+) {
+    if is_on_cooldown(db.pool(), firing).await {
         if firing.action_log {
             let _ = insert_alert_history(
-                pool,
+                db.pool(),
                 AlertHistoryInsert {
                     rule_id: firing.rule_id,
                     rule_name: firing.rule_name.clone(),
@@ -252,9 +259,9 @@ pub async fn fire_alert(pool: &SqlitePool, http_client: &reqwest::Client, firing
         Some(url) => send_webhook(http_client, url, firing).await,
     };
 
-    if firing.action_log {
-        let _ = insert_alert_history(
-            pool,
+    let history_id = if firing.action_log {
+        insert_alert_history(
+            db.pool(),
             AlertHistoryInsert {
                 rule_id: firing.rule_id,
                 rule_name: firing.rule_name.clone(),
@@ -269,8 +276,33 @@ pub async fn fire_alert(pool: &SqlitePool, http_client: &reqwest::Client, firing
                 webhook_response: response,
             },
         )
-        .await;
+        .await
+        .ok()
+    } else {
+        None
+    };
+    let payload = AlertPayload {
+        rule_name: firing.rule_name.clone(),
+        rule_type: firing.rule_type.clone(),
+        severity: firing.severity.clone(),
+        ip: firing.ip.clone(),
+        user: firing.user_name.clone(),
+        details: firing.details.clone(),
+        timestamp: Utc::now(),
+    };
+    for result in dispatcher
+        .dispatch_alert(firing.rule_id, &payload, history_id)
+        .await
+    {
+        if let Err(err) = result.outcome {
+            warn!(
+                channel = %result.channel_name,
+                error = %err,
+                "Notification delivery failed"
+            );
+        }
     }
+
 }
 
 /// Checks whether a rule+IP pair is on cooldown.
@@ -389,9 +421,9 @@ fn build_extra_headers(raw: Option<&str>) -> Option<Vec<(HeaderName, HeaderValue
 /// Inserts one alert history row.
 ///
 /// Parameters: `pool` - SQLite pool, `entry` - history payload.
-/// Returns: insert result.
-async fn insert_alert_history(pool: &SqlitePool, entry: AlertHistoryInsert) -> Result<()> {
-    sqlx::query(
+/// Returns: inserted history ID.
+async fn insert_alert_history(pool: &SqlitePool, entry: AlertHistoryInsert) -> Result<i64> {
+    let result = sqlx::query(
         "INSERT INTO alert_history (
             rule_id, rule_name, rule_type, severity,
             ip, mac, user_name, source, details,
@@ -411,7 +443,7 @@ async fn insert_alert_history(pool: &SqlitePool, entry: AlertHistoryInsert) -> R
     .bind(entry.webhook_response)
     .execute(pool)
     .await?;
-    Ok(())
+    Ok(result.last_insert_rowid())
 }
 
 /// Truncates response body text to 500 characters for DB storage.

@@ -17,6 +17,7 @@ pub mod routes_dns;
 pub mod routes_fingerprints;
 pub mod routes_firewall;
 pub mod routes_ldap;
+pub mod routes_notifications;
 pub mod routes_proxy;
 pub mod routes_search;
 pub mod routes_sse;
@@ -411,6 +412,38 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v2/ldap/config", get(routes_ldap::get_ldap_config))
         .route("/api/v2/ldap/config", put(routes_ldap::update_ldap_config))
         .route("/api/v2/ldap/sync", post(routes_ldap::force_ldap_sync))
+        .route(
+            "/api/v2/notifications/channels",
+            get(routes_notifications::list_channels).post(routes_notifications::create_channel),
+        )
+        .route(
+            "/api/v2/notifications/channels/{id}",
+            get(routes_notifications::get_channel)
+                .put(routes_notifications::update_channel)
+                .delete(routes_notifications::delete_channel),
+        )
+        .route(
+            "/api/v2/notifications/channels/:id",
+            get(routes_notifications::get_channel)
+                .put(routes_notifications::update_channel)
+                .delete(routes_notifications::delete_channel),
+        )
+        .route(
+            "/api/v2/notifications/channels/{id}/test",
+            post(routes_notifications::test_channel),
+        )
+        .route(
+            "/api/v2/notifications/channels/:id/test",
+            post(routes_notifications::test_channel),
+        )
+        .route(
+            "/api/v2/notifications/channels/{id}/deliveries",
+            get(routes_notifications::channel_deliveries),
+        )
+        .route(
+            "/api/v2/notifications/channels/:id/deliveries",
+            get(routes_notifications::channel_deliveries),
+        )
         .route("/api/v2/siem/targets", post(routes_siem::create_target))
         .route(
             "/api/v2/siem/targets/{id}",
