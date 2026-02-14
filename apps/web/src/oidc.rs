@@ -297,3 +297,32 @@ pub async fn discover_document(http: &reqwest::Client, issuer: &str) -> Result<O
     );
     Ok(document)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::OidcProvider;
+
+    /// Verifies authorization URL contains required OIDC query parameters.
+    ///
+    /// Parameters: none.
+    /// Returns: unit test assertion result.
+    #[test]
+    fn test_oidc_authorization_url_format() {
+        let provider = OidcProvider {
+            issuer: "https://issuer.example.com".to_string(),
+            authorization_endpoint: "https://issuer.example.com/auth".to_string(),
+            token_endpoint: "https://issuer.example.com/token".to_string(),
+            userinfo_endpoint: Some("https://issuer.example.com/userinfo".to_string()),
+            jwks_uri: "https://issuer.example.com/jwks".to_string(),
+            client_id: "client-123".to_string(),
+            client_secret: "secret".to_string(),
+            redirect_uri: "https://trueid.example.com/api/auth/oidc/callback".to_string(),
+            scopes: "openid profile email".to_string(),
+        };
+        let url = provider.authorization_url("state123", "nonce456");
+        assert!(url.contains("client_id=client-123"));
+        assert!(url.contains("redirect_uri=https%3A%2F%2Ftrueid.example.com%2Fapi%2Fauth%2Foidc%2Fcallback"));
+        assert!(url.contains("state=state123"));
+        assert!(url.contains("nonce=nonce456"));
+    }
+}

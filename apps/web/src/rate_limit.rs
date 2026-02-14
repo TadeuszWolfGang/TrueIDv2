@@ -159,3 +159,36 @@ impl PerKeyLimiter {
             .retain(|_, bucket| now.duration_since(bucket.last_refill) < cutoff);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::PerKeyLimiter;
+    use std::thread;
+    use std::time::Duration;
+
+    /// Verifies token bucket allows requests up to burst size.
+    ///
+    /// Parameters: none.
+    /// Returns: unit test assertion result.
+    #[test]
+    fn test_token_bucket_allows_burst() {
+        let limiter = PerKeyLimiter::new(60, 10);
+        for _ in 0..10 {
+            assert!(limiter.check("burst-key", 60, 10).is_ok());
+        }
+        assert!(limiter.check("burst-key", 60, 10).is_err());
+    }
+
+    /// Verifies token bucket refills over time after depletion.
+    ///
+    /// Parameters: none.
+    /// Returns: unit test assertion result.
+    #[test]
+    fn test_token_bucket_refills() {
+        let limiter = PerKeyLimiter::new(60, 1);
+        assert!(limiter.check("refill-key", 60, 1).is_ok());
+        assert!(limiter.check("refill-key", 60, 1).is_err());
+        thread::sleep(Duration::from_millis(1100));
+        assert!(limiter.check("refill-key", 60, 1).is_ok());
+    }
+}

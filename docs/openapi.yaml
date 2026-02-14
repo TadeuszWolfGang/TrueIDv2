@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: TrueID API
   description: Real-time Identity Correlation Engine
-  version: 0.6.0
+  version: 0.8.0
   license:
     name: Proprietary
 servers:
@@ -1916,6 +1916,290 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/map/topology:
+    get:
+      tags: [system]
+      summary: Network map topology
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      responses:
+        '200':
+          description: Topology payload
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/map/flows:
+    get:
+      tags: [system]
+      summary: Network map recent flows
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      parameters:
+        - in: query
+          name: minutes
+          schema: { type: integer, minimum: 5, maximum: 240, default: 30 }
+      responses:
+        '200':
+          description: Flow list
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/reports/schedules:
+    get:
+      tags: [admin]
+      summary: List report schedules
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      responses:
+        '200':
+          description: Report schedules
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    post:
+      tags: [admin]
+      summary: Create report schedule
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '201':
+          description: Created report schedule
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/reports/schedules/{id}:
+    put:
+      tags: [admin]
+      summary: Update report schedule
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Updated report schedule
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    delete:
+      tags: [admin]
+      summary: Delete report schedule
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '204': { description: Deleted }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/reports/schedules/{id}/send-now:
+    post:
+      tags: [admin]
+      summary: Trigger schedule send-now
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      responses:
+        '200':
+          description: Send-now result
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/api-keys/{id}/usage:
+    get:
+      tags: [admin]
+      summary: API key usage rollup
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+        - in: query
+          name: days
+          schema: { type: integer, minimum: 1, maximum: 30, default: 7 }
+      responses:
+        '200':
+          description: Usage timeline and totals
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/api-keys/{id}/limits:
+    put:
+      tags: [admin]
+      summary: Update API key rate limits
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      parameters: [ { $ref: '#/components/parameters/Id' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rate_limit_rpm, rate_limit_burst]
+              properties:
+                rate_limit_rpm: { type: integer, minimum: 1, maximum: 10000 }
+                rate_limit_burst: { type: integer, minimum: 1, maximum: 1000 }
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/auth/oidc/status:
+    get:
+      tags: [auth]
+      summary: Public OIDC status
+      security: []
+      responses:
+        '200':
+          description: OIDC status flags
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/auth/oidc/login:
+    get:
+      tags: [auth]
+      summary: Start OIDC sign-in
+      security: []
+      responses:
+        '302': { description: Redirect to provider }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '502': { $ref: '#/components/responses/InternalError' }
+
+  /api/auth/oidc/callback:
+    get:
+      tags: [auth]
+      summary: OIDC callback endpoint
+      security: []
+      responses:
+        '302': { description: Redirect to dashboard on success }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/admin/oidc/config:
+    get:
+      tags: [admin]
+      summary: Get OIDC configuration (no secrets)
+      security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
+      responses:
+        '200':
+          description: Sanitized OIDC config
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    put:
+      tags: [admin]
+      summary: Update OIDC configuration
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200': { $ref: '#/components/responses/OkMessage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+
+  /api/v2/admin/oidc/test:
+    post:
+      tags: [admin]
+      summary: Test OIDC discovery configuration
+      security:
+        - cookieAuth: []
+          csrfToken: []
+      responses:
+        '200':
+          description: Discovery test result
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '502': { $ref: '#/components/responses/InternalError' }
 
   /lookup/{ip}:
     get:

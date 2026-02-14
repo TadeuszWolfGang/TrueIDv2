@@ -38,6 +38,22 @@ pub struct Db {
     encryption_key: Option<[u8; 32]>,
 }
 
+/// Report schedule persistence model.
+#[derive(Debug, Clone)]
+pub struct ReportScheduleRecord {
+    pub id: i64,
+    pub name: String,
+    pub report_type: String,
+    pub schedule_cron: String,
+    pub enabled: bool,
+    pub channel_ids: String,
+    pub include_sections: String,
+    pub last_sent_at: Option<String>,
+    pub created_by: Option<i64>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 impl Db {
     /// Creates a new database wrapper from an existing pool.
     ///
@@ -582,6 +598,154 @@ impl Db {
         }
 
         Ok(results)
+    }
+
+    /// Lists all report schedules ordered by newest first.
+    ///
+    /// Parameters: none.
+    /// Returns: report schedule rows.
+    pub async fn list_report_schedules(&self) -> Result<Vec<ReportScheduleRecord>> {
+        let rows = sqlx::query(
+            "SELECT id, name, report_type, schedule_cron, enabled, channel_ids, include_sections,
+                    last_sent_at, created_by, created_at, updated_at
+             FROM report_schedules
+             ORDER BY id DESC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .map(Self::map_report_schedule_row)
+            .collect::<Vec<_>>())
+    }
+
+    /// Fetches one report schedule by identifier.
+    ///
+    /// Parameters: `id` - schedule identifier.
+    /// Returns: optional report schedule row.
+    pub async fn get_report_schedule(&self, id: i64) -> Result<Option<ReportScheduleRecord>> {
+        let row = sqlx::query(
+            "SELECT id, name, report_type, schedule_cron, enabled, channel_ids, include_sections,
+                    last_sent_at, created_by, created_at, updated_at
+             FROM report_schedules
+             WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.as_ref().map(Self::map_report_schedule_row))
+    }
+
+    /// Inserts a new report schedule.
+    ///
+    /// Parameters: payload fields matching `report_schedules` columns.
+    /// Returns: inserted row ID.
+    pub async fn create_report_schedule(
+        &self,
+        name: &str,
+        report_type: &str,
+        schedule_cron: &str,
+        enabled: bool,
+        channel_ids_json: &str,
+        include_sections_json: &str,
+        created_by: i64,
+    ) -> Result<i64> {
+        let created = sqlx::query(
+            "INSERT INTO report_schedules
+             (name, report_type, schedule_cron, enabled, channel_ids, include_sections, created_by, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))",
+        )
+        .bind(name)
+        .bind(report_type)
+        .bind(schedule_cron)
+        .bind(enabled)
+        .bind(channel_ids_json)
+        .bind(include_sections_json)
+        .bind(created_by)
+        .execute(&self.pool)
+        .await?;
+        Ok(created.last_insert_rowid())
+    }
+
+    /// Updates an existing report schedule by ID.
+    ///
+    /// Parameters: payload fields matching updatable columns.
+    /// Returns: true when row was updated.
+    pub async fn update_report_schedule(
+        &self,
+        id: i64,
+        name: &str,
+        report_type: &str,
+        schedule_cron: &str,
+        enabled: bool,
+        channel_ids_json: &str,
+        include_sections_json: &str,
+    ) -> Result<bool> {
+        let updated = sqlx::query(
+            "UPDATE report_schedules
+             SET name = ?, report_type = ?, schedule_cron = ?, enabled = ?, channel_ids = ?, include_sections = ?, updated_at = datetime('now')
+             WHERE id = ?",
+        )
+        .bind(name)
+        .bind(report_type)
+        .bind(schedule_cron)
+        .bind(enabled)
+        .bind(channel_ids_json)
+        .bind(include_sections_json)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        Ok(updated.rows_affected() > 0)
+    }
+
+    /// Deletes report schedule by ID.
+    ///
+    /// Parameters: `id` - schedule identifier.
+    /// Returns: true when row was deleted.
+    pub async fn delete_report_schedule(&self, id: i64) -> Result<bool> {
+        let deleted = sqlx::query("DELETE FROM report_schedules WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(deleted.rows_affected() > 0)
+    }
+
+    /// Returns parsed channel IDs JSON string for report schedule.
+    ///
+    /// Parameters: `id` - schedule identifier.
+    /// Returns: optional channel_ids JSON string.
+    pub async fn get_report_schedule_channel_ids(&self, id: i64) -> Result<Option<String>> {
+        let row = sqlx::query("SELECT channel_ids FROM report_schedules WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.and_then(|r| r.try_get::<String, _>("channel_ids").ok()))
+    }
+
+    /// Maps SQL row into `ReportScheduleRecord`.
+    ///
+    /// Parameters: `row` - row fetched from `report_schedules`.
+    /// Returns: normalized record.
+    fn map_report_schedule_row(row: &sqlx::sqlite::SqliteRow) -> ReportScheduleRecord {
+        ReportScheduleRecord {
+            id: row.try_get("id").unwrap_or_default(),
+            name: row.try_get("name").unwrap_or_default(),
+            report_type: row
+                .try_get("report_type")
+                .unwrap_or_else(|_| "daily".to_string()),
+            schedule_cron: row
+                .try_get("schedule_cron")
+                .unwrap_or_else(|_| "0 8 * * 1".to_string()),
+            enabled: row.try_get("enabled").unwrap_or(true),
+            channel_ids: row.try_get("channel_ids").unwrap_or_else(|_| "[]".to_string()),
+            include_sections: row
+                .try_get("include_sections")
+                .unwrap_or_else(|_| "[\"summary\",\"conflicts\",\"alerts\"]".to_string()),
+            last_sent_at: row.try_get("last_sent_at").ok(),
+            created_by: row.try_get("created_by").ok(),
+            created_at: row.try_get("created_at").unwrap_or_default(),
+            updated_at: row.try_get("updated_at").unwrap_or_default(),
+        }
     }
 }
 

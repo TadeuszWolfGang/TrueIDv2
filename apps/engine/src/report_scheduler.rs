@@ -36,15 +36,19 @@ pub struct SendNowResult {
 ///
 /// Parameters: `cron` - cron string.
 /// Returns: `(minute, hour, weekday)` when valid.
-fn parse_simple_cron(cron: &str) -> Option<(u32, u32, u32)> {
+fn parse_simple_cron(cron: &str) -> Option<(u32, u32, Option<u32>)> {
     let parts = cron.split_whitespace().collect::<Vec<_>>();
     if parts.len() != 5 {
         return None;
     }
     let minute = parts[0].parse::<u32>().ok()?;
     let hour = parts[1].parse::<u32>().ok()?;
-    let dow = parts[4].parse::<u32>().ok()?;
-    if minute > 59 || hour > 23 || dow > 6 {
+    let dow = if parts[4] == "*" {
+        None
+    } else {
+        Some(parts[4].parse::<u32>().ok()?)
+    };
+    if minute > 59 || hour > 23 || dow.unwrap_or(0) > 6 {
         return None;
     }
     Some((minute, hour, dow))
@@ -71,12 +75,24 @@ fn weekday_to_cron(weekday: Weekday) -> u32 {
 /// Parameters: `schedule` - schedule row.
 /// Returns: true when run should be executed.
 fn should_run_now(schedule: &ReportSchedule) -> bool {
-    let now = Utc::now();
+    cron_matches_at(schedule, Utc::now())
+}
+
+/// Checks cron match against provided timestamp.
+///
+/// Parameters: `schedule` - schedule row, `now` - timestamp to evaluate.
+/// Returns: true when `now` matches cron and duplicate guard allows run.
+fn cron_matches_at(schedule: &ReportSchedule, now: chrono::DateTime<Utc>) -> bool {
     let Some((minute, hour, dow)) = parse_simple_cron(&schedule.schedule_cron) else {
         return false;
     };
-    if now.minute() != minute || now.hour() != hour || weekday_to_cron(now.weekday()) != dow {
+    if now.minute() != minute || now.hour() != hour {
         return false;
+    }
+    if let Some(dow_value) = dow {
+        if weekday_to_cron(now.weekday()) != dow_value {
+            return false;
+        }
     }
     // Prevent duplicates in the same minute.
     if let Some(last_sent) = &schedule.last_sent_at {
@@ -413,4 +429,37 @@ pub fn start_report_scheduler(db: Arc<Db>) {
     tokio::spawn(async move {
         run_report_scheduler(db).await;
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{cron_matches_at, ReportSchedule};
+    use chrono::{TimeZone, Utc};
+
+    /// Verifies simple daily cron matching at expected hour/minute.
+    ///
+    /// Parameters: none.
+    /// Returns: unit test assertion result.
+    #[test]
+    fn test_cron_match_daily() {
+        let schedule = ReportSchedule {
+            id: 1,
+            name: "daily".to_string(),
+            report_type: "daily".to_string(),
+            schedule_cron: "0 8 * * *".to_string(),
+            channel_ids: Vec::new(),
+            include_sections: vec!["summary".to_string()],
+            last_sent_at: None,
+        };
+        let at_8 = Utc
+            .with_ymd_and_hms(2026, 2, 9, 8, 0, 0)
+            .single()
+            .expect("valid datetime");
+        let at_9 = Utc
+            .with_ymd_and_hms(2026, 2, 9, 9, 0, 0)
+            .single()
+            .expect("valid datetime");
+        assert!(cron_matches_at(&schedule, at_8));
+        assert!(!cron_matches_at(&schedule, at_9));
+    }
 }

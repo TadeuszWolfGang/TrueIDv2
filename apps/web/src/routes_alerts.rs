@@ -16,6 +16,7 @@ use crate::error::{self, ApiError};
 use crate::helpers;
 use crate::middleware::AuthUser;
 use crate::AppState;
+use trueid_common::pagination::{PaginatedResponse, PaginationParams};
 
 /// Alert rule database record.
 #[derive(Debug, Clone, Serialize)]
@@ -109,15 +110,6 @@ pub struct AlertHistoryQuery {
     pub to_ts: Option<String>,
     pub page: Option<u32>,
     pub limit: Option<u32>,
-}
-
-/// Paginated history response.
-#[derive(Debug, Serialize)]
-struct AlertHistoryResponse {
-    data: Vec<AlertHistoryRecord>,
-    total: i64,
-    page: u32,
-    limit: u32,
 }
 
 /// Alert statistics response.
@@ -818,9 +810,13 @@ pub async fn alert_history(
 
     let from_dt = parse_datetime_param(&q.from_ts, "from", &auth.request_id)?;
     let to_dt = parse_datetime_param(&q.to_ts, "to", &auth.request_id)?;
-    let page = q.page.unwrap_or(1).max(1);
-    let limit = q.limit.unwrap_or(50).clamp(1, 200);
-    let offset = i64::from((page - 1) * limit);
+    let pagination = PaginationParams {
+        page: q.page,
+        limit: q.limit,
+    };
+    let page = pagination.page_or(1);
+    let limit = pagination.limit_or(50, 200);
+    let offset = pagination.offset(50, 200);
 
     let mut conditions = Vec::<String>::new();
     let mut binds = Vec::<BindParam>::new();
@@ -912,12 +908,7 @@ pub async fn alert_history(
         });
     }
 
-    Ok(Json(AlertHistoryResponse {
-        data,
-        total,
-        page,
-        limit,
-    }))
+    Ok(Json(PaginatedResponse::new(data, total, page, limit)))
 }
 
 /// Returns alert summary statistics for the last 24h.

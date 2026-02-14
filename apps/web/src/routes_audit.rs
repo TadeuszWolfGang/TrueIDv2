@@ -14,6 +14,7 @@ use crate::error::{self, ApiError};
 use crate::helpers;
 use crate::middleware::AuthUser;
 use crate::AppState;
+use trueid_common::pagination::PaginationParams;
 
 // ── Query / Response types ──────────────────────────────────
 
@@ -76,10 +77,14 @@ pub async fn list_audit_logs(
 ) -> Result<impl IntoResponse, ApiError> {
     let db = helpers::require_db(&state, &auth.request_id)?;
 
-    let page = params.page.unwrap_or(1).max(1);
-    let per_page = params.per_page.unwrap_or(50).clamp(1, 200);
-    let offset = ((page - 1) * per_page) as i64;
-    let limit = per_page as i64;
+    let pagination = PaginationParams {
+        page: params.page,
+        limit: params.per_page,
+    };
+    let page = pagination.page_or(1);
+    let per_page = pagination.limit_or(50, 200);
+    let offset = pagination.offset(50, 200);
+    let limit = i64::from(per_page);
 
     let total = db
         .count_audit_logs_filtered(

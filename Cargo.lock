@@ -1762,7 +1762,7 @@ dependencies = [
 
 [[package]]
 name = "net-identity-adapter-ad-logs"
-version = "0.1.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1774,7 +1774,7 @@ dependencies = [
 
 [[package]]
 name = "net-identity-adapter-dhcp-logs"
-version = "0.1.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1787,7 +1787,7 @@ dependencies = [
 
 [[package]]
 name = "net-identity-adapter-radius"
-version = "0.1.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1799,7 +1799,7 @@ dependencies = [
 
 [[package]]
 name = "net-identity-agent"
-version = "0.1.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1821,7 +1821,7 @@ dependencies = [
 
 [[package]]
 name = "net-identity-ingest"
-version = "0.1.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "tracing",
@@ -1830,7 +1830,7 @@ dependencies = [
 
 [[package]]
 name = "net-identity-utils"
-version = "0.1.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "radius",
@@ -3642,7 +3642,7 @@ dependencies = [
 
 [[package]]
 name = "trueid-cli"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3656,7 +3656,7 @@ dependencies = [
 
 [[package]]
 name = "trueid-common"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -3674,7 +3674,7 @@ dependencies = [
 
 [[package]]
 name = "trueid-engine"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -3707,7 +3707,7 @@ dependencies = [
 
 [[package]]
 name = "trueid-integration-tests"
-version = "0.1.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "reqwest",
@@ -3719,7 +3719,7 @@ dependencies = [
 
 [[package]]
 name = "trueid-web"
-version = "0.6.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "async-trait",

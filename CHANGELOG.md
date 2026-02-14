@@ -3,6 +3,21 @@
 All notable changes to TrueID are documented here.  
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
+## [0.8.0] — 2026-02-08
+
+### Added
+- Phase 6 E2E coverage: map topology/flows, report schedule lifecycle/validation/send-now, rate-limit headers/usage/429, OIDC status+admin CRUD+disabled login, static JS serving, Matrix-theme HTML smoke checks
+- New unit tests: token-bucket burst/refill, scheduler cron daily match, OIDC authorization URL format
+- OIDC admin aliases: `GET/PUT /api/v2/admin/oidc/config`, `POST /api/v2/admin/oidc/test`
+- Shared pagination primitives in common crate: `PaginationParams`, `PaginatedResponse<T>`
+
+### Changed
+- Report schedule routes now use consolidated DB helper methods from `trueid-common::db` (reduced inline SQL in web handlers)
+- Unified pagination logic in selected routes (`v1`, `search`, `alerts`, `audit`) via shared pagination helper
+- Package versions bumped to `0.8.0` across workspace crates/apps
+- OpenAPI metadata version bumped and extended with Phase 6 endpoint groups
+- HA docs extended with OIDC SSO failover/runtime notes
+
 ## [0.6.0] — 2026-02-13
 
 ### Added

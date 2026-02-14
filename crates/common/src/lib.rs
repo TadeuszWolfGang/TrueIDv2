@@ -8,6 +8,7 @@ pub mod db_auth;
 pub mod live_event;
 pub mod model;
 pub mod notification;
+pub mod pagination;
 
 use anyhow::Result;
 use std::env;

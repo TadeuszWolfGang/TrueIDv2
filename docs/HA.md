@@ -86,6 +86,13 @@ This would require:
 - No built-in leader election or consensus
 - Session state is in SQLite: web instances must share the same DB file
 
+## OIDC SSO Notes in HA
+
+- Keep `oidc_config.redirect_uri` stable and HTTPS-terminated on the public load balancer (for example `https://trueid.example.com/api/auth/oidc/callback`).
+- In Option B (multiple web instances), all nodes must share the same JWT/session settings (`JWT_SECRET`, cookie domain/path, `allow_local_login`) to avoid intermittent re-authentication loops.
+- OIDC provider metadata discovery is cached in-process; after changing issuer/client settings, perform a rolling restart (or config reload) across all web nodes.
+- During failover to standby, verify DNS and TLS endpoint match the IdP-registered redirect URI before enabling traffic.
+
 ## Recommendations
 
 | Deployment Size | Approach | RTO | RPO |

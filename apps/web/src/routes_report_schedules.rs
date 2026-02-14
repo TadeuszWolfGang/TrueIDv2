@@ -7,8 +7,8 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
 use tracing::warn;
+use trueid_common::db::ReportScheduleRecord;
 
 use crate::error::{self, ApiError};
 use crate::helpers;
@@ -80,33 +80,25 @@ fn valid_sections(sections: &[String]) -> bool {
 ///
 /// Parameters: `row` - sql row.
 /// Returns: parsed schedule.
-fn map_schedule_row(row: &sqlx::sqlite::SqliteRow) -> ReportScheduleDto {
-    let channel_ids_raw: String = row.try_get("channel_ids").unwrap_or_else(|_| "[]".into());
-    let include_sections_raw: String = row
-        .try_get("include_sections")
-        .unwrap_or_else(|_| "[\"summary\",\"conflicts\",\"alerts\"]".into());
+fn map_schedule_row(row: &ReportScheduleRecord) -> ReportScheduleDto {
     ReportScheduleDto {
-        id: row.try_get("id").unwrap_or_default(),
-        name: row.try_get("name").unwrap_or_default(),
-        report_type: row
-            .try_get("report_type")
-            .unwrap_or_else(|_| "daily".to_string()),
-        schedule_cron: row
-            .try_get("schedule_cron")
-            .unwrap_or_else(|_| "0 8 * * 1".to_string()),
-        enabled: row.try_get("enabled").unwrap_or(true),
-        channel_ids: serde_json::from_str(&channel_ids_raw).unwrap_or_default(),
-        include_sections: serde_json::from_str(&include_sections_raw).unwrap_or_else(|_| {
+        id: row.id,
+        name: row.name.clone(),
+        report_type: row.report_type.clone(),
+        schedule_cron: row.schedule_cron.clone(),
+        enabled: row.enabled,
+        channel_ids: serde_json::from_str(&row.channel_ids).unwrap_or_default(),
+        include_sections: serde_json::from_str(&row.include_sections).unwrap_or_else(|_| {
             vec![
                 "summary".to_string(),
                 "conflicts".to_string(),
                 "alerts".to_string(),
             ]
         }),
-        last_sent_at: row.try_get("last_sent_at").ok(),
-        created_by: row.try_get("created_by").ok(),
-        created_at: row.try_get("created_at").unwrap_or_default(),
-        updated_at: row.try_get("updated_at").unwrap_or_default(),
+        last_sent_at: row.last_sent_at.clone(),
+        created_by: row.created_by,
+        created_at: row.created_at.clone(),
+        updated_at: row.updated_at.clone(),
     }
 }
 
@@ -119,15 +111,7 @@ pub(crate) async fn list_schedules(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
     let db = helpers::require_db(&state, &auth.request_id)?;
-    let rows = sqlx::query(
-        "SELECT id, name, report_type, schedule_cron, enabled, channel_ids, include_sections,
-                last_sent_at, created_by, created_at, updated_at
-         FROM report_schedules
-         ORDER BY id DESC",
-    )
-    .fetch_all(db.pool())
-    .await
-    .map_err(|e| {
+    let rows = db.list_report_schedules().await.map_err(|e| {
         warn!(error = %e, "Failed to list report schedules");
         ApiError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -195,21 +179,18 @@ pub(crate) async fn create_schedule(
     let include_sections_json =
         serde_json::to_string(&include_sections).unwrap_or_else(|_| "[]".to_string());
 
-    let created = sqlx::query(
-        "INSERT INTO report_schedules
-         (name, report_type, schedule_cron, enabled, channel_ids, include_sections, created_by, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))",
-    )
-    .bind(name)
-    .bind(&body.report_type)
-    .bind(body.schedule_cron.trim())
-    .bind(body.enabled.unwrap_or(true))
-    .bind(channel_ids_json)
-    .bind(include_sections_json)
-    .bind(auth.user_id)
-    .execute(db.pool())
-    .await
-    .map_err(|e| {
+    let id = db
+        .create_report_schedule(
+            name,
+            &body.report_type,
+            body.schedule_cron.trim(),
+            body.enabled.unwrap_or(true),
+            &channel_ids_json,
+            &include_sections_json,
+            auth.user_id,
+        )
+        .await
+        .map_err(|e| {
         warn!(error = %e, "Failed to create report schedule");
         ApiError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -218,7 +199,6 @@ pub(crate) async fn create_schedule(
         )
         .with_request_id(&auth.request_id)
     })?;
-    let id = created.last_insert_rowid();
     helpers::audit(
         db,
         &auth,
@@ -228,21 +208,20 @@ pub(crate) async fn create_schedule(
     )
     .await;
 
-    let row = sqlx::query(
-        "SELECT id, name, report_type, schedule_cron, enabled, channel_ids, include_sections,
-                last_sent_at, created_by, created_at, updated_at
-         FROM report_schedules
-         WHERE id = ?",
-    )
-    .bind(id)
-    .fetch_one(db.pool())
-    .await
-    .map_err(|e| {
+    let row = db.get_report_schedule(id).await.map_err(|e| {
         warn!(error = %e, schedule_id = id, "Failed to load created report schedule");
         ApiError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             error::INTERNAL_ERROR,
             "Failed to create report schedule",
+        )
+        .with_request_id(&auth.request_id)
+    })?
+    .ok_or_else(|| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error::INTERNAL_ERROR,
+            "Failed to load created report schedule",
         )
         .with_request_id(&auth.request_id)
     })?;
@@ -289,21 +268,18 @@ pub(crate) async fn update_schedule(
         .with_request_id(&auth.request_id));
     }
 
-    let updated = sqlx::query(
-        "UPDATE report_schedules
-         SET name = ?, report_type = ?, schedule_cron = ?, enabled = ?, channel_ids = ?, include_sections = ?, updated_at = datetime('now')
-         WHERE id = ?",
-    )
-    .bind(name)
-    .bind(&body.report_type)
-    .bind(body.schedule_cron.trim())
-    .bind(body.enabled.unwrap_or(true))
-    .bind(serde_json::to_string(&channel_ids).unwrap_or_else(|_| "[]".to_string()))
-    .bind(serde_json::to_string(&include_sections).unwrap_or_else(|_| "[]".to_string()))
-    .bind(id)
-    .execute(db.pool())
-    .await
-    .map_err(|e| {
+    let updated = db
+        .update_report_schedule(
+            id,
+            name,
+            &body.report_type,
+            body.schedule_cron.trim(),
+            body.enabled.unwrap_or(true),
+            &serde_json::to_string(&channel_ids).unwrap_or_else(|_| "[]".to_string()),
+            &serde_json::to_string(&include_sections).unwrap_or_else(|_| "[]".to_string()),
+        )
+        .await
+        .map_err(|e| {
         warn!(error = %e, schedule_id = id, "Failed to update report schedule");
         ApiError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -312,7 +288,7 @@ pub(crate) async fn update_schedule(
         )
         .with_request_id(&auth.request_id)
     })?;
-    if updated.rows_affected() == 0 {
+    if !updated {
         return Err(ApiError::new(
             StatusCode::NOT_FOUND,
             error::NOT_FOUND,
@@ -330,21 +306,20 @@ pub(crate) async fn update_schedule(
     )
     .await;
 
-    let row = sqlx::query(
-        "SELECT id, name, report_type, schedule_cron, enabled, channel_ids, include_sections,
-                last_sent_at, created_by, created_at, updated_at
-         FROM report_schedules
-         WHERE id = ?",
-    )
-    .bind(id)
-    .fetch_one(db.pool())
-    .await
-    .map_err(|e| {
+    let row = db.get_report_schedule(id).await.map_err(|e| {
         warn!(error = %e, schedule_id = id, "Failed to load updated report schedule");
         ApiError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             error::INTERNAL_ERROR,
             "Failed to update report schedule",
+        )
+        .with_request_id(&auth.request_id)
+    })?
+    .ok_or_else(|| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error::INTERNAL_ERROR,
+            "Failed to load updated report schedule",
         )
         .with_request_id(&auth.request_id)
     })?;
@@ -361,11 +336,7 @@ pub(crate) async fn delete_schedule(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
     let db = helpers::require_db(&state, &auth.request_id)?;
-    let deleted = sqlx::query("DELETE FROM report_schedules WHERE id = ?")
-        .bind(id)
-        .execute(db.pool())
-        .await
-        .map_err(|e| {
+    let deleted = db.delete_report_schedule(id).await.map_err(|e| {
             warn!(error = %e, schedule_id = id, "Failed to delete report schedule");
             ApiError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -374,7 +345,7 @@ pub(crate) async fn delete_schedule(
             )
             .with_request_id(&auth.request_id)
         })?;
-    if deleted.rows_affected() == 0 {
+    if !deleted {
         return Err(ApiError::new(
             StatusCode::NOT_FOUND,
             error::NOT_FOUND,
@@ -404,11 +375,7 @@ pub(crate) async fn send_now(
 ) -> Result<axum::response::Response, ApiError> {
     let db = helpers::require_db(&state, &auth.request_id)?;
 
-    let schedule_row = sqlx::query("SELECT channel_ids FROM report_schedules WHERE id = ?")
-        .bind(id)
-        .fetch_optional(db.pool())
-        .await
-        .map_err(|e| {
+    let channel_ids_raw = db.get_report_schedule_channel_ids(id).await.map_err(|e| {
             warn!(error = %e, schedule_id = id, "Failed to load schedule before send-now");
             ApiError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -425,7 +392,6 @@ pub(crate) async fn send_now(
             )
             .with_request_id(&auth.request_id)
         })?;
-    let channel_ids_raw: String = schedule_row.try_get("channel_ids").unwrap_or_default();
     let channel_ids = serde_json::from_str::<Vec<i64>>(&channel_ids_raw).unwrap_or_default();
 
     if channel_ids.is_empty() {

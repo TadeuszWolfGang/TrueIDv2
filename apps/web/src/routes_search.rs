@@ -21,6 +21,7 @@ use crate::middleware::AuthUser;
 use crate::AppState;
 use trueid_common::db::MAPPING_SELECT;
 use trueid_common::model::{DeviceMapping, StoredEvent};
+use trueid_common::pagination::PaginationParams;
 
 const DEFAULT_PAGE: u32 = 1;
 const DEFAULT_LIMIT: u32 = 50;
@@ -435,9 +436,13 @@ pub async fn search(
     let scope = parse_scope(q.scope.as_deref(), &auth.request_id)?;
     let from_dt = parse_datetime_param(&q.from_ts, "from", &auth.request_id)?;
     let to_dt = parse_datetime_param(&q.to_ts, "to", &auth.request_id)?;
-    let page = q.page.unwrap_or(DEFAULT_PAGE).max(1);
-    let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
-    let offset = i64::from((page - 1) * limit);
+    let pagination = PaginationParams {
+        page: q.page,
+        limit: q.limit,
+    };
+    let page = pagination.page_or(DEFAULT_PAGE);
+    let limit = pagination.limit_or(DEFAULT_LIMIT, MAX_LIMIT);
+    let offset = pagination.offset(DEFAULT_LIMIT, MAX_LIMIT);
     let order = parse_order(q.order.as_deref());
     let start = Instant::now();
     let pool = db.pool();

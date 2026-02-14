@@ -14,6 +14,7 @@ use std::sync::Arc;
 use tracing::warn;
 use trueid_common::db::{Db, MAPPING_SELECT};
 use trueid_common::model::DeviceMapping;
+use trueid_common::pagination::PaginationParams;
 
 use crate::routes_proxy::proxy_to_engine;
 use crate::AppState;
@@ -85,9 +86,13 @@ pub(crate) async fn api_v1_mappings(
     State(s): State<AppState>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
     let db = require_db(&s)?;
-    let page = q.page.unwrap_or(1).max(1);
-    let per_page = q.per_page.unwrap_or(50).clamp(1, 200);
-    let offset = (page - 1) * per_page;
+    let pagination = PaginationParams {
+        page: q.page.map(|v| v as u32),
+        limit: q.per_page.map(|v| v as u32),
+    };
+    let page = i64::from(pagination.page_or(1));
+    let per_page = i64::from(pagination.limit_or(50, 200));
+    let offset = pagination.offset(50, 200);
 
     let sort_col = match q.sort.as_deref() {
         Some("ip") => "m.ip",

@@ -16,6 +16,7 @@ use crate::error::{self, ApiError};
 use crate::helpers;
 use crate::middleware::AuthUser;
 use crate::AppState;
+use trueid_common::pagination::{PaginatedResponse, PaginationParams};
 
 /// Conflict row representation used by v2 API endpoints.
 #[derive(Debug, Clone, Serialize)]
@@ -54,15 +55,6 @@ pub struct ListConflictsQuery {
 #[derive(Debug, Deserialize)]
 pub struct ResolveConflictRequest {
     pub note: Option<String>,
-}
-
-/// Paginated conflicts response.
-#[derive(Debug, Serialize)]
-struct PaginatedConflicts {
-    data: Vec<ConflictRecord>,
-    total: i64,
-    page: u32,
-    limit: u32,
 }
 
 /// Conflict stats response.
@@ -152,9 +144,13 @@ pub async fn list_conflicts(
 
     let from_dt = parse_datetime_param(&q.from_ts, "from", &auth.request_id)?;
     let to_dt = parse_datetime_param(&q.to_ts, "to", &auth.request_id)?;
-    let page = q.page.unwrap_or(1).max(1);
-    let limit = q.limit.unwrap_or(50).clamp(1, 200);
-    let offset = i64::from((page - 1) * limit);
+    let pagination = PaginationParams {
+        page: q.page,
+        limit: q.limit,
+    };
+    let page = pagination.page_or(1);
+    let limit = pagination.limit_or(50, 200);
+    let offset = pagination.offset(50, 200);
 
     let mut conditions = Vec::<String>::new();
     let mut binds = Vec::<BindParam>::new();
@@ -249,12 +245,7 @@ pub async fn list_conflicts(
         });
     }
 
-    Ok(Json(PaginatedConflicts {
-        data,
-        total,
-        page,
-        limit,
-    }))
+    Ok(Json(PaginatedResponse::new(data, total, page, limit)))
 }
 
 /// Returns unresolved conflict summary statistics.

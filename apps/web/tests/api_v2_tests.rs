@@ -13,6 +13,7 @@ use serde_json::{json, Value};
 use std::net::IpAddr;
 use std::sync::{Arc, Once};
 use tower::ServiceExt;
+use tower_http::services::ServeDir;
 use trueid_common::db::init_db;
 use trueid_common::model::{IdentityEvent, SourceType, UserRole};
 use trueid_web::{auth, build_router, rate_limit, AppState};
@@ -23,6 +24,21 @@ use trueid_web::{auth, build_router, rate_limit, AppState};
 /// Returns: `(Router, Arc<Db>)` ready for in-process requests.
 async fn build_test_app() -> (Router, Arc<trueid_common::db::Db>) {
     build_test_app_with_engine_url("http://127.0.0.1:8080".to_string()).await
+}
+
+/// Builds a test app with static assets mounted like production server.
+///
+/// Parameters: none.
+/// Returns: `(Router, Arc<Db>)` with static file serving enabled.
+async fn build_test_app_with_static() -> (Router, Arc<trueid_common::db::Db>) {
+    let (app, db) = build_test_app().await;
+    let assets_dir = format!("{}/assets", env!("CARGO_MANIFEST_DIR"));
+    (
+        app.fallback_service(
+            ServeDir::new(assets_dir).append_index_html_on_directories(true),
+        ),
+        db,
+    )
 }
 
 /// Builds an isolated in-memory test app with custom engine URL.
@@ -1700,6 +1716,28 @@ async fn test_map_topology() {
 }
 
 #[tokio::test]
+async fn test_map_topology_structure() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/map/topology").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["subnets"].is_array());
+    assert!(body["adapters"].is_array());
+    assert!(body["stats"].is_object());
+    assert!(body["stats"]["total_ips"].is_number());
+}
+
+#[tokio::test]
+async fn test_map_flows() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/map/flows?minutes=30").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["flows"].is_array());
+    assert_eq!(body["window_minutes"], json!(30));
+}
+
+#[tokio::test]
 async fn test_report_schedule_crud() {
     let (app, _) = build_test_app().await;
     let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
@@ -1785,6 +1823,158 @@ async fn test_report_schedule_send_now_no_channels() {
     assert_eq!(send_status, StatusCode::OK);
     assert_eq!(body["success"], true);
     assert_eq!(body["delivered"].as_i64().unwrap_or(-1), 0);
+}
+
+#[tokio::test]
+async fn test_report_schedule_lifecycle() {
+    ensure_test_encryption_key();
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (channel_status, channel_created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/notifications/channels",
+        &json!({
+            "name": "Schedule email",
+            "channel_type": "email",
+            "enabled": true,
+            "config": {
+                "smtp_host": "mail.example.com",
+                "smtp_port": 587,
+                "smtp_tls": true,
+                "smtp_user": "svc_trueid",
+                "smtp_pass": "secret123",
+                "from_address": "trueid@example.com",
+                "to_addresses": ["soc@example.com"],
+                "subject_prefix": "[TrueID]"
+            }
+        }),
+    )
+    .await;
+    assert_eq!(channel_status, StatusCode::CREATED);
+    let channel_id = channel_created["id"].as_i64().unwrap_or_default();
+    assert!(channel_id > 0);
+
+    let (create_status, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/reports/schedules",
+        &json!({
+            "name": "Ops Daily",
+            "report_type": "daily",
+            "schedule_cron": "0 8 * * 1",
+            "enabled": true,
+            "channel_ids": [channel_id],
+            "include_sections": ["summary","alerts"]
+        }),
+    )
+    .await;
+    assert_eq!(create_status, StatusCode::CREATED);
+    let id = created["id"].as_i64().unwrap_or_default();
+    assert!(id > 0);
+
+    let (list_status, listed) = auth_get(&app, &cookie, "/api/v2/reports/schedules").await;
+    assert_eq!(list_status, StatusCode::OK);
+    let rows = listed["schedules"].as_array().cloned().unwrap_or_default();
+    assert!(rows
+        .iter()
+        .any(|r| r["id"].as_i64().unwrap_or_default() == id));
+
+    let (update_status, _) = auth_put(
+        &app,
+        &cookie,
+        &format!("/api/v2/reports/schedules/{id}"),
+        &json!({
+            "name": "Ops Weekly",
+            "report_type": "weekly",
+            "schedule_cron": "0 8 * * 1",
+            "enabled": true,
+            "channel_ids": [channel_id],
+            "include_sections": ["summary","conflicts","alerts"]
+        }),
+    )
+    .await;
+    assert_eq!(update_status, StatusCode::OK);
+
+    let (delete_status, _) =
+        auth_delete(&app, &cookie, &format!("/api/v2/reports/schedules/{id}")).await;
+    assert_eq!(delete_status, StatusCode::NO_CONTENT);
+
+    let (list_status, listed) = auth_get(&app, &cookie, "/api/v2/reports/schedules").await;
+    assert_eq!(list_status, StatusCode::OK);
+    let rows = listed["schedules"].as_array().cloned().unwrap_or_default();
+    assert!(!rows
+        .iter()
+        .any(|r| r["id"].as_i64().unwrap_or_default() == id));
+}
+
+#[tokio::test]
+async fn test_report_schedule_send_now() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (create_status, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/reports/schedules",
+        &json!({
+            "name": "No channel send-now",
+            "report_type": "daily",
+            "schedule_cron": "0 8 * * 1",
+            "enabled": true,
+            "channel_ids": [],
+            "include_sections": ["summary"]
+        }),
+    )
+    .await;
+    assert_eq!(create_status, StatusCode::CREATED);
+    let id = created["id"].as_i64().unwrap_or_default();
+    assert!(id > 0);
+    let (status, body) = auth_post(
+        &app,
+        &cookie,
+        &format!("/api/v2/reports/schedules/{id}/send-now"),
+        &json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["delivered"], json!(0));
+}
+
+#[tokio::test]
+async fn test_report_schedule_validation() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, _) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/reports/schedules",
+        &json!({
+            "name": "Invalid type",
+            "report_type": "invalid",
+            "schedule_cron": "0 8 * * 1",
+            "enabled": true,
+            "channel_ids": [],
+            "include_sections": ["summary"]
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/reports/schedules",
+        &json!({
+            "name": "",
+            "report_type": "daily",
+            "schedule_cron": "0 8 * * 1",
+            "enabled": true,
+            "channel_ids": [],
+            "include_sections": ["summary"]
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -3560,7 +3750,137 @@ async fn test_api_key_rate_limit_429() {
 }
 
 #[tokio::test]
+async fn test_rate_limit_headers_present() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v1/api-keys",
+        &json!({
+            "description": "rate-limit-header-key-2",
+            "role": "Viewer",
+            "rate_limit_rpm": 200,
+            "rate_limit_burst": 50
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let key = created["key"].as_str().unwrap_or_default().to_string();
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/v1/mappings")
+        .header("x-api-key", key)
+        .body(Body::empty())
+        .expect("build API key request failed");
+    let resp = app.clone().oneshot(req).await.expect("execute request failed");
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(resp.headers().contains_key("x-ratelimit-limit"));
+    assert!(resp.headers().contains_key("x-ratelimit-remaining"));
+}
+
+#[tokio::test]
+async fn test_rate_limit_usage_tracking() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v1/api-keys",
+        &json!({
+            "description": "usage-tracking-key-2",
+            "role": "Viewer",
+            "rate_limit_rpm": 300,
+            "rate_limit_burst": 80
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let key = created["key"].as_str().unwrap_or_default().to_string();
+    let key_id = created["record"]["id"].as_i64().unwrap_or_default();
+    assert!(key_id > 0);
+    for _ in 0..5 {
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/v1/mappings")
+            .header("x-api-key", key.clone())
+            .body(Body::empty())
+            .expect("build request failed");
+        let resp = app.clone().oneshot(req).await.expect("execute request failed");
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+    let (status, usage) = auth_get(
+        &app,
+        &cookie,
+        &format!("/api/v2/api-keys/{key_id}/usage?days=1"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let total = usage["total_requests_7d"].as_i64().unwrap_or(0);
+    assert!(total >= 5, "expected at least 5 requests, got {total}");
+}
+
+#[tokio::test]
+async fn test_rate_limit_429_enforcement() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v1/api-keys",
+        &json!({
+            "description": "tiny-limit-key-2",
+            "role": "Viewer",
+            "rate_limit_rpm": 1,
+            "rate_limit_burst": 1
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let key = created["key"].as_str().unwrap_or_default().to_string();
+    let mut seen_429 = false;
+    for _ in 0..10 {
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/v1/mappings")
+            .header("x-api-key", key.clone())
+            .body(Body::empty())
+            .expect("build request failed");
+        let resp = app.clone().oneshot(req).await.expect("execute request failed");
+        if resp.status() == StatusCode::TOO_MANY_REQUESTS {
+            seen_429 = true;
+            break;
+        }
+    }
+    assert!(seen_429);
+}
+
+#[tokio::test]
 async fn test_oidc_status_public() {
+    let (app, _) = build_test_app().await;
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/auth/oidc/status")
+        .body(Body::empty())
+        .expect("build oidc status request failed");
+    let resp = app
+        .clone()
+        .oneshot(req)
+        .await
+        .expect("execute oidc status request failed");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp
+        .into_body()
+        .collect()
+        .await
+        .expect("collect oidc status body failed")
+        .to_bytes();
+    let json: Value = serde_json::from_slice(&body).expect("parse oidc status json failed");
+    assert_eq!(json["enabled"], json!(false));
+}
+
+#[tokio::test]
+async fn test_oidc_config_default_disabled() {
     let (app, _) = build_test_app().await;
     let req = Request::builder()
         .method("GET")
@@ -3597,6 +3917,22 @@ async fn test_oidc_login_redirect_when_disabled() {
         .await
         .expect("execute oidc login request failed");
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_oidc_login_when_disabled() {
+    let (app, _) = build_test_app().await;
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/auth/oidc/login")
+        .body(Body::empty())
+        .expect("build oidc login request failed");
+    let resp = app
+        .clone()
+        .oneshot(req)
+        .await
+        .expect("execute oidc login request failed");
+    assert!(resp.status() == StatusCode::BAD_REQUEST || resp.status().is_redirection());
 }
 
 #[tokio::test]
@@ -3639,4 +3975,79 @@ async fn test_oidc_config_crud() {
     );
     assert_eq!(after["client_id"], json!("client-123"));
     assert_eq!(after["enabled"], json!(false));
+}
+
+#[tokio::test]
+async fn test_oidc_config_admin_crud() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, before) = auth_get(&app, &cookie, "/api/v2/admin/oidc/config").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(before["enabled"], json!(false));
+
+    let (status, _) = auth_put(
+        &app,
+        &cookie,
+        "/api/v2/admin/oidc/config",
+        &json!({
+            "enabled": false,
+            "provider_name": "Azure AD",
+            "issuer_url": "https://login.microsoftonline.com/test/v2.0",
+            "client_id": "client-oidc-admin",
+            "client_secret": "ultra-secret",
+            "redirect_uri": "https://trueid.example.com/api/auth/oidc/callback",
+            "scopes": "openid profile email",
+            "auto_create_users": true,
+            "default_role": "Viewer",
+            "role_claim": "groups",
+            "role_mapping": "{\"grp-admin\":\"Admin\"}",
+            "allow_local_login": true
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, after) = auth_get(&app, &cookie, "/api/v2/admin/oidc/config").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(after["issuer_url"], json!("https://login.microsoftonline.com/test/v2.0"));
+    assert_eq!(after["client_id"], json!("client-oidc-admin"));
+    assert!(after.get("client_secret").is_none());
+}
+
+#[tokio::test]
+async fn test_static_js_files_served() {
+    let (app, _) = build_test_app_with_static().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (app_js_status, app_js_headers, _) = auth_get_raw(&app, &cookie, "/js/app.js").await;
+    assert_eq!(app_js_status, StatusCode::OK);
+    let app_js_ct = app_js_headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(app_js_ct.contains("javascript"));
+    let (utils_status, _, _) = auth_get_raw(&app, &cookie, "/js/utils.js").await;
+    assert_eq!(utils_status, StatusCode::OK);
+    let (missing_status, _, _) = auth_get_raw(&app, &cookie, "/js/nonexistent.js").await;
+    assert_eq!(missing_status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_dashboard_html_has_css_vars() {
+    let (app, _) = build_test_app_with_static().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, _, body) = auth_get_raw(&app, &cookie, "/").await;
+    assert_eq!(status, StatusCode::OK);
+    let html = String::from_utf8(body).expect("dashboard html not utf8");
+    assert!(html.contains("--green-bright"));
+    assert!(html.contains("--bg-deep"));
+}
+
+#[tokio::test]
+async fn test_login_page_has_matrix_canvas() {
+    let (app, _) = build_test_app_with_static().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, _, body) = auth_get_raw(&app, &cookie, "/login.html").await;
+    assert_eq!(status, StatusCode::OK);
+    let html = String::from_utf8(body).expect("login html not utf8");
+    assert!(html.contains("matrix-bg"));
 }

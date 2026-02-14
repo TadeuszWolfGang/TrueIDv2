@@ -534,6 +534,9 @@ pub fn admin_routes(state: AppState) -> Router<AppState> {
         .route("/api/auth/oidc/config", get(routes_oidc::get_config))
         .route("/api/auth/oidc/config", put(routes_oidc::update_config))
         .route("/api/auth/oidc/test", post(routes_oidc::test_discovery))
+        .route("/api/v2/admin/oidc/config", get(routes_oidc::get_config))
+        .route("/api/v2/admin/oidc/config", put(routes_oidc::update_config))
+        .route("/api/v2/admin/oidc/test", post(routes_oidc::test_discovery))
         .layer(axum_mw::from_fn_with_state(
             state,
             middleware::require_admin_layer,
