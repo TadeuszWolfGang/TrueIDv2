@@ -136,6 +136,10 @@ pub(crate) async fn update_password_policy(
     )
     .await
     .map_err(to_internal(&auth.request_id, "Failed to update password policy"))?;
+    {
+        let mut runtime = state.config.write().await;
+        runtime.reload(db).await;
+    }
     helpers::audit(db, &auth, "security_policy_updated", None, None).await;
     get_password_policy(auth, State(state)).await
 }
@@ -214,6 +218,10 @@ pub(crate) async fn set_totp_requirement(
             &auth.request_id,
             "Failed to update TOTP requirement",
         ))?;
+    {
+        let mut runtime = state.config.write().await;
+        runtime.reload(db).await;
+    }
     helpers::audit(
         db,
         &auth,

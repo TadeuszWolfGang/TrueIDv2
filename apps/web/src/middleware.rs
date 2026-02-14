@@ -194,8 +194,10 @@ where
             .with_request_id(&rid));
         }
 
-        let idle_limit = db.get_config_i64("session_max_idle_minutes", 480).await.max(1);
-        if session.last_active_at + chrono::Duration::minutes(idle_limit) < chrono::Utc::now() {
+        let idle_limit = app_state.config.read().await.session_idle_minutes;
+        if idle_limit <= 0
+            || session.last_active_at + chrono::Duration::minutes(idle_limit) < chrono::Utc::now()
+        {
             let _ = db.revoke_session(session.id).await;
             return Err(ApiError::new(
                 StatusCode::UNAUTHORIZED,
@@ -204,8 +206,10 @@ where
             )
             .with_request_id(&rid));
         }
-        let max_hours = db.get_config_i64("session_absolute_max_hours", 24).await.max(1);
-        if session.created_at + chrono::Duration::hours(max_hours) < chrono::Utc::now() {
+        let max_hours = app_state.config.read().await.session_max_hours;
+        if max_hours <= 0
+            || session.created_at + chrono::Duration::hours(max_hours) < chrono::Utc::now()
+        {
             let _ = db.revoke_session(session.id).await;
             return Err(ApiError::new(
                 StatusCode::UNAUTHORIZED,

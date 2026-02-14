@@ -105,3 +105,29 @@ async fn config_bool(db: &Db, key: &str, default_value: bool) -> bool {
         None => default_value,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::PasswordPolicy;
+
+    /// Verifies password complexity validation for required length/case/digit.
+    #[test]
+    fn test_password_policy_validation() {
+        let policy = PasswordPolicy {
+            min_length: 12,
+            require_uppercase: true,
+            require_lowercase: false,
+            require_digit: true,
+            require_special: false,
+            history_count: 0,
+            max_age_days: 0,
+            session_max_idle_minutes: 480,
+            session_absolute_max_hours: 24,
+            totp_required_for_admins: false,
+        };
+        assert!(policy.validate("short").is_err());
+        assert!(policy.validate("alllowercase123").is_err());
+        assert!(policy.validate("NoDigitsHereAtAll").is_err());
+        assert!(policy.validate("ValidPass1234").is_ok());
+    }
+}

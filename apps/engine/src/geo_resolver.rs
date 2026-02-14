@@ -208,3 +208,22 @@ pub fn is_private(ip: &IpAddr) -> bool {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::IpAddr;
+
+    /// Verifies private IPv4 is resolved as private without MMDB.
+    #[tokio::test]
+    async fn test_geo_resolver_private_ip() {
+        let db = trueid_common::db::init_db("sqlite::memory:")
+            .await
+            .expect("init db failed");
+        let resolver = GeoResolver::new(None, db.pool().clone());
+        let ip: IpAddr = "10.0.0.1".parse().expect("ip parse failed");
+        let result = resolver.resolve(&ip).await.expect("expected geo info");
+        assert!(result.is_private);
+        assert_eq!(result.city.as_deref(), Some("Private"));
+    }
+}

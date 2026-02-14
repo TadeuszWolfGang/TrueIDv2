@@ -8,6 +8,7 @@ use axum::{
 };
 use tracing::warn;
 
+use crate::error::{self, ApiError};
 use crate::{middleware::AuthUser, AppState};
 
 /// Proxies the engine SSE feed for authenticated dashboard users.
@@ -16,8 +17,8 @@ use crate::{middleware::AuthUser, AppState};
 /// Returns: streamed SSE HTTP response or `BAD_GATEWAY` on upstream failure.
 pub(crate) async fn event_stream(
     State(state): State<AppState>,
-    _auth: AuthUser,
-) -> Result<Response, StatusCode> {
+    auth: AuthUser,
+) -> Result<Response, ApiError> {
     let url = format!("{}/engine/events/stream", state.engine_url);
     let mut req = state.http_client.get(&url);
     if let Some(ref token) = state.engine_service_token {
@@ -26,10 +27,20 @@ pub(crate) async fn event_stream(
 
     let upstream = req.send().await.map_err(|err| {
         warn!(error = %err, url = %url, "SSE proxy request failed");
-        StatusCode::BAD_GATEWAY
+        ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            error::SERVICE_UNAVAILABLE,
+            "Failed to connect to engine SSE stream",
+        )
+        .with_request_id(&auth.request_id)
     })?;
     if !upstream.status().is_success() {
-        return Err(StatusCode::BAD_GATEWAY);
+        return Err(ApiError::new(
+            StatusCode::BAD_GATEWAY,
+            error::SERVICE_UNAVAILABLE,
+            "Engine SSE stream returned non-success status",
+        )
+        .with_request_id(&auth.request_id));
     }
 
     let mut response = Body::from_stream(upstream.bytes_stream()).into_response();

@@ -162,9 +162,15 @@ async fn main() -> Result<()> {
     let auth_chain = db.as_ref().map(|d| {
         Arc::new(trueid_common::auth_provider::AuthProviderChain::default_chain(Arc::clone(d)))
     });
+    let runtime_config = if let Some(ref db_ref) = db {
+        trueid_common::app_config::AppConfig::load(db_ref.as_ref()).await
+    } else {
+        trueid_common::app_config::AppConfig::default()
+    };
 
     let state = AppState {
         db,
+        config: Arc::new(tokio::sync::RwLock::new(runtime_config)),
         engine_url,
         http_client: reqwest::Client::new(),
         jwt_config,

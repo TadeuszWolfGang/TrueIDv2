@@ -217,3 +217,25 @@ impl RetentionExecutor {
         RetentionResult::ok(safe_table, total_deleted)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verifies retention run on empty migrated DB returns zero deletions.
+    #[tokio::test]
+    async fn test_retention_executor_empty_tables() {
+        let db = trueid_common::db::init_db("sqlite::memory:")
+            .await
+            .expect("init db failed");
+        let executor = RetentionExecutor::new(db.pool().clone(), false);
+        let results = executor.run_all().await;
+        assert!(!results.is_empty(), "expected seeded retention policies");
+        assert!(
+            results
+                .iter()
+                .all(|r| r.status == "ok" && r.deleted == 0 || r.status == "skipped"),
+            "unexpected retention results: {results:?}"
+        );
+    }
+}

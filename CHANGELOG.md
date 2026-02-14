@@ -6,6 +6,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 ## [0.6.0] — 2026-02-13
 
 ### Added
+- Phase 5 test expansion: +14 web E2E tests (SSE, notification channels, retention run/stats/validation, import batch/partial failure, password history reuse, absolute session timeout, duplicate tags, geo field presence)
+- 3 new unit tests: Geo resolver private IP path, retention executor empty tables, password policy validator behavior
+- New shared runtime config model: `crates/common/src/app_config.rs` with in-memory reload support in web state
 - **Notification Channels**: email (SMTP), Slack, Teams, webhook channels with encrypted config storage and per-channel delivery logs
 - **Notifications API**: `/api/v2/notifications/channels*` CRUD + test endpoint + deliveries history
 - **Engine Notification Dispatcher**: channel-based alert fan-out with delivery tracking (`notification_deliveries`)
@@ -55,6 +58,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - VPN dispatcher not matching `Username = ..., IP = ...` format
 
 ### Changed
+- Web routing refactor: extracted grouped routers to `apps/web/src/routes.rs`, reduced `build_router()` complexity in `apps/web/src/lib.rs`
+- Session hardening reads idle/absolute timeout from shared runtime config and supports immediate expiry (`session_absolute_max_hours <= 0`) for tests/ops
+- SSE proxy errors now return unified `ApiError` format (instead of raw status codes)
 - Alert rule create/update payload now supports `channel_ids`; rule list now includes linked channels
 - Dashboard adds admin-only **Notifications** tab and alert-rule channel selector
 - Polling for mappings/conflicts/alerts reduced to 120s when SSE is connected (fallback to 30s on disconnect)

@@ -44,9 +44,11 @@ async fn build_test_app_with_engine_url(
         .expect("set_force_password_change failed");
 
     seed_test_data(&db).await;
+    let runtime_config = trueid_common::app_config::AppConfig::load(db.as_ref()).await;
 
     let state = AppState {
         db: Some(db.clone()),
+        config: Arc::new(tokio::sync::RwLock::new(runtime_config)),
         engine_url,
         http_client: reqwest::Client::new(),
         jwt_config: auth::JwtConfig::from_env(true),
@@ -72,6 +74,50 @@ async fn spawn_mock_engine_sse() -> (String, tokio::task::JoinHandle<()>) {
                 StatusCode::OK,
                 [("content-type", "text/event-stream")],
                 "event: heartbeat\ndata: {\"type\":\"heartbeat\"}\n\n",
+            )
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock engine failed");
+    let addr = listener
+        .local_addr()
+        .expect("read mock engine local addr failed");
+    let handle = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    (format!("http://{}", addr), handle)
+}
+
+/// Spawns a minimal mock engine retention endpoint for proxy tests.
+///
+/// Parameters: none.
+/// Returns: `(base_url, task_handle)` for the spawned mock server.
+async fn spawn_mock_engine_retention_run() -> (String, tokio::task::JoinHandle<()>) {
+    let app = Router::new().route(
+        "/engine/retention/run",
+        get(|| async move {
+            (
+                StatusCode::OK,
+                [("content-type", "application/json")],
+                serde_json::to_string(&json!({
+                    "results": [
+                        {"table_name":"events","deleted":0,"status":"ok"}
+                    ]
+                }))
+                .expect("serialize mock retention response failed"),
+            )
+        })
+        .post(|| async move {
+            (
+                StatusCode::OK,
+                [("content-type", "application/json")],
+                serde_json::to_string(&json!({
+                    "results": [
+                        {"table_name":"events","deleted":0,"status":"ok"}
+                    ]
+                }))
+                .expect("serialize mock retention response failed"),
             )
         }),
     );
@@ -2799,4 +2845,448 @@ async fn test_geo_lookup_private_ip() {
     let (status, body) = auth_get(&app, &cookie, "/api/v2/geo/10.0.0.1").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["is_private"], json!(true));
+}
+
+#[tokio::test]
+async fn test_sse_requires_auth() {
+    let (app, _) = build_test_app().await;
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/v2/events/stream")
+        .body(Body::empty())
+        .expect("build sse request failed");
+    let resp = app
+        .clone()
+        .oneshot(req)
+        .await
+        .expect("sse request execution failed");
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_sse_accepts_auth() {
+    let (engine_url, mock_handle) = spawn_mock_engine_sse().await;
+    let (app, _) = build_test_app_with_engine_url(engine_url).await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, headers, _) = auth_get_raw(&app, &cookie, "/api/v2/events/stream").await;
+    mock_handle.abort();
+    assert_eq!(status, StatusCode::OK);
+    let ct = headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(ct.contains("text/event-stream"), "unexpected content-type: {ct}");
+}
+
+#[tokio::test]
+async fn test_notification_channel_email_config() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/notifications/channels",
+        &json!({
+            "name": "smtp-main",
+            "channel_type": "email",
+            "enabled": true,
+            "config": {
+                "smtp_host": "mail.example.com",
+                "smtp_port": 587,
+                "smtp_tls": true,
+                "smtp_user": "bot@example.com",
+                "smtp_pass": "super-secret",
+                "from_address": "trueid@example.com",
+                "to_addresses": ["soc@example.com"],
+                "subject_prefix": "[TrueID]"
+            }
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let id = created["id"].as_i64().unwrap_or_default();
+    let (status, one) = auth_get(
+        &app,
+        &cookie,
+        &format!("/api/v2/notifications/channels/{id}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let summary = one["config_summary"].as_str().unwrap_or("");
+    assert!(summary.contains("mail.example.com"), "summary missing host: {summary}");
+    assert!(!summary.contains("super-secret"), "summary leaked secret: {summary}");
+
+    let (status, _) = auth_put(
+        &app,
+        &cookie,
+        &format!("/api/v2/notifications/channels/{id}"),
+        &json!({
+            "name": "smtp-main",
+            "channel_type": "email",
+            "enabled": true,
+            "config": {
+                "smtp_host": "mail.example.com",
+                "smtp_port": 465,
+                "smtp_tls": true,
+                "smtp_user": "bot@example.com",
+                "smtp_pass": "super-secret",
+                "from_address": "trueid@example.com",
+                "to_addresses": ["soc@example.com"],
+                "subject_prefix": "[TrueID]"
+            }
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, one) = auth_get(
+        &app,
+        &cookie,
+        &format!("/api/v2/notifications/channels/{id}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let summary = one["config_summary"].as_str().unwrap_or("");
+    assert!(summary.contains(":465"), "summary missing updated port: {summary}");
+}
+
+#[tokio::test]
+async fn test_notification_channel_link_to_rule() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, ch) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/notifications/channels",
+        &json!({
+            "name": "slack-alerts",
+            "channel_type": "slack",
+            "enabled": true,
+            "config": {
+                "webhook_url": "https://hooks.slack.com/services/T000/B000/XXXX",
+                "channel": "#soc",
+                "username": "TrueID",
+                "icon_emoji": ":shield:"
+            }
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let ch_id = ch["id"].as_i64().unwrap_or_default();
+    let (status, rule) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/alerts/rules",
+        &json!({
+            "name": "new-subnet-link-test",
+            "rule_type": "new_subnet",
+            "severity": "warning",
+            "enabled": true,
+            "cooldown_minutes": 5,
+            "action_log": true,
+            "cooldown_seconds": 300,
+            "channel_ids": [ch_id]
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let rule_id = rule["id"].as_i64().unwrap_or_default();
+    let (status, got) = auth_get(&app, &cookie, "/api/v2/alerts/rules").await;
+    assert_eq!(status, StatusCode::OK);
+    let rows = got["rules"].as_array().cloned().unwrap_or_default();
+    let linked = rows
+        .iter()
+        .find(|r| r["id"].as_i64() == Some(rule_id))
+        .and_then(|r| r["channels"].as_array())
+        .map(|arr| arr.iter().any(|c| c["id"].as_i64() == Some(ch_id)))
+        .unwrap_or(false);
+    assert!(linked, "expected linked channel in rule response: {got}");
+}
+
+#[tokio::test]
+async fn test_notification_channel_delivery_log_empty() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, ch) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/notifications/channels",
+        &json!({
+            "name": "wh-delivery-empty",
+            "channel_type": "webhook",
+            "enabled": true,
+            "config": {
+                "url": "https://example.com/hook",
+                "method": "POST"
+            }
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let id = ch["id"].as_i64().unwrap_or_default();
+    let (status, body) = auth_get(
+        &app,
+        &cookie,
+        &format!("/api/v2/notifications/channels/{id}/deliveries"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.as_array()
+            .map(|a| a.is_empty())
+            .unwrap_or(false),
+        "expected empty delivery list, got: {body}"
+    );
+}
+
+#[tokio::test]
+async fn test_retention_force_run() {
+    let (engine_url, mock_handle) = spawn_mock_engine_retention_run().await;
+    let (app, _) = build_test_app_with_engine_url(engine_url).await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_post(&app, &cookie, "/api/v2/admin/retention/run", &json!({})).await;
+    mock_handle.abort();
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["results"].is_array(), "expected results array, got: {body}");
+}
+
+#[tokio::test]
+async fn test_retention_stats() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/admin/retention/stats").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["tables"].is_array(), "expected tables array, got: {body}");
+    let has_row_count = body["tables"]
+        .as_array()
+        .map(|arr| arr.iter().any(|r| r.get("row_count").is_some()))
+        .unwrap_or(false);
+    assert!(has_row_count, "expected row_count in tables, got: {body}");
+    assert!(
+        body.get("database_size_bytes").is_some(),
+        "expected database_size_bytes, got: {body}"
+    );
+}
+
+#[tokio::test]
+async fn test_retention_update_validation() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, _) = auth_put(
+        &app,
+        &cookie,
+        "/api/v2/admin/retention/events",
+        &json!({"retention_days": 0, "enabled": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let (status, _) = auth_put(
+        &app,
+        &cookie,
+        "/api/v2/admin/retention/events",
+        &json!({"retention_days": 30, "enabled": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/admin/retention").await;
+    assert_eq!(status, StatusCode::OK);
+    let rows = body["policies"].as_array().cloned().unwrap_or_default();
+    let events_days = rows
+        .iter()
+        .find(|r| r["table_name"] == "events")
+        .and_then(|r| r["retention_days"].as_i64())
+        .unwrap_or_default();
+    assert_eq!(events_days, 30);
+}
+
+#[tokio::test]
+async fn test_import_events_batch() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let events: Vec<Value> = (0..50)
+        .map(|idx| {
+            json!({
+                "ip": format!("10.40.1.{idx}"),
+                "user": format!("batch-user-{idx}"),
+                "source": "Manual",
+                "mac": format!("AA:BB:CC:40:01:{:02X}", idx),
+                "timestamp": Utc::now().to_rfc3339(),
+                "raw_data": format!("batch event #{idx}")
+            })
+        })
+        .collect();
+    let (status, body) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/import/events",
+        &json!({ "events": events }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let imported = body["imported"].as_i64().unwrap_or(0);
+    assert!(imported >= 48, "expected imported >= 48, got: {imported}, body: {body}");
+
+    let (status, mappings) = auth_get(&app, &cookie, "/api/v1/mappings?search=10.40.1.1").await;
+    assert_eq!(status, StatusCode::OK);
+    let found = mappings["data"]
+        .as_array()
+        .map(|arr| arr.iter().any(|r| r["ip"] == "10.40.1.1"))
+        .unwrap_or(false);
+    assert!(found, "expected imported IP in mappings, got: {mappings}");
+}
+
+#[tokio::test]
+async fn test_import_events_partial_failure() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let payload = json!({
+        "events": [
+            {"ip":"10.50.1.1","user":"ok-1","source":"Manual","raw_data":"ok"},
+            {"ip":"10.50.1.2","user":"ok-2","source":"Manual","raw_data":"ok"},
+            {"ip":"10.50.1.3","user":"ok-3","source":"Manual","raw_data":"ok"},
+            {"ip":"999.999.1.1","user":"bad-1","source":"Manual","raw_data":"bad"},
+            {"ip":"abc","user":"bad-2","source":"Manual","raw_data":"bad"}
+        ]
+    });
+    let (status, body) = auth_post(&app, &cookie, "/api/v2/import/events", &payload).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["imported"], json!(3));
+    let err_count = body["errors"].as_array().map(|a| a.len()).unwrap_or(0);
+    assert_eq!(err_count, 2, "expected 2 errors, got: {body}");
+}
+
+#[tokio::test]
+async fn test_password_history_reuse() {
+    let (app, _) = build_test_app().await;
+    let admin_cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, created) = auth_post(
+        &app,
+        &admin_cookie,
+        "/api/v1/users",
+        &json!({
+            "username": "pw_hist_user",
+            "password": "PasswordA123!",
+            "role": "Viewer"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let user_id = created["id"].as_i64().unwrap_or_default();
+
+    let user_cookie = login_and_get_cookie(&app, "pw_hist_user", "PasswordA123!").await;
+    let (status, _) = auth_post(
+        &app,
+        &user_cookie,
+        "/api/auth/change-password",
+        &json!({
+            "current_password": "PasswordA123!",
+            "new_password": "PasswordB123!"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let user_cookie = login_and_get_cookie(&app, "pw_hist_user", "PasswordB123!").await;
+    let (status, body) = auth_post(
+        &app,
+        &user_cookie,
+        "/api/auth/change-password",
+        &json!({
+            "current_password": "PasswordB123!",
+            "new_password": "PasswordA123!"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        body["error"].as_str().unwrap_or("").contains("last"),
+        "expected history rejection message, got: {body}"
+    );
+
+    let _ = auth_delete(&app, &admin_cookie, &format!("/api/v1/users/{user_id}")).await;
+}
+
+#[tokio::test]
+async fn test_session_absolute_timeout() {
+    let (app, db) = build_test_app().await;
+    let admin_cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, mut policy) =
+        auth_get(&app, &admin_cookie, "/api/v2/admin/security/password-policy").await;
+    assert_eq!(status, StatusCode::OK);
+    let default_hours = policy["session_absolute_max_hours"].as_i64().unwrap_or(24).max(1);
+    policy["session_absolute_max_hours"] = json!(0);
+    let (status, _) = auth_put(
+        &app,
+        &admin_cookie,
+        "/api/v2/admin/security/password-policy",
+        &policy,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, _) = auth_get(&app, &cookie, "/api/auth/me").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    db.set_config("session_absolute_max_hours", &default_hours.to_string())
+        .await
+        .expect("restore session_absolute_max_hours failed");
+}
+
+#[tokio::test]
+async fn test_ip_tag_prevents_duplicate() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, _) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/tags",
+        &json!({
+            "ip": "10.0.1.42",
+            "tag": "server",
+            "color": "#3b82f6"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, _) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/tags",
+        &json!({
+            "ip": "10.0.1.42",
+            "tag": "server",
+            "color": "#3b82f6"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn test_mapping_includes_geo_fields() {
+    let (app, db) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let event = IdentityEvent {
+        source: SourceType::Manual,
+        ip: "10.0.0.1".parse::<IpAddr>().expect("ip parse failed"),
+        user: "geo_user".to_string(),
+        timestamp: Utc::now(),
+        raw_data: "geo mapping seed".to_string(),
+        mac: Some("AA:BB:CC:00:00:01".to_string()),
+        confidence_score: 100,
+    };
+    db.upsert_mapping(event, Some("TestVendor"))
+        .await
+        .expect("upsert mapping for geo field check failed");
+    let (status, body) = auth_get(&app, &cookie, "/api/v1/mappings?search=10.0.0.1").await;
+    assert_eq!(status, StatusCode::OK);
+    let rows = body["data"].as_array().cloned().unwrap_or_default();
+    assert!(!rows.is_empty(), "expected mapping row, got: {body}");
+    assert!(
+        rows[0].get("country_code").is_some(),
+        "country_code field missing in mapping payload: {body}"
+    );
 }
