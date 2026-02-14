@@ -38,6 +38,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - **CLI Tool (`trueid`)**: new API-driven command-line client (`apps/cli`) with commands for lookup/search/mappings/conflicts/alerts/status/stats/users/export/import/retention/health
 - **Bulk Import API**: `POST /api/v2/import/events` for JSON batch ingestion with per-row validation and error reporting
 - 3 new E2E tests for import endpoint (success/invalid IP/max limit)
+- **Enhanced Security**: configurable password policy, password history enforcement, TOTP 2FA (setup/verify/disable/status/backup codes), and session hardening (idle/absolute timeout + IP/UA binding)
+- New admin security APIs: `/api/v2/admin/security/password-policy`, `/api/v2/admin/security/sessions*`, `/api/v2/admin/security/totp-requirement`
+- New user/admin TOTP APIs: `/api/auth/totp/*` and `DELETE /api/v1/users/{id}/totp`
+- 5 new E2E tests for password policy, TOTP flow, and session IP metadata
 
 ### Fixed
 - `group_names` subquery missing in routes_v1, routes_search, routes_subnets (groups always null)

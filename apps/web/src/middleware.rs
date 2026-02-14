@@ -161,6 +161,103 @@ where
             .with_request_id(&rid));
         }
 
+        // Session hardening checks (cookie auth only).
+        let refresh_token = extract_cookie(cookie_header, auth::REFRESH_COOKIE_NAME).ok_or_else(|| {
+            ApiError::new(
+                StatusCode::UNAUTHORIZED,
+                error::AUTH_REQUIRED,
+                "Refresh token missing",
+            )
+            .with_request_id(&rid)
+        })?;
+        let refresh_hash = trueid_common::db_auth::sha256_hex(refresh_token);
+        let session = db
+            .get_session_for_security_checks(&refresh_hash)
+            .await
+            .ok()
+            .flatten()
+            .ok_or_else(|| {
+                ApiError::new(
+                    StatusCode::UNAUTHORIZED,
+                    error::AUTH_REQUIRED,
+                    "Session is invalid or revoked",
+                )
+                .with_request_id(&rid)
+            })?;
+
+        if session.user_id != user.id {
+            return Err(ApiError::new(
+                StatusCode::UNAUTHORIZED,
+                error::AUTH_REQUIRED,
+                "Session does not belong to authenticated user",
+            )
+            .with_request_id(&rid));
+        }
+
+        let idle_limit = db.get_config_i64("session_max_idle_minutes", 480).await.max(1);
+        if session.last_active_at + chrono::Duration::minutes(idle_limit) < chrono::Utc::now() {
+            let _ = db.revoke_session(session.id).await;
+            return Err(ApiError::new(
+                StatusCode::UNAUTHORIZED,
+                error::AUTH_REQUIRED,
+                "Session expired due to inactivity",
+            )
+            .with_request_id(&rid));
+        }
+        let max_hours = db.get_config_i64("session_absolute_max_hours", 24).await.max(1);
+        if session.created_at + chrono::Duration::hours(max_hours) < chrono::Utc::now() {
+            let _ = db.revoke_session(session.id).await;
+            return Err(ApiError::new(
+                StatusCode::UNAUTHORIZED,
+                error::AUTH_REQUIRED,
+                "Session expired",
+            )
+            .with_request_id(&rid));
+        }
+
+        if let Some(bound_ip) = session.ip_address.as_deref() {
+            let request_ip = parts
+                .headers
+                .get("x-forwarded-for")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.split(',').next())
+                .map(str::trim)
+                .or_else(|| {
+                    parts
+                        .headers
+                        .get("x-real-ip")
+                        .and_then(|v| v.to_str().ok())
+                        .map(str::trim)
+                });
+            if let Some(ip) = request_ip {
+                if ip != bound_ip {
+                    return Err(ApiError::new(
+                        StatusCode::UNAUTHORIZED,
+                        error::AUTH_REQUIRED,
+                        "Session IP mismatch",
+                    )
+                    .with_request_id(&rid));
+                }
+            }
+        }
+        if let Some(bound_ua) = session.user_agent.as_deref() {
+            let request_ua = parts
+                .headers
+                .get(header::USER_AGENT)
+                .and_then(|v| v.to_str().ok());
+            if let Some(ua) = request_ua {
+                if ua != bound_ua {
+                    return Err(ApiError::new(
+                        StatusCode::UNAUTHORIZED,
+                        error::AUTH_REQUIRED,
+                        "Session user-agent mismatch",
+                    )
+                    .with_request_id(&rid));
+                }
+            }
+        }
+        let _ = db.touch_session_activity(session.id).await;
+
         Ok(AuthUser {
             user_id: user.id,
             username: user.username.clone(),

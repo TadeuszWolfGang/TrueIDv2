@@ -32,6 +32,7 @@ async fn build_test_app() -> (Router, Arc<trueid_common::db::Db>) {
 async fn build_test_app_with_engine_url(
     engine_url: String,
 ) -> (Router, Arc<trueid_common::db::Db>) {
+    ensure_test_encryption_key();
     let db = Arc::new(init_db("sqlite::memory:").await.expect("init_db failed"));
 
     let user = db
@@ -2488,4 +2489,227 @@ async fn test_health() {
         .await
         .expect("execute health request failed");
     assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_password_policy_validation() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_post(
+        &app,
+        &cookie,
+        "/api/v1/users",
+        &json!({
+            "username": "shortpassuser",
+            "password": "short",
+            "role": "Viewer"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        body["error"].as_str().unwrap_or("").contains("at least"),
+        "expected policy message, got: {body}"
+    );
+}
+
+#[tokio::test]
+async fn test_password_policy_update() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, current) = auth_get(&app, &cookie, "/api/v2/admin/security/password-policy").await;
+    assert_eq!(status, StatusCode::OK);
+    let mut payload = current.clone();
+    payload["min_length"] = json!(16);
+    let (status, _) = auth_put(
+        &app,
+        &cookie,
+        "/api/v2/admin/security/password-policy",
+        &payload,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, body) = auth_post(
+        &app,
+        &cookie,
+        "/api/v1/users",
+        &json!({
+            "username": "policyuser",
+            "password": "Testpassword12",
+            "role": "Viewer"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        body["error"].as_str().unwrap_or("").contains("at least 16"),
+        "expected min_length validation message, got: {body}"
+    );
+}
+
+#[tokio::test]
+async fn test_totp_setup_and_verify() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, setup) = auth_post(&app, &cookie, "/api/auth/totp/setup", &json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    let secret = setup["secret"]
+        .as_str()
+        .expect("missing totp setup secret")
+        .to_string();
+    let totp = totp_rs::TOTP::new(
+        totp_rs::Algorithm::SHA1,
+        6,
+        1,
+        30,
+        totp_rs::Secret::Encoded(secret)
+            .to_bytes()
+            .expect("invalid secret encoding"),
+        Some("TrueID".to_string()),
+        "testadmin".to_string(),
+    )
+    .expect("failed to build totp");
+    let code = totp.generate_current().expect("failed to generate current code");
+    let (status, verify) = auth_post(
+        &app,
+        &cookie,
+        "/api/auth/totp/verify",
+        &json!({ "code": code }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        verify["backup_codes"]
+            .as_array()
+            .map(|v| v.len() == 10)
+            .unwrap_or(false),
+        "expected 10 backup codes, got: {verify}"
+    );
+    let (status, s) = auth_get(&app, &cookie, "/api/auth/totp/status").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(s["enabled"], json!(true));
+}
+
+#[tokio::test]
+async fn test_totp_login_requires_code() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (_, setup) = auth_post(&app, &cookie, "/api/auth/totp/setup", &json!({})).await;
+    let secret = setup["secret"]
+        .as_str()
+        .expect("missing totp setup secret")
+        .to_string();
+    let totp = totp_rs::TOTP::new(
+        totp_rs::Algorithm::SHA1,
+        6,
+        1,
+        30,
+        totp_rs::Secret::Encoded(secret)
+            .to_bytes()
+            .expect("invalid secret encoding"),
+        Some("TrueID".to_string()),
+        "testadmin".to_string(),
+    )
+    .expect("failed to build totp");
+    let code = totp.generate_current().expect("failed to generate current code");
+    let (status, _) = auth_post(
+        &app,
+        &cookie,
+        "/api/auth/totp/verify",
+        &json!({ "code": code }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/auth/login")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_string(&json!({
+                "username": "testadmin",
+                "password": "testpassword123"
+            }))
+            .expect("serialize login body failed"),
+        ))
+        .expect("build login request failed");
+    let resp = app
+        .clone()
+        .oneshot(req)
+        .await
+        .expect("login request execution failed");
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let body = resp
+        .into_body()
+        .collect()
+        .await
+        .expect("collect login body failed")
+        .to_bytes();
+    let json_body: Value = serde_json::from_slice(&body).expect("parse login json failed");
+    assert_eq!(json_body["requires_2fa"], json!(true));
+}
+
+#[tokio::test]
+async fn test_session_info_includes_ip() {
+    let (app, _) = build_test_app().await;
+    let req = Request::builder()
+        .method("POST")
+        .uri("/api/auth/login")
+        .header("content-type", "application/json")
+        .header("x-real-ip", "10.10.10.10")
+        .body(Body::from(
+            serde_json::to_string(&json!({
+                "username": "testadmin",
+                "password": "testpassword123"
+            }))
+            .expect("serialize login body failed"),
+        ))
+        .expect("build login request failed");
+    let resp = app
+        .clone()
+        .oneshot(req)
+        .await
+        .expect("login request execution failed");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let mut parts = Vec::new();
+    for value in &resp.headers().get_all("set-cookie") {
+        let raw = value.to_str().unwrap_or("");
+        if raw.contains("trueid_access_token=")
+            || raw.contains("trueid_refresh_token=")
+            || raw.contains("trueid_csrf_token=")
+        {
+            let first = raw.split(';').next().unwrap_or("");
+            if !first.is_empty() {
+                parts.push(first.to_string());
+            }
+        }
+    }
+    let cookie = parts.join("; ");
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/auth/sessions")
+        .header("cookie", cookie)
+        .header("x-real-ip", "10.10.10.10")
+        .body(Body::empty())
+        .expect("build list sessions request failed");
+    let resp = app
+        .clone()
+        .oneshot(req)
+        .await
+        .expect("list sessions execution failed");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = resp
+        .into_body()
+        .collect()
+        .await
+        .expect("collect sessions response failed")
+        .to_bytes();
+    let body: Value = serde_json::from_slice(&bytes).expect("parse sessions json failed");
+    let rows = body.as_array().cloned().unwrap_or_default();
+    assert!(!rows.is_empty(), "expected at least one active session");
+    assert_eq!(
+        rows[0]["ip_address"].as_str().unwrap_or(""),
+        "10.10.10.10",
+        "expected bound IP in session info"
+    );
 }

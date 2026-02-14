@@ -182,7 +182,10 @@
       <span id="connection-status" style="color:#6b8579;font-size:12px;display:flex;align-items:center;gap:6px;">
         <span class="dot offline"></span> Polling
       </span>
-      <button class="btn btn-sm" id="logout-btn" onclick="doLogout()">Logout</button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-sm" id="security-btn" onclick="openSecurityModal()">Security</button>
+        <button class="btn btn-sm" id="logout-btn" onclick="doLogout()">Logout</button>
+      </div>
     </div>
 
     <!-- Tab navigation -->
@@ -705,6 +708,17 @@
 
         <div class="setting-divider" style="margin:16px 0;"></div>
 
+        <h2 class="section-title role-admin">Security (Admin)</h2>
+        <div class="role-admin" style="display:flex;gap:8px;margin-bottom:10px;">
+          <button class="btn btn-sm" onclick="saveAdminSecurityPolicy()">Save Security Policy</button>
+          <button class="btn btn-sm" onclick="loadAdminSecuritySection()">Refresh</button>
+          <span id="admin-security-result" class="muted"></span>
+        </div>
+        <div id="admin-security-policy" class="sync-status-box role-admin" style="margin-bottom:10px;"></div>
+        <div id="admin-security-sessions" class="sync-status-box role-admin" style="max-height:220px;overflow:auto;"></div>
+
+        <div class="setting-divider role-admin" style="margin:16px 0;"></div>
+
         <h2 class="section-title">Prometheus</h2>
         <div class="sync-status-box">
           <div><a class="ip-link" href="/metrics" target="_blank" rel="noopener noreferrer">Open /metrics endpoint</a></div>
@@ -1114,6 +1128,24 @@
       </div>
     </div>
     <div id="live-indicator" style="position:fixed;bottom:16px;right:16px;z-index:200;"></div>
+    <div id="security-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:300;">
+      <div style="max-width:640px;margin:6vh auto;background:#0f1512;border:1px solid #1e2a24;border-radius:8px;padding:16px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <h2 class="section-title" style="margin:0;">Security Settings</h2>
+          <button class="btn btn-sm" onclick="closeSecurityModal()">Close</button>
+        </div>
+        <div id="totp-status-box" class="sync-status-box" style="margin-top:12px;">Loading...</div>
+        <div id="totp-setup-box" style="display:none;margin-top:12px;">
+          <div class="sync-status-box">
+            <img id="totp-qr" alt="TOTP QR" style="max-width:180px;max-height:180px;display:block;margin-bottom:8px;">
+            <div class="muted" id="totp-secret-line"></div>
+            <input id="totp-verify-code" class="setting-input" style="width:220px;margin-top:8px;" placeholder="Enter 2FA code">
+            <button class="btn btn-sm" style="margin-top:8px;" onclick="verifyTotpSetup()">Verify & Enable</button>
+          </div>
+        </div>
+        <div id="totp-backup-codes" class="sync-status-box" style="display:none;margin-top:12px;white-space:pre-wrap;"></div>
+      </div>
+    </div>
 
     <script>
       var currentUser = null;
@@ -1387,6 +1419,197 @@
           });
         } catch (e) {}
         window.location = '/login.html';
+      }
+
+      async function openSecurityModal() {
+        document.getElementById('security-modal').style.display = '';
+        document.getElementById('totp-setup-box').style.display = 'none';
+        document.getElementById('totp-backup-codes').style.display = 'none';
+        await loadTotpStatus();
+      }
+
+      function closeSecurityModal() {
+        document.getElementById('security-modal').style.display = 'none';
+      }
+
+      async function loadTotpStatus() {
+        var box = document.getElementById('totp-status-box');
+        try {
+          var resp = await fetch('/api/auth/totp/status', { credentials: 'include' });
+          if (!resp.ok) throw new Error('HTTP ' + resp.status);
+          var data = await resp.json();
+          var enabled = !!data.enabled;
+          box.innerHTML =
+            '<div>2FA status: <strong style="color:' + (enabled ? '#22c55e' : '#f59e0b') + ';">' + (enabled ? 'Enabled' : 'Disabled') + '</strong></div>' +
+            '<div class="muted" style="margin-top:6px;">Verified at: ' + escapeHtml(data.verified_at || '-') + '</div>' +
+            '<div style="display:flex;gap:8px;margin-top:10px;">' +
+              (enabled
+                ? '<button class="btn btn-sm" onclick="disableTotp()">Disable 2FA</button><button class="btn btn-sm" onclick="regenBackupCodes()">Regenerate Backup Codes</button>'
+                : '<button class="btn btn-sm" onclick="startTotpSetup()">Enable 2FA</button>') +
+            '</div>';
+        } catch (e) {
+          box.innerHTML = '<span style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</span>';
+        }
+      }
+
+      async function startTotpSetup() {
+        try {
+          var resp = await fetch('/api/auth/totp/setup', {
+            method: 'POST',
+            headers: mutHeaders(),
+            credentials: 'include',
+            body: JSON.stringify({})
+          });
+          if (!resp.ok) throw new Error('HTTP ' + resp.status);
+          var data = await resp.json();
+          document.getElementById('totp-setup-box').style.display = '';
+          document.getElementById('totp-qr').src = data.qr_code || '';
+          document.getElementById('totp-secret-line').textContent = 'Secret: ' + (data.secret || '-');
+        } catch (e) {
+          alert('TOTP setup failed: ' + e.message);
+        }
+      }
+
+      async function verifyTotpSetup() {
+        var code = (document.getElementById('totp-verify-code').value || '').trim();
+        if (!code) return;
+        try {
+          var resp = await fetch('/api/auth/totp/verify', {
+            method: 'POST',
+            headers: mutHeaders(),
+            credentials: 'include',
+            body: JSON.stringify({ code: code })
+          });
+          if (!resp.ok) {
+            var txt = await resp.text();
+            throw new Error('HTTP ' + resp.status + ' ' + txt);
+          }
+          var data = await resp.json();
+          var codes = (data.backup_codes || []).join('\n');
+          document.getElementById('totp-backup-codes').style.display = '';
+          document.getElementById('totp-backup-codes').textContent = 'Backup codes (save now):\n' + codes;
+          document.getElementById('totp-setup-box').style.display = 'none';
+          await loadTotpStatus();
+        } catch (e) {
+          alert('TOTP verify failed: ' + e.message);
+        }
+      }
+
+      async function disableTotp() {
+        var code = prompt('Enter current TOTP or backup code to disable 2FA:');
+        if (!code) return;
+        try {
+          var resp = await fetch('/api/auth/totp/disable', {
+            method: 'POST',
+            headers: mutHeaders(),
+            credentials: 'include',
+            body: JSON.stringify({ code: code })
+          });
+          if (!resp.ok) throw new Error('HTTP ' + resp.status);
+          document.getElementById('totp-backup-codes').style.display = 'none';
+          await loadTotpStatus();
+        } catch (e) {
+          alert('Disable failed: ' + e.message);
+        }
+      }
+
+      async function regenBackupCodes() {
+        try {
+          var resp = await fetch('/api/auth/totp/backup-codes', {
+            method: 'POST',
+            headers: mutHeaders(),
+            credentials: 'include',
+            body: JSON.stringify({})
+          });
+          if (!resp.ok) throw new Error('HTTP ' + resp.status);
+          var data = await resp.json();
+          document.getElementById('totp-backup-codes').style.display = '';
+          document.getElementById('totp-backup-codes').textContent =
+            'New backup codes (save now):\n' + (data.backup_codes || []).join('\n');
+        } catch (e) {
+          alert('Regenerate failed: ' + e.message);
+        }
+      }
+
+      async function loadAdminSecuritySection() {
+        if (!currentUser || currentUser.role !== 'Admin') return;
+        try {
+          var policyRes = await fetch('/api/v2/admin/security/password-policy', { credentials: 'include' });
+          if (!policyRes.ok) throw new Error('HTTP ' + policyRes.status);
+          var p = await policyRes.json();
+          document.getElementById('admin-security-policy').innerHTML =
+            '<div class="setting-row"><span class="setting-title">Min Length</span><input id="sec-min-length" class="setting-input" style="width:120px;" type="number" min="8" value="' + escapeHtml(p.min_length) + '"></div>' +
+            '<div class="setting-row"><span class="setting-title">Require Special</span><input id="sec-require-special" type="checkbox" ' + (p.require_special ? 'checked' : '') + '></div>' +
+            '<div class="setting-row"><span class="setting-title">History Count</span><input id="sec-history-count" class="setting-input" style="width:120px;" type="number" min="0" value="' + escapeHtml(p.history_count) + '"></div>' +
+            '<div class="setting-row"><span class="setting-title">Session Idle Minutes</span><input id="sec-idle-minutes" class="setting-input" style="width:120px;" type="number" min="1" value="' + escapeHtml(p.session_max_idle_minutes) + '"></div>' +
+            '<div class="setting-row"><span class="setting-title">Session Max Hours</span><input id="sec-max-hours" class="setting-input" style="width:120px;" type="number" min="1" value="' + escapeHtml(p.session_absolute_max_hours) + '"></div>' +
+            '<div class="setting-row"><span class="setting-title">TOTP Required for Admins</span><input id="sec-totp-required" type="checkbox" ' + (p.totp_required_for_admins ? 'checked' : '') + '></div>';
+        } catch (e) {
+          document.getElementById('admin-security-policy').innerHTML = '<span style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</span>';
+        }
+        try {
+          var sRes = await fetch('/api/v2/admin/security/sessions', { credentials: 'include' });
+          if (!sRes.ok) throw new Error('HTTP ' + sRes.status);
+          var sessions = await sRes.json();
+          if (!Array.isArray(sessions) || !sessions.length) {
+            document.getElementById('admin-security-sessions').innerHTML = '<span class="muted">No active sessions.</span>';
+            return;
+          }
+          document.getElementById('admin-security-sessions').innerHTML = sessions.map(function (s) {
+            return '<div style="padding:6px 0;border-bottom:1px solid #1e2a24;">' +
+              '<strong>' + escapeHtml(s.username) + '</strong> @ ' + escapeHtml(s.ip_address || '-') +
+              ' <span class="muted">' + escapeHtml(timeAgo(s.last_active_at)) + '</span> ' +
+              '<button class="btn btn-sm role-admin" onclick="terminateAdminSession(' + s.id + ')">Terminate</button>' +
+              '</div>';
+          }).join('');
+        } catch (e2) {
+          document.getElementById('admin-security-sessions').innerHTML = '<span style="color:#ef4444;">Failed: ' + escapeHtml(e2.message) + '</span>';
+        }
+      }
+
+      async function saveAdminSecurityPolicy() {
+        if (!currentUser || currentUser.role !== 'Admin') return;
+        var body = {
+          min_length: parseInt(document.getElementById('sec-min-length').value || '12', 10),
+          require_uppercase: true,
+          require_lowercase: true,
+          require_digit: true,
+          require_special: !!document.getElementById('sec-require-special').checked,
+          history_count: parseInt(document.getElementById('sec-history-count').value || '5', 10),
+          max_age_days: 0,
+          session_max_idle_minutes: parseInt(document.getElementById('sec-idle-minutes').value || '480', 10),
+          session_absolute_max_hours: parseInt(document.getElementById('sec-max-hours').value || '24', 10),
+          totp_required_for_admins: !!document.getElementById('sec-totp-required').checked
+        };
+        try {
+          var resp = await fetch('/api/v2/admin/security/password-policy', {
+            method: 'PUT',
+            headers: mutHeaders(),
+            credentials: 'include',
+            body: JSON.stringify(body)
+          });
+          if (!resp.ok) throw new Error('HTTP ' + resp.status);
+          document.getElementById('admin-security-result').textContent = 'Saved';
+          document.getElementById('admin-security-result').style.color = '#22c55e';
+          await loadAdminSecuritySection();
+        } catch (e) {
+          document.getElementById('admin-security-result').textContent = 'Failed: ' + e.message;
+          document.getElementById('admin-security-result').style.color = '#ef4444';
+        }
+      }
+
+      async function terminateAdminSession(id) {
+        try {
+          var resp = await fetch('/api/v2/admin/security/sessions/' + encodeURIComponent(id), {
+            method: 'DELETE',
+            headers: mutHeaders(),
+            credentials: 'include'
+          });
+          if (!resp.ok) throw new Error('HTTP ' + resp.status);
+          await loadAdminSecuritySection();
+        } catch (e) {
+          alert('Terminate failed: ' + e.message);
+        }
       }
 
       var refreshing = false;
@@ -3303,6 +3526,7 @@
         }
 
         await loadRetentionSection();
+        await loadAdminSecuritySection();
       }
 
       function firewallTypeBadge(raw) {

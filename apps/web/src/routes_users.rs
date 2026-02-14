@@ -12,6 +12,7 @@ use tracing::warn;
 use crate::error::{self, ApiError};
 use crate::helpers;
 use crate::middleware::AuthUser;
+use crate::password_policy::PasswordPolicy;
 use crate::AppState;
 use trueid_common::model::{UserPublic, UserRole};
 
@@ -113,16 +114,14 @@ pub async fn create_user(
         )
         .with_request_id(&auth.request_id));
     }
-    if body.password.len() < 12 {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            error::INVALID_INPUT,
-            "Password must be at least 12 characters",
-        )
-        .with_request_id(&auth.request_id));
-    }
-
     let db = helpers::require_db(&state, &auth.request_id)?;
+    let policy = PasswordPolicy::load(db).await;
+    if let Err(msg) = policy.validate(&body.password) {
+        return Err(
+            ApiError::new(StatusCode::BAD_REQUEST, error::INVALID_INPUT, &msg)
+                .with_request_id(&auth.request_id),
+        );
+    }
 
     let user = db
         .create_user(&body.username, &body.password, body.role)
@@ -234,21 +233,26 @@ pub async fn reset_password(
     Path(id): Path<i64>,
     Json(body): Json<ResetPasswordRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    if body.new_password.len() < 12 {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            error::INVALID_INPUT,
-            "Password must be at least 12 characters",
-        )
-        .with_request_id(&auth.request_id));
+    let db = helpers::require_db(&state, &auth.request_id)?;
+    let policy = PasswordPolicy::load(db).await;
+    if let Err(msg) = policy.validate(&body.new_password) {
+        return Err(
+            ApiError::new(StatusCode::BAD_REQUEST, error::INVALID_INPUT, &msg)
+                .with_request_id(&auth.request_id),
+        );
     }
 
-    let db = helpers::require_db(&state, &auth.request_id)?;
-
-    let _user = db.get_user_by_id(id).await.ok().flatten().ok_or_else(|| {
+    let user = db.get_user_by_id(id).await.ok().flatten().ok_or_else(|| {
         ApiError::new(StatusCode::NOT_FOUND, error::NOT_FOUND, "User not found")
             .with_request_id(&auth.request_id)
     })?;
+    if let Err(msg) = policy.check_history(db, id, &body.new_password).await {
+        return Err(
+            ApiError::new(StatusCode::BAD_REQUEST, error::INVALID_INPUT, &msg)
+                .with_request_id(&auth.request_id),
+        );
+    }
+    let old_hash = user.password_hash.clone();
 
     db.change_password(id, &body.new_password)
         .await
@@ -261,6 +265,7 @@ pub async fn reset_password(
             )
         })?;
     let _ = db.set_force_password_change(id, true).await;
+    let _ = db.insert_password_history(id, &old_hash).await;
 
     let target_id = format!("user:{id}");
     helpers::audit(db, &auth, "password_reset_by_admin", Some(&target_id), None).await;
@@ -295,6 +300,36 @@ pub async fn unlock_account(
     let target_id = format!("user:{id}");
     helpers::audit(db, &auth, "account_unlocked", Some(&target_id), None).await;
 
+    Ok(StatusCode::OK)
+}
+
+/// Disables TOTP for a specific user (admin override).
+pub async fn disable_user_totp(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<impl IntoResponse, ApiError> {
+    let db = helpers::require_db(&state, &auth.request_id)?;
+    let _user = db.get_user_by_id(id).await.ok().flatten().ok_or_else(|| {
+        ApiError::new(StatusCode::NOT_FOUND, error::NOT_FOUND, "User not found")
+            .with_request_id(&auth.request_id)
+    })?;
+    db.disable_user_totp(id).await.map_err(|e| {
+        warn!(error = %e, user_id = id, "Failed to disable user TOTP");
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error::INTERNAL_ERROR,
+            "Failed to disable user TOTP",
+        )
+    })?;
+    helpers::audit(
+        db,
+        &auth,
+        "admin_disable_user_totp",
+        Some(&format!("user:{id}")),
+        None,
+    )
+    .await;
     Ok(StatusCode::OK)
 }
 

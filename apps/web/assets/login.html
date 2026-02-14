@@ -110,6 +110,11 @@
         <label for="password">Password</label>
         <input type="password" id="password" name="password" autocomplete="current-password" required />
 
+        <div id="totp-wrap" style="display:none;">
+          <label for="totp-code">2FA code</label>
+          <input type="text" id="totp-code" name="totp-code" inputmode="numeric" autocomplete="one-time-code" placeholder="123456 or backup code" />
+        </div>
+
         <button type="submit" class="btn" id="login-btn">Log in</button>
       </form>
 
@@ -132,6 +137,7 @@
 
     <script>
       var currentUser = null;
+      var requires2fa = false;
 
       function showError(msg) {
         var el = document.getElementById('error-msg');
@@ -163,11 +169,19 @@
             credentials: 'include',
             body: JSON.stringify({
               username: document.getElementById('username').value,
-              password: document.getElementById('password').value
+              password: document.getElementById('password').value,
+              totp_code: requires2fa ? document.getElementById('totp-code').value : null
             })
           });
 
           if (resp.status === 401) {
+            var authErr = await resp.json().catch(function() { return {}; });
+            if (authErr.requires_2fa) {
+              requires2fa = true;
+              document.getElementById('totp-wrap').style.display = 'block';
+              showError('Two-factor code required. Enter code and submit again.');
+              return;
+            }
             showError('Invalid username or password.');
             return;
           }
@@ -189,6 +203,7 @@
           }
 
           var user = await resp.json();
+          requires2fa = false;
           currentUser = user;
 
           if (user.force_password_change) {

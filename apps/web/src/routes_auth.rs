@@ -18,6 +18,8 @@ use crate::auth::{
 use crate::error::{self, ApiError};
 use crate::helpers;
 use crate::middleware::AuthUser;
+use crate::password_policy::PasswordPolicy;
+use crate::routes_totp::verify_user_totp_or_backup;
 use crate::AppState;
 use trueid_common::auth_provider::AuthResult;
 use trueid_common::db_auth::sha256_hex;
@@ -29,12 +31,14 @@ use trueid_common::model::UserPublic;
 pub struct LoginRequest {
     pub username: String,
     pub password: String,
+    pub totp_code: Option<String>,
 }
 
 #[derive(Serialize)]
 struct LoginResponse {
     user: UserPublic,
     force_password_change: bool,
+    requires_2fa: bool,
 }
 
 #[derive(Deserialize)]
@@ -49,6 +53,7 @@ struct SessionInfo {
     user_agent: Option<String>,
     ip_address: Option<String>,
     created_at: String,
+    last_active_at: String,
     last_used_at: String,
     is_current: bool,
 }
@@ -195,6 +200,36 @@ pub async fn login(
         }
     };
 
+    let policy = PasswordPolicy::load(db).await;
+    if policy.max_age_days > 0 {
+        let age = chrono::Utc::now() - user.updated_at;
+        if age.num_days() > policy.max_age_days {
+            let _ = db.set_force_password_change(user.id, true).await;
+        }
+    }
+
+    if user.totp_enabled {
+        let Some(code) = body.totp_code.as_deref() else {
+            return Ok((
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({
+                    "requires_2fa": true,
+                    "message": "Two-factor authentication code required",
+                    "request_id": &rid
+                })),
+            )
+                .into_response());
+        };
+        if !verify_user_totp_or_backup(db, &user, code).await {
+            return Err(ApiError::new(
+                StatusCode::UNAUTHORIZED,
+                error::INVALID_CREDENTIALS,
+                "Invalid 2FA code",
+            )
+            .with_request_id(&rid));
+        }
+    }
+
     // Issue tokens.
 
     let access_token = create_access_token(&state.jwt_config, &user).map_err(|e| {
@@ -245,6 +280,7 @@ pub async fn login(
     let resp_body = LoginResponse {
         user: UserPublic::from(user),
         force_password_change: force,
+        requires_2fa: false,
     };
 
     let mut resp = (StatusCode::OK, Json(resp_body)).into_response();
@@ -492,14 +528,6 @@ pub async fn change_password(
         .with_request_id(&auth.request_id));
     }
 
-    if body.new_password.len() < 12 {
-        return Err(ApiError::new(
-            StatusCode::BAD_REQUEST,
-            error::INVALID_INPUT,
-            "New password must be at least 12 characters",
-        )
-        .with_request_id(&auth.request_id));
-    }
     if body.new_password == body.current_password {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
@@ -510,6 +538,13 @@ pub async fn change_password(
     }
 
     let db = helpers::require_db(&state, &auth.request_id)?;
+    let policy = PasswordPolicy::load(db).await;
+    if let Err(msg) = policy.validate(&body.new_password) {
+        return Err(
+            ApiError::new(StatusCode::BAD_REQUEST, error::INVALID_INPUT, &msg)
+                .with_request_id(&auth.request_id),
+        );
+    }
     let auth_chain = state.auth_chain.as_ref().ok_or_else(|| {
         ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -526,6 +561,17 @@ pub async fn change_password(
         .ok()
         .flatten()
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, error::NOT_FOUND, "User not found"))?;
+
+    if let Err(msg) = policy
+        .check_history(db, auth.user_id, &body.new_password)
+        .await
+    {
+        return Err(
+            ApiError::new(StatusCode::BAD_REQUEST, error::INVALID_INPUT, &msg)
+                .with_request_id(&auth.request_id),
+        );
+    }
+    let old_hash = user_rec.password_hash.clone();
 
     if !auth_chain.supports_password_change(&user_rec.auth_source) {
         return Err(ApiError::new(
@@ -561,6 +607,8 @@ pub async fn change_password(
                 )
             }
         })?;
+
+    let _ = db.insert_password_history(auth.user_id, &old_hash).await;
 
     // Re-fetch user (token_version bumped).
     let user = db
@@ -667,6 +715,7 @@ pub async fn list_sessions(
             user_agent: s.user_agent.clone(),
             ip_address: s.ip_address.clone(),
             created_at: s.created_at.to_rfc3339(),
+            last_active_at: s.last_active_at.to_rfc3339(),
             last_used_at: s.last_used_at.to_rfc3339(),
             is_current: current_hash.as_deref() == Some(&s.refresh_token_hash),
         })

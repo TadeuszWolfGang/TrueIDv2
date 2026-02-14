@@ -6,6 +6,7 @@ pub mod auth;
 pub mod error;
 pub mod helpers;
 pub mod middleware;
+pub mod password_policy;
 pub mod rate_limit;
 pub mod routes_alerts;
 pub mod routes_analytics;
@@ -22,6 +23,7 @@ pub mod routes_notifications;
 pub mod routes_proxy;
 pub mod routes_retention;
 pub mod routes_search;
+pub mod routes_security;
 pub mod routes_siem;
 pub mod routes_sse;
 pub mod routes_subnets;
@@ -29,6 +31,7 @@ pub mod routes_switches;
 pub mod routes_timeline;
 pub mod routes_users;
 pub mod routes_v1;
+pub mod routes_totp;
 
 use axum::{
     extract::{Request, State},
@@ -160,6 +163,14 @@ pub fn build_router(state: AppState) -> Router {
         .merge(login_route);
 
     let viewer_routes = Router::new()
+        .route("/api/auth/totp/setup", post(routes_totp::setup))
+        .route("/api/auth/totp/verify", post(routes_totp::verify))
+        .route("/api/auth/totp/disable", post(routes_totp::disable))
+        .route("/api/auth/totp/status", get(routes_totp::status))
+        .route(
+            "/api/auth/totp/backup-codes",
+            post(routes_totp::regenerate_backup_codes),
+        )
         .route("/api/v1/mappings", get(routes_v1::api_v1_mappings))
         .route("/api/v1/events", get(routes_v1::api_v1_events))
         .route("/api/v2/search", get(routes_search::search))
@@ -372,11 +383,32 @@ pub fn build_router(state: AppState) -> Router {
             "/api/v1/users/{id}/unlock",
             post(routes_users::unlock_account),
         )
+        .route("/api/v1/users/{id}/totp", delete(routes_users::disable_user_totp))
         .route(
             "/api/v1/api-keys",
             get(routes_api_keys::list_keys).post(routes_api_keys::create_key),
         )
         .route("/api/v1/api-keys/{id}", delete(routes_api_keys::revoke_key))
+        .route(
+            "/api/v2/admin/security/password-policy",
+            get(routes_security::get_password_policy).put(routes_security::update_password_policy),
+        )
+        .route(
+            "/api/v2/admin/security/sessions",
+            get(routes_security::list_all_sessions),
+        )
+        .route(
+            "/api/v2/admin/security/sessions/{id}",
+            delete(routes_security::revoke_any_session),
+        )
+        .route(
+            "/api/v2/admin/security/sessions/:id",
+            delete(routes_security::revoke_any_session),
+        )
+        .route(
+            "/api/v2/admin/security/totp-requirement",
+            put(routes_security::set_totp_requirement),
+        )
         .route(
             "/api/v2/alerts/rules",
             get(routes_alerts::list_rules).post(routes_alerts::create_rule),

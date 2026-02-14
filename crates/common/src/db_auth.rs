@@ -88,6 +88,8 @@ fn user_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<User> {
         external_id: row.try_get("external_id")?,
         token_version: row.try_get("token_version")?,
         force_password_change: row.try_get("force_password_change")?,
+        totp_enabled: row.try_get("totp_enabled").unwrap_or(false),
+        totp_verified_at: row.try_get("totp_verified_at").ok(),
         failed_attempts: row.try_get("failed_attempts")?,
         locked_until: row.try_get("locked_until")?,
         created_at: row.try_get("created_at")?,
@@ -132,7 +134,7 @@ impl Db {
     pub async fn get_user_by_username(&self, username: &str) -> Result<Option<User>> {
         let row = sqlx::query(
             "SELECT id, username, password_hash, role, auth_source, external_id,
-                    token_version, force_password_change, failed_attempts,
+                    token_version, force_password_change, totp_enabled, totp_verified_at, failed_attempts,
                     locked_until, created_at, updated_at
              FROM users WHERE username = ?",
         )
@@ -153,7 +155,7 @@ impl Db {
     pub async fn get_user_by_id(&self, id: i64) -> Result<Option<User>> {
         let row = sqlx::query(
             "SELECT id, username, password_hash, role, auth_source, external_id,
-                    token_version, force_password_change, failed_attempts,
+                    token_version, force_password_change, totp_enabled, totp_verified_at, failed_attempts,
                     locked_until, created_at, updated_at
              FROM users WHERE id = ?",
         )
@@ -173,7 +175,7 @@ impl Db {
     pub async fn list_users(&self) -> Result<Vec<UserPublic>> {
         let rows = sqlx::query(
             "SELECT id, username, password_hash, role, auth_source, external_id,
-                    token_version, force_password_change, failed_attempts,
+                    token_version, force_password_change, totp_enabled, totp_verified_at, failed_attempts,
                     locked_until, created_at, updated_at
              FROM users ORDER BY id",
         )
@@ -306,6 +308,133 @@ impl Db {
         Ok(())
     }
 
+    /// Returns encrypted TOTP secret for a user.
+    ///
+    /// Parameters: `user_id` - user id.
+    /// Returns: encrypted secret if present.
+    pub async fn get_user_totp_secret_enc(&self, user_id: i64) -> Result<Option<String>> {
+        let row = sqlx::query("SELECT totp_secret_enc FROM users WHERE id = ?")
+            .bind(user_id)
+            .fetch_optional(self.pool())
+            .await?;
+        Ok(row.and_then(|r| r.try_get("totp_secret_enc").ok()))
+    }
+
+    /// Stores encrypted TOTP secret and resets TOTP state.
+    ///
+    /// Parameters: `user_id` - user id, `secret_enc` - encrypted secret.
+    /// Returns: none.
+    pub async fn set_user_totp_secret_enc(&self, user_id: i64, secret_enc: &str) -> Result<()> {
+        sqlx::query(
+            "UPDATE users
+             SET totp_secret_enc = ?, totp_enabled = 0, totp_verified_at = NULL, totp_backup_codes_enc = NULL, updated_at = datetime('now')
+             WHERE id = ?",
+        )
+        .bind(secret_enc)
+        .bind(user_id)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// Enables TOTP and persists encrypted backup codes.
+    ///
+    /// Parameters: `user_id` - user id, `backup_codes_enc` - encrypted backup codes JSON.
+    /// Returns: none.
+    pub async fn enable_user_totp(&self, user_id: i64, backup_codes_enc: &str) -> Result<()> {
+        sqlx::query(
+            "UPDATE users
+             SET totp_enabled = 1, totp_verified_at = datetime('now'), totp_backup_codes_enc = ?, updated_at = datetime('now')
+             WHERE id = ?",
+        )
+        .bind(backup_codes_enc)
+        .bind(user_id)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// Disables TOTP for a user and clears related secrets.
+    ///
+    /// Parameters: `user_id` - user id.
+    /// Returns: none.
+    pub async fn disable_user_totp(&self, user_id: i64) -> Result<()> {
+        sqlx::query(
+            "UPDATE users
+             SET totp_enabled = 0, totp_secret_enc = NULL, totp_verified_at = NULL, totp_backup_codes_enc = NULL, updated_at = datetime('now')
+             WHERE id = ?",
+        )
+        .bind(user_id)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// Returns encrypted TOTP backup codes for a user.
+    ///
+    /// Parameters: `user_id` - user id.
+    /// Returns: encrypted JSON list or none.
+    pub async fn get_user_totp_backup_codes_enc(&self, user_id: i64) -> Result<Option<String>> {
+        let row = sqlx::query("SELECT totp_backup_codes_enc FROM users WHERE id = ?")
+            .bind(user_id)
+            .fetch_optional(self.pool())
+            .await?;
+        Ok(row.and_then(|r| r.try_get("totp_backup_codes_enc").ok()))
+    }
+
+    /// Updates encrypted TOTP backup codes value.
+    ///
+    /// Parameters: `user_id` - user id, `backup_codes_enc` - encrypted JSON string or null.
+    /// Returns: none.
+    pub async fn set_user_totp_backup_codes_enc(
+        &self,
+        user_id: i64,
+        backup_codes_enc: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query("UPDATE users SET totp_backup_codes_enc = ?, updated_at = datetime('now') WHERE id = ?")
+            .bind(backup_codes_enc)
+            .bind(user_id)
+            .execute(self.pool())
+            .await?;
+        Ok(())
+    }
+
+    /// Adds one password hash to password history.
+    ///
+    /// Parameters: `user_id` - user id, `password_hash` - PHC hash to store.
+    /// Returns: none.
+    pub async fn insert_password_history(&self, user_id: i64, password_hash: &str) -> Result<()> {
+        sqlx::query("INSERT INTO password_history (user_id, password_hash) VALUES (?, ?)")
+            .bind(user_id)
+            .bind(password_hash)
+            .execute(self.pool())
+            .await?;
+        Ok(())
+    }
+
+    /// Returns most recent password hashes for password history checks.
+    ///
+    /// Parameters: `user_id` - user id, `limit` - max number of rows.
+    /// Returns: list of password hashes.
+    pub async fn get_password_history_hashes(&self, user_id: i64, limit: i64) -> Result<Vec<String>> {
+        let rows = sqlx::query(
+            "SELECT password_hash
+             FROM password_history
+             WHERE user_id = ?
+             ORDER BY created_at DESC
+             LIMIT ?",
+        )
+        .bind(user_id)
+        .bind(limit.max(0))
+        .fetch_all(self.pool())
+        .await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            out.push(row.try_get("password_hash")?);
+        }
+        Ok(out)
+    }
+
     /// Counts users with Admin role.
     ///
     /// Returns: admin count.
@@ -334,8 +463,8 @@ impl Db {
         expires_at: DateTime<Utc>,
     ) -> Result<Session> {
         sqlx::query(
-            "INSERT INTO sessions (user_id, refresh_token_hash, user_agent, ip_address, expires_at)
-             VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO sessions (user_id, refresh_token_hash, user_agent, ip_address, expires_at, last_active_at)
+             VALUES (?, ?, ?, ?, ?, datetime('now'))",
         )
         .bind(user_id)
         .bind(refresh_token_hash)
@@ -357,7 +486,7 @@ impl Db {
     pub async fn get_session_by_token_hash(&self, hash: &str) -> Result<Option<Session>> {
         let row = sqlx::query(
             "SELECT id, user_id, refresh_token_hash, user_agent, ip_address,
-                    created_at, expires_at, last_used_at, revoked_at
+                    created_at, expires_at, last_active_at, last_used_at, revoked_at
              FROM sessions
              WHERE refresh_token_hash = ? AND revoked_at IS NULL AND expires_at > datetime('now')",
         )
@@ -389,7 +518,7 @@ impl Db {
         // Find old session (including revoked ones for reuse detection).
         let old_row = sqlx::query(
             "SELECT id, user_id, refresh_token_hash, user_agent, ip_address,
-                    created_at, expires_at, last_used_at, revoked_at
+                    created_at, expires_at, last_active_at, last_used_at, revoked_at
              FROM sessions WHERE refresh_token_hash = ?",
         )
         .bind(old_hash)
@@ -428,8 +557,8 @@ impl Db {
 
         // Create new session.
         sqlx::query(
-            "INSERT INTO sessions (user_id, refresh_token_hash, user_agent, ip_address, expires_at)
-             VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO sessions (user_id, refresh_token_hash, user_agent, ip_address, expires_at, last_active_at)
+             VALUES (?, ?, ?, ?, ?, datetime('now'))",
         )
         .bind(old_session.user_id)
         .bind(new_hash)
@@ -478,7 +607,7 @@ impl Db {
     pub async fn list_active_sessions(&self, user_id: i64) -> Result<Vec<Session>> {
         let rows = sqlx::query(
             "SELECT id, user_id, refresh_token_hash, user_agent, ip_address,
-                    created_at, expires_at, last_used_at, revoked_at
+                    created_at, expires_at, last_active_at, last_used_at, revoked_at
              FROM sessions
              WHERE user_id = ? AND revoked_at IS NULL AND expires_at > datetime('now')
              ORDER BY last_used_at DESC",
@@ -502,6 +631,64 @@ impl Db {
             .execute(self.pool())
             .await?;
         Ok(res.rows_affected())
+    }
+
+    /// Updates session activity timestamps to current time.
+    ///
+    /// Parameters: `session_id` - session id to touch.
+    /// Returns: none.
+    pub async fn touch_session_activity(&self, session_id: i64) -> Result<()> {
+        sqlx::query(
+            "UPDATE sessions
+             SET last_used_at = datetime('now'), last_active_at = datetime('now')
+             WHERE id = ?",
+        )
+        .bind(session_id)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// Fetches a non-revoked session by token hash for security checks.
+    ///
+    /// Parameters: `hash` - refresh token hash.
+    /// Returns: session if exists.
+    pub async fn get_session_for_security_checks(&self, hash: &str) -> Result<Option<Session>> {
+        let row = sqlx::query(
+            "SELECT id, user_id, refresh_token_hash, user_agent, ip_address,
+                    created_at, expires_at, last_active_at, last_used_at, revoked_at
+             FROM sessions
+             WHERE refresh_token_hash = ? AND revoked_at IS NULL",
+        )
+        .bind(hash)
+        .fetch_optional(self.pool())
+        .await?;
+        match row {
+            Some(r) => Ok(Some(session_from_row(&r)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Lists active sessions for all users.
+    ///
+    /// Returns: `(session, username)` tuples ordered by recent usage.
+    pub async fn list_all_active_sessions(&self) -> Result<Vec<(Session, String)>> {
+        let rows = sqlx::query(
+            "SELECT s.id, s.user_id, s.refresh_token_hash, s.user_agent, s.ip_address,
+                    s.created_at, s.expires_at, s.last_active_at, s.last_used_at, s.revoked_at,
+                    u.username
+             FROM sessions s
+             JOIN users u ON u.id = s.user_id
+             WHERE s.revoked_at IS NULL AND s.expires_at > datetime('now')
+             ORDER BY s.last_used_at DESC",
+        )
+        .fetch_all(self.pool())
+        .await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            out.push((session_from_row(&row)?, row.try_get("username")?));
+        }
+        Ok(out)
     }
 }
 
@@ -880,6 +1067,9 @@ fn session_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<Session> {
         ip_address: row.try_get("ip_address")?,
         created_at: row.try_get("created_at")?,
         expires_at: row.try_get("expires_at")?,
+        last_active_at: row
+            .try_get("last_active_at")
+            .or_else(|_| row.try_get("last_used_at"))?,
         last_used_at: row.try_get("last_used_at")?,
         revoked_at: row.try_get("revoked_at")?,
     })
