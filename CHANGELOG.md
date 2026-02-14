@@ -6,6 +6,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 ## [0.6.0] — 2026-02-13
 
 ### Added
+- Dashboard JS modularization under `apps/web/assets/js/` with real domain extraction (`mappings`, `conflicts`, `alerts`, `analytics`, `network`, `integrations`, `admin`) plus shared `utils` and `api` helpers
 - Matrix/Cyber UI redesign for dashboard and login pages: neon-green palette variables, glow/scan-line effects, custom scrollbars, and security modal visual refresh
 - Subtle Matrix rain canvas background for dashboard and login, with dashboard toggle persisted via `localStorage` (`trueid_matrix_rain`)
 - Phase 5 test expansion: +14 web E2E tests (SSE, notification channels, retention run/stats/validation, import batch/partial failure, password history reuse, absolute session timeout, duplicate tags, geo field presence)
@@ -60,6 +61,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - VPN dispatcher not matching `Username = ..., IP = ...` format
 
 ### Changed
+- `index.html` now loads ordered external scripts (`js/*.js`) instead of a single inline JS monolith; `app.js` reduced to app orchestration/state responsibilities
 - Analytics SVG styling updated to cyber theme colors (bars/donut/labels) and live SSE toasts switched to neon flash style
 - Web routing refactor: extracted grouped routers to `apps/web/src/routes.rs`, reduced `build_router()` complexity in `apps/web/src/lib.rs`
 - Session hardening reads idle/absolute timeout from shared runtime config and supports immediate expiry (`session_absolute_max_hours <= 0`) for tests/ops
