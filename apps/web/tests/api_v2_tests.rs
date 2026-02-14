@@ -1725,7 +1725,9 @@ async fn test_report_schedule_crud() {
     let (list_status, listed) = auth_get(&app, &cookie, "/api/v2/reports/schedules").await;
     assert_eq!(list_status, StatusCode::OK);
     let rows = listed["schedules"].as_array().cloned().unwrap_or_default();
-    assert!(rows.iter().any(|r| r["id"].as_i64().unwrap_or_default() == id));
+    assert!(rows
+        .iter()
+        .any(|r| r["id"].as_i64().unwrap_or_default() == id));
 
     let (update_status, updated) = auth_put(
         &app,
@@ -2713,7 +2715,9 @@ async fn test_totp_setup_and_verify() {
         "testadmin".to_string(),
     )
     .expect("failed to build totp");
-    let code = totp.generate_current().expect("failed to generate current code");
+    let code = totp
+        .generate_current()
+        .expect("failed to generate current code");
     let (status, verify) = auth_post(
         &app,
         &cookie,
@@ -2755,7 +2759,9 @@ async fn test_totp_login_requires_code() {
         "testadmin".to_string(),
     )
     .expect("failed to build totp");
-    let code = totp.generate_current().expect("failed to generate current code");
+    let code = totp
+        .generate_current()
+        .expect("failed to generate current code");
     let (status, _) = auth_post(
         &app,
         &cookie,
@@ -2933,7 +2939,10 @@ async fn test_discovered_subnets_list() {
     let (status, body) = auth_get(&app, &cookie, "/api/v2/subnets/discovered").await;
     assert_eq!(status, StatusCode::OK);
     let rows = body["data"].as_array().cloned().unwrap_or_default();
-    assert!(rows.is_empty(), "expected empty discovered subnets, got: {body}");
+    assert!(
+        rows.is_empty(),
+        "expected empty discovered subnets, got: {body}"
+    );
 }
 
 #[tokio::test]
@@ -2973,7 +2982,10 @@ async fn test_sse_accepts_auth() {
         .get("content-type")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
-    assert!(ct.contains("text/event-stream"), "unexpected content-type: {ct}");
+    assert!(
+        ct.contains("text/event-stream"),
+        "unexpected content-type: {ct}"
+    );
 }
 
 #[tokio::test]
@@ -3011,8 +3023,14 @@ async fn test_notification_channel_email_config() {
     .await;
     assert_eq!(status, StatusCode::OK);
     let summary = one["config_summary"].as_str().unwrap_or("");
-    assert!(summary.contains("mail.example.com"), "summary missing host: {summary}");
-    assert!(!summary.contains("super-secret"), "summary leaked secret: {summary}");
+    assert!(
+        summary.contains("mail.example.com"),
+        "summary missing host: {summary}"
+    );
+    assert!(
+        !summary.contains("super-secret"),
+        "summary leaked secret: {summary}"
+    );
 
     let (status, _) = auth_put(
         &app,
@@ -3044,7 +3062,10 @@ async fn test_notification_channel_email_config() {
     .await;
     assert_eq!(status, StatusCode::OK);
     let summary = one["config_summary"].as_str().unwrap_or("");
-    assert!(summary.contains(":465"), "summary missing updated port: {summary}");
+    assert!(
+        summary.contains(":465"),
+        "summary missing updated port: {summary}"
+    );
 }
 
 #[tokio::test]
@@ -3129,9 +3150,7 @@ async fn test_notification_channel_delivery_log_empty() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert!(
-        body.as_array()
-            .map(|a| a.is_empty())
-            .unwrap_or(false),
+        body.as_array().map(|a| a.is_empty()).unwrap_or(false),
         "expected empty delivery list, got: {body}"
     );
 }
@@ -3144,7 +3163,10 @@ async fn test_retention_force_run() {
     let (status, body) = auth_post(&app, &cookie, "/api/v2/admin/retention/run", &json!({})).await;
     mock_handle.abort();
     assert_eq!(status, StatusCode::OK);
-    assert!(body["results"].is_array(), "expected results array, got: {body}");
+    assert!(
+        body["results"].is_array(),
+        "expected results array, got: {body}"
+    );
 }
 
 #[tokio::test]
@@ -3153,7 +3175,10 @@ async fn test_retention_stats() {
     let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
     let (status, body) = auth_get(&app, &cookie, "/api/v2/admin/retention/stats").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(body["tables"].is_array(), "expected tables array, got: {body}");
+    assert!(
+        body["tables"].is_array(),
+        "expected tables array, got: {body}"
+    );
     let has_row_count = body["tables"]
         .as_array()
         .map(|arr| arr.iter().any(|r| r.get("row_count").is_some()))
@@ -3223,7 +3248,10 @@ async fn test_import_events_batch() {
     .await;
     assert_eq!(status, StatusCode::OK);
     let imported = body["imported"].as_i64().unwrap_or(0);
-    assert!(imported >= 48, "expected imported >= 48, got: {imported}, body: {body}");
+    assert!(
+        imported >= 48,
+        "expected imported >= 48, got: {imported}, body: {body}"
+    );
 
     let (status, mappings) = auth_get(&app, &cookie, "/api/v1/mappings?search=10.40.1.1").await;
     assert_eq!(status, StatusCode::OK);
@@ -3310,10 +3338,17 @@ async fn test_session_absolute_timeout() {
     let (app, db) = build_test_app().await;
     let admin_cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
 
-    let (status, mut policy) =
-        auth_get(&app, &admin_cookie, "/api/v2/admin/security/password-policy").await;
+    let (status, mut policy) = auth_get(
+        &app,
+        &admin_cookie,
+        "/api/v2/admin/security/password-policy",
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
-    let default_hours = policy["session_absolute_max_hours"].as_i64().unwrap_or(24).max(1);
+    let default_hours = policy["session_absolute_max_hours"]
+        .as_i64()
+        .unwrap_or(24)
+        .max(1);
     policy["session_absolute_max_hours"] = json!(0);
     let (status, _) = auth_put(
         &app,
@@ -3522,4 +3557,86 @@ async fn test_api_key_rate_limit_429() {
         }
     }
     assert!(seen_429, "expected at least one 429 response");
+}
+
+#[tokio::test]
+async fn test_oidc_status_public() {
+    let (app, _) = build_test_app().await;
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/auth/oidc/status")
+        .body(Body::empty())
+        .expect("build oidc status request failed");
+    let resp = app
+        .clone()
+        .oneshot(req)
+        .await
+        .expect("execute oidc status request failed");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp
+        .into_body()
+        .collect()
+        .await
+        .expect("collect oidc status body failed")
+        .to_bytes();
+    let json: Value = serde_json::from_slice(&body).expect("parse oidc status json failed");
+    assert_eq!(json["enabled"], json!(false));
+}
+
+#[tokio::test]
+async fn test_oidc_login_redirect_when_disabled() {
+    let (app, _) = build_test_app().await;
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/auth/oidc/login")
+        .body(Body::empty())
+        .expect("build oidc login request failed");
+    let resp = app
+        .clone()
+        .oneshot(req)
+        .await
+        .expect("execute oidc login request failed");
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_oidc_config_crud() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, before) = auth_get(&app, &cookie, "/api/auth/oidc/config").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(before["enabled"], json!(false));
+
+    let (status, _) = auth_put(
+        &app,
+        &cookie,
+        "/api/auth/oidc/config",
+        &json!({
+            "enabled": false,
+            "provider_name": "Azure AD",
+            "issuer_url": "https://login.microsoftonline.com/test/v2.0",
+            "client_id": "client-123",
+            "client_secret": "super-secret",
+            "redirect_uri": "https://trueid.example.com/api/auth/oidc/callback",
+            "scopes": "openid profile email",
+            "auto_create_users": true,
+            "default_role": "Viewer",
+            "role_claim": "groups",
+            "role_mapping": "{\"grp-admin\":\"Admin\"}",
+            "allow_local_login": true
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, after) = auth_get(&app, &cookie, "/api/auth/oidc/config").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(after["provider_name"], json!("Azure AD"));
+    assert_eq!(
+        after["issuer_url"],
+        json!("https://login.microsoftonline.com/test/v2.0")
+    );
+    assert_eq!(after["client_id"], json!("client-123"));
+    assert_eq!(after["enabled"], json!(false));
 }

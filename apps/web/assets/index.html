@@ -1006,6 +1006,41 @@
 
         <div class="setting-divider role-admin" style="margin:16px 0;"></div>
 
+        <h2 class="section-title role-admin">OIDC / SSO (Admin)</h2>
+        <div id="oidc-config" class="sync-status-box role-admin" style="margin-bottom:10px;">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <label class="setting-desc"><input id="oidc-enabled" type="checkbox"> Enabled</label>
+            <label class="setting-desc"><input id="oidc-auto-create" type="checkbox" checked> Auto-create users</label>
+            <label class="setting-desc"><input id="oidc-allow-local" type="checkbox" checked> Allow local login</label>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+            <input id="oidc-provider-name" class="setting-input" style="width:170px;" placeholder="Provider name">
+            <input id="oidc-issuer-url" class="setting-input" style="width:320px;" placeholder="Issuer URL">
+            <input id="oidc-client-id" class="setting-input" style="width:260px;" placeholder="Client ID">
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+            <input id="oidc-client-secret" class="setting-input" style="width:260px;" type="password" placeholder="Client secret (optional)">
+            <input id="oidc-redirect-uri" class="setting-input" style="width:360px;" placeholder="Redirect URI">
+            <input id="oidc-scopes" class="setting-input" style="width:240px;" placeholder="openid profile email">
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+            <select id="oidc-default-role" class="setting-input" style="width:140px;">
+              <option value="Viewer">Viewer</option>
+              <option value="Operator">Operator</option>
+              <option value="Admin">Admin</option>
+            </select>
+            <input id="oidc-role-claim" class="setting-input" style="width:180px;" placeholder="Role claim (optional)">
+            <input id="oidc-role-mapping" class="setting-input" style="width:520px;" placeholder='{"group-admin":"Admin","group-ops":"Operator"}'>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:8px;">
+            <button class="btn btn-sm" onclick="testOidcDiscovery()">Test Discovery</button>
+            <button class="btn btn-sm" onclick="saveOidcConfig()">Save OIDC</button>
+            <span id="oidc-config-result" class="muted"></span>
+          </div>
+        </div>
+
+        <div class="setting-divider role-admin" style="margin:16px 0;"></div>
+
         <h2 class="section-title role-admin">API Keys (Admin)</h2>
         <div class="role-admin" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
           <input id="api-key-name" class="setting-input" style="width:180px;" placeholder="Key name">

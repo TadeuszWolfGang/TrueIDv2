@@ -512,6 +512,85 @@ async function openSecurityModal() {
         }
       }
 
+      async function loadOidcConfig() {
+        if (!currentUser || currentUser.role !== 'Admin') return;
+        try {
+          var res = await fetch('/api/auth/oidc/config', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var c = await res.json();
+          document.getElementById('oidc-enabled').checked = !!c.enabled;
+          document.getElementById('oidc-provider-name').value = c.provider_name || 'OIDC';
+          document.getElementById('oidc-issuer-url').value = c.issuer_url || '';
+          document.getElementById('oidc-client-id').value = c.client_id || '';
+          document.getElementById('oidc-client-secret').value = '';
+          document.getElementById('oidc-redirect-uri').value = c.redirect_uri || '';
+          document.getElementById('oidc-scopes').value = c.scopes || 'openid profile email';
+          document.getElementById('oidc-auto-create').checked = !!c.auto_create_users;
+          document.getElementById('oidc-default-role').value = c.default_role || 'Viewer';
+          document.getElementById('oidc-role-claim').value = c.role_claim || '';
+          document.getElementById('oidc-role-mapping').value = c.role_mapping || '{}';
+          document.getElementById('oidc-allow-local').checked = c.allow_local_login !== false;
+          document.getElementById('oidc-config-result').textContent = c.has_client_secret ? 'Client secret: configured' : 'Client secret: not configured';
+        } catch (e) {
+          document.getElementById('oidc-config-result').textContent = 'OIDC load failed: ' + e.message;
+        }
+      }
+
+      async function saveOidcConfig() {
+        var body = {
+          enabled: !!document.getElementById('oidc-enabled').checked,
+          provider_name: (document.getElementById('oidc-provider-name').value || 'OIDC').trim(),
+          issuer_url: (document.getElementById('oidc-issuer-url').value || '').trim(),
+          client_id: (document.getElementById('oidc-client-id').value || '').trim(),
+          client_secret: (document.getElementById('oidc-client-secret').value || '').trim(),
+          redirect_uri: (document.getElementById('oidc-redirect-uri').value || '').trim(),
+          scopes: (document.getElementById('oidc-scopes').value || 'openid profile email').trim(),
+          auto_create_users: !!document.getElementById('oidc-auto-create').checked,
+          default_role: document.getElementById('oidc-default-role').value || 'Viewer',
+          role_claim: (document.getElementById('oidc-role-claim').value || '').trim(),
+          role_mapping: (document.getElementById('oidc-role-mapping').value || '{}').trim(),
+          allow_local_login: !!document.getElementById('oidc-allow-local').checked
+        };
+        try {
+          var res = await fetch('/api/auth/oidc/config', {
+            method: 'PUT',
+            headers: mutHeaders(),
+            credentials: 'include',
+            body: JSON.stringify(body)
+          });
+          if (!res.ok) {
+            var txt = await res.text();
+            throw new Error('HTTP ' + res.status + ' ' + txt);
+          }
+          document.getElementById('oidc-config-result').textContent = 'OIDC config saved.';
+          document.getElementById('oidc-config-result').style.color = 'var(--status-ok)';
+          await loadOidcConfig();
+        } catch (e) {
+          document.getElementById('oidc-config-result').textContent = 'Save failed: ' + e.message;
+          document.getElementById('oidc-config-result').style.color = 'var(--status-error)';
+        }
+      }
+
+      async function testOidcDiscovery() {
+        try {
+          var res = await fetch('/api/auth/oidc/test', {
+            method: 'POST',
+            headers: mutHeaders(),
+            credentials: 'include',
+            body: JSON.stringify({})
+          });
+          if (!res.ok) {
+            var txt = await res.text();
+            throw new Error('HTTP ' + res.status + ' ' + txt);
+          }
+          document.getElementById('oidc-config-result').textContent = 'Discovery OK';
+          document.getElementById('oidc-config-result').style.color = 'var(--status-ok)';
+        } catch (e) {
+          document.getElementById('oidc-config-result').textContent = 'Discovery failed: ' + e.message;
+          document.getElementById('oidc-config-result').style.color = 'var(--status-error)';
+        }
+      }
+
       async function loadSystemStatus() {
         try {
           var adaptersRes = await fetch('/api/v1/admin/adapters', { credentials: 'include' });
@@ -567,6 +646,7 @@ async function openSecurityModal() {
 
         await loadRetentionSection();
         await loadAdminSecuritySection();
+        await loadOidcConfig();
         await loadApiKeysSection();
         await loadStatusTags();
       }
@@ -642,6 +722,7 @@ async function openSecurityModal() {
   if (typeof window.loadRetentionPolicies === 'function') window.TrueID.loadRetentionPolicies = window.loadRetentionPolicies;
   if (typeof window.loadRetentionSection === 'function') window.TrueID.loadRetentionSection = window.loadRetentionSection;
   if (typeof window.loadRetentionStats === 'function') window.TrueID.loadRetentionStats = window.loadRetentionStats;
+  if (typeof window.loadOidcConfig === 'function') window.TrueID.loadOidcConfig = window.loadOidcConfig;
   if (typeof window.loadStatusTags === 'function') window.TrueID.loadStatusTags = window.loadStatusTags;
   if (typeof window.loadSystemStatus === 'function') window.TrueID.loadSystemStatus = window.loadSystemStatus;
   if (typeof window.loadTotpStatus === 'function') window.TrueID.loadTotpStatus = window.loadTotpStatus;
@@ -656,9 +737,11 @@ async function openSecurityModal() {
   if (typeof window.renderAuditTable === 'function') window.TrueID.renderAuditTable = window.renderAuditTable;
   if (typeof window.runRetentionNow === 'function') window.TrueID.runRetentionNow = window.runRetentionNow;
   if (typeof window.saveAdminSecurityPolicy === 'function') window.TrueID.saveAdminSecurityPolicy = window.saveAdminSecurityPolicy;
+  if (typeof window.saveOidcConfig === 'function') window.TrueID.saveOidcConfig = window.saveOidcConfig;
   if (typeof window.saveApiKeyLimits === 'function') window.TrueID.saveApiKeyLimits = window.saveApiKeyLimits;
   if (typeof window.saveRetentionPolicy === 'function') window.TrueID.saveRetentionPolicy = window.saveRetentionPolicy;
   if (typeof window.startTotpSetup === 'function') window.TrueID.startTotpSetup = window.startTotpSetup;
+  if (typeof window.testOidcDiscovery === 'function') window.TrueID.testOidcDiscovery = window.testOidcDiscovery;
   if (typeof window.terminateAdminSession === 'function') window.TrueID.terminateAdminSession = window.terminateAdminSession;
   if (typeof window.verifyTotpSetup === 'function') window.TrueID.verifyTotpSetup = window.verifyTotpSetup;
 })();

@@ -8,6 +8,7 @@ use axum::{
     Extension, Json,
 };
 use serde::{Deserialize, Serialize};
+use sqlx::Row;
 use tracing::warn;
 
 use crate::auth::{
@@ -138,6 +139,21 @@ pub async fn login(
         .map(|s| s.to_string());
 
     let db = helpers::require_db(&state, &rid)?;
+    if let Ok(row) = sqlx::query("SELECT enabled, allow_local_login FROM oidc_config WHERE id = 1")
+        .fetch_one(db.pool())
+        .await
+    {
+        let oidc_enabled = row.try_get::<bool, _>("enabled").unwrap_or(false);
+        let allow_local = row.try_get::<bool, _>("allow_local_login").unwrap_or(true);
+        if oidc_enabled && !allow_local {
+            return Err(ApiError::new(
+                StatusCode::FORBIDDEN,
+                error::FORBIDDEN,
+                "Local login is disabled; use OIDC sign-in",
+            )
+            .with_request_id(&rid));
+        }
+    }
     let auth_chain = state.auth_chain.as_ref().ok_or_else(|| {
         ApiError::new(
             StatusCode::SERVICE_UNAVAILABLE,

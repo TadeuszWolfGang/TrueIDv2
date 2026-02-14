@@ -8,9 +8,9 @@ use crate::middleware;
 use crate::{
     routes_alerts, routes_analytics, routes_api_keys, routes_audit, routes_auth, routes_conflicts,
     routes_dns, routes_fingerprints, routes_firewall, routes_geo, routes_import, routes_ldap,
-    routes_map, routes_notifications, routes_proxy, routes_report_schedules, routes_retention,
-    routes_search, routes_security, routes_siem, routes_sse, routes_subnets, routes_switches, routes_tags, routes_timeline,
-    routes_totp, routes_users, routes_v1, AppState,
+    routes_map, routes_notifications, routes_oidc, routes_proxy, routes_report_schedules,
+    routes_retention, routes_search, routes_security, routes_siem, routes_sse, routes_subnets,
+    routes_switches, routes_tags, routes_timeline, routes_totp, routes_users, routes_v1, AppState,
 };
 
 /// Builds routes for auth endpoints (public + viewer-protected).
@@ -25,6 +25,9 @@ pub fn auth_routes(state: AppState) -> Router<AppState> {
             crate::login_rate_limit,
         ));
     let public_auth = Router::new()
+        .route("/api/auth/oidc/status", get(routes_oidc::status))
+        .route("/api/auth/oidc/login", get(routes_oidc::login))
+        .route("/api/auth/oidc/callback", get(routes_oidc::callback))
         .route("/api/auth/refresh", post(routes_auth::refresh))
         .merge(login_route);
     let protected_auth = Router::new()
@@ -67,7 +70,10 @@ pub fn v1_routes(state: AppState) -> Router<AppState> {
             "/api/v1/admin/adapters",
             get(routes_proxy::proxy_admin_adapters),
         )
-        .route("/api/v1/admin/agents", get(routes_proxy::proxy_admin_agents))
+        .route(
+            "/api/v1/admin/agents",
+            get(routes_proxy::proxy_admin_agents),
+        )
         .route(
             "/api/v1/admin/runtime-config",
             get(routes_proxy::proxy_admin_runtime_config),
@@ -238,7 +244,10 @@ pub fn v2_routes(state: AppState) -> Router<AppState> {
             "/api/v1/mappings/{ip}",
             delete(routes_proxy::proxy_delete_mapping),
         )
-        .route("/api/auth/sessions/{id}", delete(routes_auth::revoke_session))
+        .route(
+            "/api/auth/sessions/{id}",
+            delete(routes_auth::revoke_session),
+        )
         .route(
             "/api/v2/conflicts/{id}/resolve",
             post(routes_conflicts::resolve_conflict),
@@ -269,7 +278,8 @@ pub fn admin_routes(state: AppState) -> Router<AppState> {
         )
         .route(
             "/api/v1/admin/config/source-priority",
-            get(routes_proxy::proxy_get_source_priority).put(routes_proxy::proxy_put_source_priority),
+            get(routes_proxy::proxy_get_source_priority)
+                .put(routes_proxy::proxy_put_source_priority),
         )
         .route(
             "/api/v1/admin/config/sycope",
@@ -288,8 +298,14 @@ pub fn admin_routes(state: AppState) -> Router<AppState> {
             "/api/v1/users/{id}/reset-password",
             post(routes_users::reset_password),
         )
-        .route("/api/v1/users/{id}/unlock", post(routes_users::unlock_account))
-        .route("/api/v1/users/{id}/totp", delete(routes_users::disable_user_totp))
+        .route(
+            "/api/v1/users/{id}/unlock",
+            post(routes_users::unlock_account),
+        )
+        .route(
+            "/api/v1/users/{id}/totp",
+            delete(routes_users::disable_user_totp),
+        )
         .route(
             "/api/v1/api-keys",
             get(routes_api_keys::list_keys).post(routes_api_keys::create_key),
@@ -311,14 +327,8 @@ pub fn admin_routes(state: AppState) -> Router<AppState> {
             "/api/v2/api-keys/:id/limits",
             put(routes_api_keys::update_limits),
         )
-        .route(
-            "/api/v1/audit-logs",
-            get(routes_audit::list_audit_logs),
-        )
-        .route(
-            "/api/v1/audit-logs/stats",
-            get(routes_audit::audit_stats),
-        )
+        .route("/api/v1/audit-logs", get(routes_audit::list_audit_logs))
+        .route("/api/v1/audit-logs/stats", get(routes_audit::audit_stats))
         .route(
             "/api/v2/admin/security/password-policy",
             get(routes_security::get_password_policy).put(routes_security::update_password_policy),
@@ -365,8 +375,14 @@ pub fn admin_routes(state: AppState) -> Router<AppState> {
             "/api/v2/switches/:id",
             put(routes_switches::update_switch).delete(routes_switches::delete_switch),
         )
-        .route("/api/v2/switches/{id}/poll", post(routes_switches::force_poll))
-        .route("/api/v2/switches/:id/poll", post(routes_switches::force_poll))
+        .route(
+            "/api/v2/switches/{id}/poll",
+            post(routes_switches::force_poll),
+        )
+        .route(
+            "/api/v2/switches/:id/poll",
+            post(routes_switches::force_poll),
+        )
         .route("/api/v2/dns/{ip}", delete(routes_dns::delete_dns_ip))
         .route("/api/v2/dns/:ip", delete(routes_dns::delete_dns_ip))
         .route("/api/v2/dns/flush", post(routes_dns::flush_dns_cache))
@@ -515,6 +531,9 @@ pub fn admin_routes(state: AppState) -> Router<AppState> {
             "/api/v2/reports/schedules/:id/send-now",
             post(routes_report_schedules::send_now),
         )
+        .route("/api/auth/oidc/config", get(routes_oidc::get_config))
+        .route("/api/auth/oidc/config", put(routes_oidc::update_config))
+        .route("/api/auth/oidc/test", post(routes_oidc::test_discovery))
         .layer(axum_mw::from_fn_with_state(
             state,
             middleware::require_admin_layer,

@@ -6,13 +6,14 @@ pub mod auth;
 pub mod error;
 pub mod helpers;
 pub mod middleware;
+pub mod oidc;
 pub mod password_policy;
 pub mod rate_limit;
+pub mod routes;
 pub mod routes_alerts;
 pub mod routes_analytics;
 pub mod routes_api_keys;
 pub mod routes_audit;
-pub mod routes;
 pub mod routes_auth;
 pub mod routes_conflicts;
 pub mod routes_dns;
@@ -23,6 +24,7 @@ pub mod routes_import;
 pub mod routes_ldap;
 pub mod routes_map;
 pub mod routes_notifications;
+pub mod routes_oidc;
 pub mod routes_proxy;
 pub mod routes_report_schedules;
 pub mod routes_retention;
@@ -34,9 +36,9 @@ pub mod routes_subnets;
 pub mod routes_switches;
 pub mod routes_tags;
 pub mod routes_timeline;
+pub mod routes_totp;
 pub mod routes_users;
 pub mod routes_v1;
-pub mod routes_totp;
 
 use axum::{
     extract::{Request, State},
@@ -205,8 +207,7 @@ pub(crate) async fn auth_rate_limit_layer(
                             "error": "Rate limit exceeded",
                             "code": "RATE_LIMITED",
                         });
-                        let mut resp =
-                            (StatusCode::TOO_MANY_REQUESTS, Json(body)).into_response();
+                        let mut resp = (StatusCode::TOO_MANY_REQUESTS, Json(body)).into_response();
                         if let Ok(v) = HeaderValue::from_str(&retry_after.to_string()) {
                             resp.headers_mut().insert("retry-after", v);
                         }

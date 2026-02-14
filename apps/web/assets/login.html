@@ -161,6 +161,13 @@
 
       <div id="error-msg" class="error-msg"></div>
 
+      <div id="oidc-section" style="display:none;">
+        <a href="/api/auth/oidc/login" class="btn btn-oidc" style="display:block;text-align:center;padding:12px;margin-bottom:16px;border:1px solid var(--green-dim);color:var(--green-bright);text-decoration:none;">
+          ▸ Sign in with <span id="oidc-provider-name">OIDC</span>
+        </a>
+        <div id="oidc-local-divider" style="text-align:center;color:var(--text-secondary);font-size:12px;margin-bottom:16px;">— or sign in locally —</div>
+      </div>
+
       <!-- Login form -->
       <form id="login-form" autocomplete="on">
         <label for="username">Username</label>
@@ -244,6 +251,21 @@
       function getCsrfToken() {
         var match = document.cookie.match(/trueid_csrf_token=([^;]+)/);
         return match ? match[1] : '';
+      }
+
+      async function initOidcStatus() {
+        try {
+          var resp = await fetch('/api/auth/oidc/status', { credentials: 'include' });
+          if (!resp.ok) return;
+          var data = await resp.json();
+          if (!data || !data.enabled) return;
+          document.getElementById('oidc-provider-name').textContent = data.provider_name || 'OIDC';
+          document.getElementById('oidc-section').style.display = 'block';
+          if (data.allow_local_login === false) {
+            document.getElementById('login-form').style.display = 'none';
+            document.getElementById('oidc-local-divider').style.display = 'none';
+          }
+        } catch (e) {}
       }
 
       document.getElementById('login-form').addEventListener('submit', async function(e) {
@@ -357,6 +379,8 @@
           btn.disabled = false;
         }
       }
+
+      initOidcStatus();
     </script>
   </body>
 </html>

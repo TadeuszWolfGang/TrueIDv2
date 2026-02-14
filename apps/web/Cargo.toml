@@ -20,6 +20,7 @@ dashmap = "5"
 jsonwebtoken = "9"
 rand = "0.8"
 reqwest = { version = "0.12", features = ["json", "stream"] }
+urlencoding = "2"
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true }

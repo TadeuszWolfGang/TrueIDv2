@@ -15,7 +15,9 @@ use sqlx::Row;
 use tracing::info;
 
 use crate::db::Db;
-use crate::model::{ApiKeyRecord, ApiKeyUsageHourly, AuditEntry, Session, User, UserPublic, UserRole};
+use crate::model::{
+    ApiKeyRecord, ApiKeyUsageHourly, AuditEntry, Session, User, UserPublic, UserRole,
+};
 
 // ── Password hashing (module-level functions) ──────────────
 
@@ -86,6 +88,8 @@ fn user_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<User> {
         role,
         auth_source: row.try_get("auth_source")?,
         external_id: row.try_get("external_id")?,
+        oidc_subject: row.try_get("oidc_subject").ok(),
+        oidc_provider: row.try_get("oidc_provider").ok(),
         token_version: row.try_get("token_version")?,
         force_password_change: row.try_get("force_password_change")?,
         totp_enabled: row.try_get("totp_enabled").unwrap_or(false),
@@ -133,7 +137,7 @@ impl Db {
     /// Returns: `Some(User)` if found.
     pub async fn get_user_by_username(&self, username: &str) -> Result<Option<User>> {
         let row = sqlx::query(
-            "SELECT id, username, password_hash, role, auth_source, external_id,
+            "SELECT id, username, password_hash, role, auth_source, external_id, oidc_subject, oidc_provider,
                     token_version, force_password_change, totp_enabled, totp_verified_at, failed_attempts,
                     locked_until, created_at, updated_at
              FROM users WHERE username = ?",
@@ -154,7 +158,7 @@ impl Db {
     /// Returns: `Some(User)` if found.
     pub async fn get_user_by_id(&self, id: i64) -> Result<Option<User>> {
         let row = sqlx::query(
-            "SELECT id, username, password_hash, role, auth_source, external_id,
+            "SELECT id, username, password_hash, role, auth_source, external_id, oidc_subject, oidc_provider,
                     token_version, force_password_change, totp_enabled, totp_verified_at, failed_attempts,
                     locked_until, created_at, updated_at
              FROM users WHERE id = ?",
@@ -174,7 +178,7 @@ impl Db {
     /// Returns: list of `UserPublic`.
     pub async fn list_users(&self) -> Result<Vec<UserPublic>> {
         let rows = sqlx::query(
-            "SELECT id, username, password_hash, role, auth_source, external_id,
+            "SELECT id, username, password_hash, role, auth_source, external_id, oidc_subject, oidc_provider,
                     token_version, force_password_change, totp_enabled, totp_verified_at, failed_attempts,
                     locked_until, created_at, updated_at
              FROM users ORDER BY id",
@@ -391,11 +395,13 @@ impl Db {
         user_id: i64,
         backup_codes_enc: Option<&str>,
     ) -> Result<()> {
-        sqlx::query("UPDATE users SET totp_backup_codes_enc = ?, updated_at = datetime('now') WHERE id = ?")
-            .bind(backup_codes_enc)
-            .bind(user_id)
-            .execute(self.pool())
-            .await?;
+        sqlx::query(
+            "UPDATE users SET totp_backup_codes_enc = ?, updated_at = datetime('now') WHERE id = ?",
+        )
+        .bind(backup_codes_enc)
+        .bind(user_id)
+        .execute(self.pool())
+        .await?;
         Ok(())
     }
 
@@ -416,7 +422,11 @@ impl Db {
     ///
     /// Parameters: `user_id` - user id, `limit` - max number of rows.
     /// Returns: list of password hashes.
-    pub async fn get_password_history_hashes(&self, user_id: i64, limit: i64) -> Result<Vec<String>> {
+    pub async fn get_password_history_hashes(
+        &self,
+        user_id: i64,
+        limit: i64,
+    ) -> Result<Vec<String>> {
         let rows = sqlx::query(
             "SELECT password_hash
              FROM password_history
@@ -443,6 +453,79 @@ impl Db {
             .fetch_one(self.pool())
             .await?;
         Ok(row.try_get("c")?)
+    }
+
+    /// Looks up a user by OIDC subject.
+    ///
+    /// Parameters: `subject` - OIDC `sub` claim.
+    /// Returns: optional `User` row.
+    pub async fn get_user_by_oidc_subject(&self, subject: &str) -> Result<Option<User>> {
+        let row = sqlx::query(
+            "SELECT id, username, password_hash, role, auth_source, external_id, oidc_subject, oidc_provider,
+                    token_version, force_password_change, totp_enabled, totp_verified_at, failed_attempts,
+                    locked_until, created_at, updated_at
+             FROM users WHERE oidc_subject = ?",
+        )
+        .bind(subject)
+        .fetch_optional(self.pool())
+        .await?;
+        match row {
+            Some(r) => Ok(Some(user_from_row(&r)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Creates a new OIDC-backed user.
+    ///
+    /// Parameters: `username`, `subject`, `provider`, `role`.
+    /// Returns: created `User`.
+    pub async fn create_oidc_user(
+        &self,
+        username: &str,
+        subject: &str,
+        provider: &str,
+        role: UserRole,
+    ) -> Result<User> {
+        let placeholder_hash = hash_password(&format!("oidc:{subject}:{provider}"), self.pepper())?;
+        sqlx::query(
+            "INSERT INTO users (username, password_hash, role, auth_source, oidc_subject, oidc_provider)
+             VALUES (?, ?, ?, 'oidc', ?, ?)",
+        )
+        .bind(username)
+        .bind(placeholder_hash)
+        .bind(role.to_string())
+        .bind(subject)
+        .bind(provider)
+        .execute(self.pool())
+        .await?;
+        self.get_user_by_username(username)
+            .await?
+            .context("oidc user not found after insert")
+    }
+
+    /// Updates role/provider linkage for an existing OIDC user.
+    ///
+    /// Parameters: `user_id`, `role`, `subject`, `provider`.
+    /// Returns: nothing.
+    pub async fn update_oidc_identity(
+        &self,
+        user_id: i64,
+        role: UserRole,
+        subject: &str,
+        provider: &str,
+    ) -> Result<()> {
+        sqlx::query(
+            "UPDATE users
+             SET role = ?, auth_source = 'oidc', oidc_subject = ?, oidc_provider = ?
+             WHERE id = ?",
+        )
+        .bind(role.to_string())
+        .bind(subject)
+        .bind(provider)
+        .bind(user_id)
+        .execute(self.pool())
+        .await?;
+        Ok(())
     }
 }
 
