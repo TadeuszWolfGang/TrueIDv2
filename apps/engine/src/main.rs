@@ -17,6 +17,8 @@ mod live_bus;
 mod metrics;
 mod notifications;
 mod report_generator;
+mod retention;
+mod scheduler;
 mod siem_forwarder;
 mod snmp_poller;
 mod subnets;
@@ -205,8 +207,13 @@ async fn run_event_loop(mut receiver: Receiver<IdentityEvent>, ctx: EventLoopCtx
                     fired_at: Utc::now(),
                 });
                 tokio::spawn(async move {
-                    alerts::fire_alert(db_for_alert.as_ref(), &client, dispatcher.as_ref(), &firing)
-                        .await;
+                    alerts::fire_alert(
+                        db_for_alert.as_ref(),
+                        &client,
+                        dispatcher.as_ref(),
+                        &firing,
+                    )
+                    .await;
                 });
             }
         }
@@ -303,10 +310,7 @@ fn spawn_ad_logs_adapter(bind_addr: SocketAddr, sender: Sender<IdentityEvent>) -
 /// Spawns the DHCP syslog adapter task.
 ///
 /// Parameters: `bind_addr` - UDP bind address, `sender` - event channel.
-fn spawn_dhcp_logs_adapter(
-    bind_addr: SocketAddr,
-    sender: Sender<IdentityEvent>,
-) -> JoinHandle<()> {
+fn spawn_dhcp_logs_adapter(bind_addr: SocketAddr, sender: Sender<IdentityEvent>) -> JoinHandle<()> {
     let adapter = DhcpLogsAdapter::new(bind_addr, sender);
     info!(%bind_addr, "Starting DHCP syslog adapter");
     tokio::spawn(async move {
@@ -579,15 +583,42 @@ async fn main() -> Result<()> {
     firewall_push::start_firewall_push(db.clone());
     report_generator::start_report_generator(db.clone());
     {
+        let retention_interval_hours = db
+            .get_config_i64("retention_interval_hours", 6)
+            .await
+            .max(1);
+        let mut background_scheduler = scheduler::Scheduler::new();
+        let retention_db = db.clone();
+        background_scheduler.add(
+            "retention",
+            Duration::from_secs((retention_interval_hours as u64) * 3600),
+            move || {
+                let retention_db = retention_db.clone();
+                Box::pin(async move {
+                    let executor =
+                        retention::RetentionExecutor::from_db(retention_db.as_ref()).await;
+                    for r in executor.run_all().await {
+                        if r.deleted > 0 {
+                            info!(
+                                table = %r.table_name,
+                                deleted = r.deleted,
+                                "Retention cleanup deleted rows"
+                            );
+                        }
+                    }
+                })
+            },
+        );
         let heartbeat_tx = live_tx.clone();
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(Duration::from_secs(30)).await;
+        background_scheduler.add("heartbeat", Duration::from_secs(30), move || {
+            let heartbeat_tx = heartbeat_tx.clone();
+            Box::pin(async move {
                 let _ = heartbeat_tx.send(LiveEvent::Heartbeat {
                     timestamp: Utc::now(),
                 });
-            }
+            })
         });
+        tokio::spawn(background_scheduler.run());
     }
     {
         let ldap_db = db.clone();

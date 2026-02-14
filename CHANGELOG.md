@@ -30,6 +30,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - 34 new tests (21 E2E + 13 unit) covering Phase 3 handlers and parsers
 - Phase 4 test coverage: +10 analytics E2E tests and +2 report generator unit tests (totals: 93 E2E, 15 unit)
 - SSE test coverage: +2 E2E tests (`test_sse_endpoint_requires_auth`, `test_sse_endpoint_returns_stream`)
+- **Data Retention Policies**: `retention_policies` table with seeded defaults for events/conflicts/alerts/audit/deliveries/firewall/reports/dns
+- **Retention Executor + Scheduler**: batched cleanup (1000 rows), configurable interval (`retention_interval_hours`), optional post-cleanup `VACUUM`
+- **Retention Admin API**: `/api/v2/admin/retention*` list/update/run/stats endpoints
+- Dashboard **Status** tab now includes **Data Retention** controls and DB/table stats
+- 3 new E2E tests for retention list/update/audit-minimum validation
 
 ### Fixed
 - `group_names` subquery missing in routes_v1, routes_search, routes_subnets (groups always null)

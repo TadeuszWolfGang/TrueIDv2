@@ -19,9 +19,10 @@ pub mod routes_firewall;
 pub mod routes_ldap;
 pub mod routes_notifications;
 pub mod routes_proxy;
+pub mod routes_retention;
 pub mod routes_search;
-pub mod routes_sse;
 pub mod routes_siem;
+pub mod routes_sse;
 pub mod routes_subnets;
 pub mod routes_switches;
 pub mod routes_timeline;
@@ -278,7 +279,10 @@ pub fn build_router(state: AppState) -> Router {
             "/api/v2/analytics/compliance",
             get(routes_analytics::compliance),
         )
-        .route("/api/v2/analytics/reports", get(routes_analytics::list_reports))
+        .route(
+            "/api/v2/analytics/reports",
+            get(routes_analytics::list_reports),
+        )
         .route(
             "/api/v2/analytics/reports/{id}",
             get(routes_analytics::get_report),
@@ -412,6 +416,26 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v2/ldap/config", get(routes_ldap::get_ldap_config))
         .route("/api/v2/ldap/config", put(routes_ldap::update_ldap_config))
         .route("/api/v2/ldap/sync", post(routes_ldap::force_ldap_sync))
+        .route(
+            "/api/v2/admin/retention",
+            get(routes_retention::list_policies),
+        )
+        .route(
+            "/api/v2/admin/retention/{table_name}",
+            put(routes_retention::update_policy),
+        )
+        .route(
+            "/api/v2/admin/retention/:table_name",
+            put(routes_retention::update_policy),
+        )
+        .route(
+            "/api/v2/admin/retention/run",
+            post(routes_retention::run_now),
+        )
+        .route(
+            "/api/v2/admin/retention/stats",
+            get(routes_retention::stats),
+        )
         .route(
             "/api/v2/notifications/channels",
             get(routes_notifications::list_channels).post(routes_notifications::create_channel),

@@ -682,6 +682,29 @@
 
         <div class="setting-divider" style="margin:16px 0;"></div>
 
+        <h2 class="section-title">Data Retention</h2>
+        <div style="display:flex;gap:8px;margin-bottom:10px;">
+          <button class="btn btn-sm role-admin" onclick="runRetentionNow()">Run Retention Now</button>
+          <button class="btn btn-sm" onclick="loadRetentionSection()">Refresh</button>
+          <span id="retention-run-result" class="muted"></span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Table</th>
+              <th>Retention</th>
+              <th>Enabled</th>
+              <th>Last Run</th>
+              <th>Deleted</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="retention-body"><tr><td colspan="6" class="muted">Loading...</td></tr></tbody>
+        </table>
+        <div id="retention-stats" class="sync-status-box" style="margin-top:10px;">Loading...</div>
+
+        <div class="setting-divider" style="margin:16px 0;"></div>
+
         <h2 class="section-title">Prometheus</h2>
         <div class="sync-status-box">
           <div><a class="ip-link" href="/metrics" target="_blank" rel="noopener noreferrer">Open /metrics endpoint</a></div>
@@ -3125,6 +3148,107 @@
         }
       }
 
+      async function loadRetentionSection() {
+        await loadRetentionPolicies();
+        await loadRetentionStats();
+      }
+
+      async function loadRetentionPolicies() {
+        try {
+          var res = await fetch('/api/v2/admin/retention', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var data = await res.json();
+          var rows = data.policies || [];
+          if (!rows.length) {
+            document.getElementById('retention-body').innerHTML =
+              '<tr><td colspan="6" class="muted">No retention policies configured.</td></tr>';
+            return;
+          }
+          document.getElementById('retention-body').innerHTML = rows.map(function (r) {
+            return '<tr>' +
+              '<td>' + escapeHtml(r.table_name) + '</td>' +
+              '<td><input id="ret-days-' + escJs(r.table_name) + '" class="setting-input" style="width:110px;" type="number" min="1" value="' + escapeHtml(r.retention_days) + '"> days</td>' +
+              '<td><input id="ret-enabled-' + escJs(r.table_name) + '" type="checkbox" ' + (r.enabled ? 'checked' : '') + '></td>' +
+              '<td>' + escapeHtml(timeAgo(r.last_run_at)) + '</td>' +
+              '<td>' + escapeHtml(r.last_deleted_count || 0) + '</td>' +
+              '<td><button class="btn btn-sm role-admin" onclick="saveRetentionPolicy(\'' + escJs(r.table_name) + '\')">Save</button></td>' +
+              '</tr>';
+          }).join('');
+        } catch (e) {
+          document.getElementById('retention-body').innerHTML =
+            '<tr><td colspan="6" style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+        }
+      }
+
+      async function saveRetentionPolicy(tableName) {
+        var daysInput = document.getElementById('ret-days-' + tableName);
+        var enabledInput = document.getElementById('ret-enabled-' + tableName);
+        if (!daysInput || !enabledInput) return;
+        var payload = {
+          retention_days: parseInt(daysInput.value || '90', 10),
+          enabled: !!enabledInput.checked
+        };
+        try {
+          var res = await fetch('/api/v2/admin/retention/' + encodeURIComponent(tableName), {
+            method: 'PUT',
+            headers: mutHeaders(),
+            credentials: 'include',
+            body: JSON.stringify(payload)
+          });
+          if (!res.ok) {
+            var txt = await res.text();
+            throw new Error('HTTP ' + res.status + ' ' + txt);
+          }
+          await loadRetentionSection();
+        } catch (e) {
+          alert('Retention update failed: ' + e.message);
+        }
+      }
+
+      async function runRetentionNow() {
+        var result = document.getElementById('retention-run-result');
+        result.textContent = 'Running...';
+        try {
+          var res = await fetch('/api/v2/admin/retention/run', {
+            method: 'POST',
+            headers: mutHeaders(),
+            credentials: 'include',
+            body: JSON.stringify({})
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var body = await res.json();
+          var rows = body.results || [];
+          var changed = rows.filter(function (r) { return (r.deleted || 0) > 0; }).length;
+          result.textContent = 'Done. Policies with deletions: ' + changed;
+          result.style.color = '#22c55e';
+          await loadRetentionSection();
+        } catch (e) {
+          result.textContent = 'Failed: ' + e.message;
+          result.style.color = '#ef4444';
+        }
+      }
+
+      async function loadRetentionStats() {
+        try {
+          var res = await fetch('/api/v2/admin/retention/stats', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var data = await res.json();
+          var dbSize = data.database_size_bytes || 0;
+          var rows = data.tables || [];
+          var top = '<div><strong>Database size:</strong> ' + escapeHtml(Math.round(dbSize / 1024 / 1024 * 100) / 100 + ' MB') + '</div>';
+          var list = rows.map(function (r) {
+            return '<div class="setting-row" style="padding:4px 0;">' +
+              '<div class="setting-label"><span class="setting-title">' + escapeHtml(r.table_name) + '</span></div>' +
+              '<div>' + escapeHtml(r.row_count) + ' rows, oldest: ' + escapeHtml(r.oldest_row || '-') + '</div>' +
+              '</div>';
+          }).join('');
+          document.getElementById('retention-stats').innerHTML = top + list;
+        } catch (e) {
+          document.getElementById('retention-stats').innerHTML =
+            '<span style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</span>';
+        }
+      }
+
       async function loadSystemStatus() {
         try {
           var adaptersRes = await fetch('/api/v1/admin/adapters', { credentials: 'include' });
@@ -3177,6 +3301,8 @@
           document.getElementById('status-runtime').innerHTML =
             '<span style="color:#ef4444;">Failed: ' + escapeHtml(e2.message) + '</span>';
         }
+
+        await loadRetentionSection();
       }
 
       function firewallTypeBadge(raw) {

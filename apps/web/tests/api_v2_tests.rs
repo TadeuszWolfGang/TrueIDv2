@@ -1433,7 +1433,12 @@ async fn test_phase2_no_auth_rejected() {
 async fn test_analytics_trends() {
     let (app, _) = build_test_app().await;
     let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
-    let (status, body) = auth_get(&app, &cookie, "/api/v2/analytics/trends?metric=events&days=7").await;
+    let (status, body) = auth_get(
+        &app,
+        &cookie,
+        "/api/v2/analytics/trends?metric=events&days=7",
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["metric"], "events");
     assert_eq!(body["interval"], "day");
@@ -1517,8 +1522,13 @@ async fn test_analytics_source_distribution() {
 async fn test_analytics_generate_report() {
     let (app, _) = build_test_app().await;
     let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
-    let (status, body) = auth_post(&app, &cookie, "/api/v2/analytics/reports/generate", &json!({}))
-        .await;
+    let (status, body) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/analytics/reports/generate",
+        &json!({}),
+    )
+    .await;
     assert!(status == StatusCode::OK || status == StatusCode::CREATED);
     assert!(body["id"].as_i64().unwrap_or(0) > 0);
 }
@@ -1527,8 +1537,13 @@ async fn test_analytics_generate_report() {
 async fn test_analytics_get_report() {
     let (app, _) = build_test_app().await;
     let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
-    let (create_status, created) =
-        auth_post(&app, &cookie, "/api/v2/analytics/reports/generate", &json!({})).await;
+    let (create_status, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/analytics/reports/generate",
+        &json!({}),
+    )
+    .await;
     assert!(create_status == StatusCode::OK || create_status == StatusCode::CREATED);
     let id = created["id"].as_i64().unwrap_or(0);
     assert!(id > 0);
@@ -1544,8 +1559,13 @@ async fn test_analytics_get_report() {
 async fn test_analytics_reports_list_after_generate() {
     let (app, _) = build_test_app().await;
     let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
-    let (create_status, _) =
-        auth_post(&app, &cookie, "/api/v2/analytics/reports/generate", &json!({})).await;
+    let (create_status, _) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/analytics/reports/generate",
+        &json!({}),
+    )
+    .await;
     assert!(create_status == StatusCode::OK || create_status == StatusCode::CREATED);
 
     let (status, body) = auth_get(&app, &cookie, "/api/v2/analytics/reports").await;
@@ -1558,9 +1578,12 @@ async fn test_analytics_reports_list_after_generate() {
 async fn test_analytics_trends_hourly() {
     let (app, _) = build_test_app().await;
     let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
-    let (status, body) =
-        auth_get(&app, &cookie, "/api/v2/analytics/trends?metric=events&interval=hour&days=1")
-            .await;
+    let (status, body) = auth_get(
+        &app,
+        &cookie,
+        "/api/v2/analytics/trends?metric=events&interval=hour&days=1",
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["interval"], "hour");
     assert!(body["data"].is_array());
@@ -1586,7 +1609,12 @@ async fn test_analytics_viewer_can_read() {
         .expect("set force password failed");
     let cookie = login_and_get_cookie(&app, "analytics_viewer", "testpassword123").await;
 
-    let (status, _) = auth_get(&app, &cookie, "/api/v2/analytics/trends?metric=events&days=7").await;
+    let (status, _) = auth_get(
+        &app,
+        &cookie,
+        "/api/v2/analytics/trends?metric=events&days=7",
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
 }
 
@@ -1602,8 +1630,13 @@ async fn test_analytics_viewer_cannot_generate() {
         .expect("set force password failed");
     let cookie = login_and_get_cookie(&app, "analytics_viewer2", "testpassword123").await;
 
-    let (status, _) = auth_post(&app, &cookie, "/api/v2/analytics/reports/generate", &json!({}))
-        .await;
+    let (status, _) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/analytics/reports/generate",
+        &json!({}),
+    )
+    .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
 }
 
@@ -1761,7 +1794,8 @@ async fn test_notification_channel_types() {
         }),
     ];
     for payload in cases {
-        let (status, _) = auth_post(&app, &cookie, "/api/v2/notifications/channels", &payload).await;
+        let (status, _) =
+            auth_post(&app, &cookie, "/api/v2/notifications/channels", &payload).await;
         assert_eq!(status, StatusCode::CREATED);
     }
 }
@@ -1834,6 +1868,60 @@ async fn test_notification_deliveries_empty() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(rows.as_array().map(|v| v.len()).unwrap_or_default(), 0);
+}
+
+#[tokio::test]
+async fn test_retention_policies_list() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/admin/retention").await;
+    assert_eq!(status, StatusCode::OK);
+    let policies = body["policies"].as_array().cloned().unwrap_or_default();
+    assert!(!policies.is_empty());
+    let names = policies
+        .iter()
+        .filter_map(|p| p["table_name"].as_str())
+        .collect::<Vec<_>>();
+    assert!(names.contains(&"events"));
+    assert!(names.contains(&"audit_log"));
+}
+
+#[tokio::test]
+async fn test_retention_policy_update() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, _) = auth_put(
+        &app,
+        &cookie,
+        "/api/v2/admin/retention/events",
+        &json!({"retention_days": 120, "enabled": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/admin/retention").await;
+    assert_eq!(status, StatusCode::OK);
+    let policies = body["policies"].as_array().cloned().unwrap_or_default();
+    let events = policies
+        .iter()
+        .find(|p| p["table_name"] == "events")
+        .cloned()
+        .unwrap_or(json!({}));
+    assert_eq!(events["retention_days"], 120);
+    assert_eq!(events["enabled"], true);
+}
+
+#[tokio::test]
+async fn test_retention_audit_minimum() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, _) = auth_put(
+        &app,
+        &cookie,
+        "/api/v2/admin/retention/audit_log",
+        &json!({"retention_days": 5, "enabled": true}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]

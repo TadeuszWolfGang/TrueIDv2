@@ -7,16 +7,16 @@ use axum::{
     extract::{Path, Request, State},
     http::StatusCode,
     middleware as axum_mw,
-    response::{IntoResponse, Response},
     response::sse::{Event, KeepAlive, Sse},
+    response::{IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
 };
-use futures::StreamExt;
 use chrono::Utc;
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
-use std::convert::Infallible;
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Instant;
@@ -113,6 +113,7 @@ pub fn admin_router(state: EngineAdminState) -> Router {
             "/engine/notifications/channels/{id}/test",
             post(test_notification_channel),
         )
+        .route("/engine/retention/run", post(run_retention_now))
         .route("/engine/events/stream", get(sse_stream))
         .layer(axum_mw::from_fn_with_state(
             state.clone(),
@@ -155,7 +156,9 @@ async fn sse_stream(
             Ok(json) => json,
             Err(_) => return None,
         };
-        Some(Ok(Event::default().event(live_event_kind(&event)).data(json)))
+        Some(Ok(Event::default()
+            .event(live_event_kind(&event))
+            .data(json)))
     });
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
@@ -581,10 +584,8 @@ async fn test_notification_channel(
     State(s): State<EngineAdminState>,
     Path(id): Path<i64>,
 ) -> impl IntoResponse {
-    let dispatcher = crate::notifications::NotificationDispatcher::new(
-        s.db.clone(),
-        reqwest::Client::new(),
-    );
+    let dispatcher =
+        crate::notifications::NotificationDispatcher::new(s.db.clone(), reqwest::Client::new());
     match dispatcher.send_test_channel(id).await {
         Ok(()) => Json(serde_json::json!({ "success": true })),
         Err(e) => {
@@ -595,4 +596,15 @@ async fn test_notification_channel(
             }))
         }
     }
+}
+
+/// Runs all enabled retention policies immediately.
+///
+/// Parameters: `s` - shared admin state.
+/// Returns: JSON array of per-policy execution results.
+async fn run_retention_now(State(s): State<EngineAdminState>) -> impl IntoResponse {
+    let executor = crate::retention::RetentionExecutor::from_db(s.db.as_ref()).await;
+    Json(serde_json::json!({
+        "results": executor.run_all().await
+    }))
 }
