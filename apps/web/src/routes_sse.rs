@@ -37,10 +37,9 @@ pub(crate) async fn event_stream(
         header::CONTENT_TYPE,
         HeaderValue::from_static("text/event-stream"),
     );
-    response.headers_mut().insert(
-        header::CACHE_CONTROL,
-        HeaderValue::from_static("no-cache"),
-    );
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
     response
         .headers_mut()
         .insert("x-accel-buffering", HeaderValue::from_static("no"));

@@ -205,7 +205,11 @@ pub async fn top_n_users(
         }
         _ => return Err(anyhow::anyhow!("unsupported metric: {metric}")),
     };
-    let rows = sqlx::query(sql).bind(-days).bind(limit).fetch_all(pool).await?;
+    let rows = sqlx::query(sql)
+        .bind(-days)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
         out.push((
@@ -253,7 +257,11 @@ pub async fn top_n_ips(
         }
         _ => return Err(anyhow::anyhow!("unsupported metric: {metric}")),
     };
-    let rows = sqlx::query(sql).bind(-days).bind(limit).fetch_all(pool).await?;
+    let rows = sqlx::query(sql)
+        .bind(-days)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?;
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
         out.push((
@@ -352,7 +360,9 @@ pub async fn list_report_snapshots(
     for row in rows {
         out.push(ReportSnapshot {
             id: row.try_get("id").unwrap_or_default(),
-            report_type: row.try_get("report_type").unwrap_or_else(|_| "daily".to_string()),
+            report_type: row
+                .try_get("report_type")
+                .unwrap_or_else(|_| "daily".to_string()),
             generated_at: row.try_get("generated_at").unwrap_or_default(),
             period_start: row.try_get("period_start").unwrap_or_default(),
             period_end: row.try_get("period_end").unwrap_or_default(),
@@ -381,7 +391,9 @@ pub async fn get_report_snapshot(pool: &SqlitePool, id: i64) -> Result<Option<Re
     };
     Ok(Some(ReportSnapshot {
         id: row.try_get("id").unwrap_or_default(),
-        report_type: row.try_get("report_type").unwrap_or_else(|_| "daily".to_string()),
+        report_type: row
+            .try_get("report_type")
+            .unwrap_or_else(|_| "daily".to_string()),
         generated_at: row.try_get("generated_at").unwrap_or_default(),
         period_start: row.try_get("period_start").unwrap_or_default(),
         period_end: row.try_get("period_end").unwrap_or_default(),
@@ -396,7 +408,9 @@ pub async fn get_report_snapshot(pool: &SqlitePool, id: i64) -> Result<Option<Re
 /// Returns: number of deleted rows.
 pub async fn cleanup_old_reports(pool: &SqlitePool, keep_count: i64) -> Result<u64> {
     if keep_count <= 0 {
-        let res = sqlx::query("DELETE FROM report_snapshots").execute(pool).await?;
+        let res = sqlx::query("DELETE FROM report_snapshots")
+            .execute(pool)
+            .await?;
         return Ok(res.rows_affected());
     }
     let res = sqlx::query(

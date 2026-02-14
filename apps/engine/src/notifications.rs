@@ -196,7 +196,11 @@ impl NotificationDispatcher {
     ///
     /// Parameters: `channel` - target channel, `alert` - alert payload.
     /// Returns: delivery result.
-    async fn dispatch_channel(&self, channel: &NotificationChannel, alert: &AlertPayload) -> Result<()> {
+    async fn dispatch_channel(
+        &self,
+        channel: &NotificationChannel,
+        alert: &AlertPayload,
+    ) -> Result<()> {
         match (&channel.channel_type[..], &channel.config) {
             ("email", ChannelConfig::Email { .. }) => self.send_email(&channel.config, alert).await,
             ("slack", ChannelConfig::Slack { .. }) => self.send_slack(&channel.config, alert).await,
@@ -298,7 +302,12 @@ impl NotificationDispatcher {
                 "ts": alert.timestamp.timestamp(),
             }]
         });
-        let resp = self.http_client.post(webhook_url).json(&payload).send().await?;
+        let resp = self
+            .http_client
+            .post(webhook_url)
+            .json(&payload)
+            .send()
+            .await?;
         if !resp.status().is_success() {
             return Err(anyhow!("Slack webhook returned HTTP {}", resp.status()));
         }
@@ -338,7 +347,12 @@ impl NotificationDispatcher {
                 }
             }]
         });
-        let resp = self.http_client.post(webhook_url).json(&payload).send().await?;
+        let resp = self
+            .http_client
+            .post(webhook_url)
+            .json(&payload)
+            .send()
+            .await?;
         if !resp.status().is_success() {
             return Err(anyhow!("Teams webhook returned HTTP {}", resp.status()));
         }
@@ -349,7 +363,11 @@ impl NotificationDispatcher {
     ///
     /// Parameters: `config` - typed webhook channel config, `alert` - alert payload.
     /// Returns: HTTP send result.
-    async fn send_generic_webhook(&self, config: &ChannelConfig, alert: &AlertPayload) -> Result<()> {
+    async fn send_generic_webhook(
+        &self,
+        config: &ChannelConfig,
+        alert: &AlertPayload,
+    ) -> Result<()> {
         let ChannelConfig::Webhook {
             url,
             headers,
@@ -358,11 +376,7 @@ impl NotificationDispatcher {
         else {
             return Err(anyhow!("Invalid webhook channel config"));
         };
-        let method_norm = method
-            .as_deref()
-            .unwrap_or("POST")
-            .trim()
-            .to_uppercase();
+        let method_norm = method.as_deref().unwrap_or("POST").trim().to_uppercase();
         let req_method = if method_norm == "PUT" {
             reqwest::Method::PUT
         } else {
@@ -401,10 +415,7 @@ fn format_email_body(alert: &AlertPayload) -> String {
     rows.insert("Rule", alert.rule_name.clone());
     rows.insert("Type", alert.rule_type.clone());
     rows.insert("Severity", alert.severity.clone());
-    rows.insert(
-        "IP",
-        alert.ip.clone().unwrap_or_else(|| "-".to_string()),
-    );
+    rows.insert("IP", alert.ip.clone().unwrap_or_else(|| "-".to_string()));
     rows.insert(
         "User",
         alert.user.clone().unwrap_or_else(|| "-".to_string()),

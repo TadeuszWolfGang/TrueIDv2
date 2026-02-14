@@ -280,15 +280,11 @@ pub(crate) async fn create_subnet(
     })?;
 
     let target_id = format!("subnet:{subnet_id}");
-    let details = format!("cidr={}", row.try_get::<String, _>("cidr").unwrap_or_default());
-    helpers::audit(
-        db,
-        &auth,
-        "create_subnet",
-        Some(&target_id),
-        Some(&details),
-    )
-    .await;
+    let details = format!(
+        "cidr={}",
+        row.try_get::<String, _>("cidr").unwrap_or_default()
+    );
+    helpers::audit(db, &auth, "create_subnet", Some(&target_id), Some(&details)).await;
 
     Ok((StatusCode::CREATED, Json(map_subnet_row(&row))))
 }
@@ -645,20 +641,20 @@ pub(crate) async fn subnet_mappings(
          LIMIT ? OFFSET ?"
     );
     let rows = sqlx::query(&sql)
-    .bind(id)
-    .bind(per_page)
-    .bind(offset)
-    .fetch_all(db.pool())
-    .await
-    .map_err(|e| {
-        warn!(error = %e, subnet_id = id, "Failed to fetch subnet mappings");
-        ApiError::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error::INTERNAL_ERROR,
-            "Failed to list subnet mappings",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+        .bind(id)
+        .bind(per_page)
+        .bind(offset)
+        .fetch_all(db.pool())
+        .await
+        .map_err(|e| {
+            warn!(error = %e, subnet_id = id, "Failed to fetch subnet mappings");
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error::INTERNAL_ERROR,
+                "Failed to list subnet mappings",
+            )
+            .with_request_id(&auth.request_id)
+        })?;
 
     let mut data = Vec::with_capacity(rows.len());
     for row in rows {

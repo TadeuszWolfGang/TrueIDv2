@@ -364,19 +364,20 @@ async fn set_rule_channels(
             .with_request_id(request_id)
         })?;
     for channel_id in unique_ids {
-        let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM notification_channels WHERE id = ?")
-            .bind(channel_id)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(|e| {
-                warn!(error = %e, channel_id, "Failed to validate notification channel");
-                ApiError::new(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    error::INTERNAL_ERROR,
-                    "Failed to save alert rule channels",
-                )
-                .with_request_id(request_id)
-            })?;
+        let exists: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM notification_channels WHERE id = ?")
+                .bind(channel_id)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(|e| {
+                    warn!(error = %e, channel_id, "Failed to validate notification channel");
+                    ApiError::new(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        error::INTERNAL_ERROR,
+                        "Failed to save alert rule channels",
+                    )
+                    .with_request_id(request_id)
+                })?;
         if exists == 0 {
             return Err(ApiError::new(
                 StatusCode::BAD_REQUEST,

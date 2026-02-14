@@ -93,15 +93,7 @@ pub(crate) async fn audit_system(
     request_id: Option<&str>,
 ) {
     audit_principal(
-        db,
-        None,
-        username,
-        "system",
-        action,
-        target_id,
-        details,
-        ip,
-        request_id,
+        db, None, username, "system", action, target_id, details, ip, request_id,
     )
     .await;
 }

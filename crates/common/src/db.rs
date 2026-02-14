@@ -17,7 +17,8 @@ const SENSITIVE_CONFIG_KEYS: &[&str] = &["sycope_pass", "sycope_login"];
 /// Canonical SELECT columns for mapping queries.
 ///
 /// Usage: `format!("{MAPPING_SELECT} FROM mappings m LEFT JOIN ... WHERE ...")`.
-pub const MAPPING_SELECT: &str = "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
+pub const MAPPING_SELECT: &str =
+    "SELECT m.ip, m.user, m.source, m.last_seen, m.confidence, m.mac, m.is_active, m.vendor,
             m.subnet_id, s.name as subnet_name, d.hostname, m.device_type, m.multi_user,
             (SELECT GROUP_CONCAT(DISTINCT ug.group_name)
              FROM user_groups ug
@@ -229,9 +230,9 @@ impl Db {
              WHERE m.ip = ?"
         );
         let row = sqlx::query(&sql)
-        .bind(ip)
-        .fetch_optional(&self.pool)
-        .await?;
+            .bind(ip)
+            .fetch_optional(&self.pool)
+            .await?;
 
         let Some(row) = row else {
             return Ok(None);
@@ -288,9 +289,7 @@ impl Db {
              WHERE m.is_active = true
              ORDER BY m.last_seen DESC"
         );
-        let rows = sqlx::query(&sql)
-        .fetch_all(&self.pool)
-        .await?;
+        let rows = sqlx::query(&sql).fetch_all(&self.pool).await?;
 
         let mut results = Vec::with_capacity(rows.len());
         for row in rows {
@@ -571,10 +570,7 @@ impl Db {
              ORDER BY m.last_seen DESC
              LIMIT ?"
         );
-        let rows = sqlx::query(&sql)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await?;
+        let rows = sqlx::query(&sql).bind(limit).fetch_all(&self.pool).await?;
 
         let mut results = Vec::with_capacity(rows.len());
         for row in rows {

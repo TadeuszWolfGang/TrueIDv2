@@ -82,13 +82,12 @@ pub(crate) async fn generate_once(db_ref: &Db) -> anyhow::Result<i64> {
             .bind(end)
             .fetch_one(db_ref.pool())
             .await?;
-    let new_mappings: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM mappings WHERE last_seen >= ? AND last_seen < ?",
-    )
-    .bind(start)
-    .bind(end)
-    .fetch_one(db_ref.pool())
-    .await?;
+    let new_mappings: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM mappings WHERE last_seen >= ? AND last_seen < ?")
+            .bind(start)
+            .bind(end)
+            .fetch_one(db_ref.pool())
+            .await?;
     let expired_mappings: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM mappings
          WHERE is_active = 0 AND last_seen >= ? AND last_seen < ?",
@@ -111,12 +110,13 @@ pub(crate) async fn generate_once(db_ref: &Db) -> anyhow::Result<i64> {
     .bind(end)
     .fetch_one(db_ref.pool())
     .await?;
-    let alerts_fired: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM alert_history WHERE fired_at >= ? AND fired_at < ?")
-            .bind(start)
-            .bind(end)
-            .fetch_one(db_ref.pool())
-            .await?;
+    let alerts_fired: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM alert_history WHERE fired_at >= ? AND fired_at < ?",
+    )
+    .bind(start)
+    .bind(end)
+    .fetch_one(db_ref.pool())
+    .await?;
 
     let top_users = db_analytics::top_n_users(db_ref.pool(), 1, "events", 5).await?;
     let top_sources = db_analytics::source_distribution(db_ref.pool(), 1).await?;

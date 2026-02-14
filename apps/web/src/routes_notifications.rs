@@ -42,7 +42,11 @@ struct DeliveryEntry {
 ///
 /// Parameters: `channel_type` - normalized channel type, `config` - raw JSON config, `request_id` - request correlation id.
 /// Returns: validated typed config.
-fn parse_config(channel_type: &str, config: Value, request_id: &str) -> Result<ChannelConfig, ApiError> {
+fn parse_config(
+    channel_type: &str,
+    config: Value,
+    request_id: &str,
+) -> Result<ChannelConfig, ApiError> {
     let parsed = match channel_type {
         "email" => serde_json::from_value::<ChannelConfig>(serde_json::json!({
             "type": "email",
@@ -138,8 +142,8 @@ fn parse_config(channel_type: &str, config: Value, request_id: &str) -> Result<C
             }
         }
         ChannelConfig::Teams { webhook_url } => {
-            let ok =
-                webhook_url.contains("webhook.office.com") || webhook_url.contains("logic.azure.com");
+            let ok = webhook_url.contains("webhook.office.com")
+                || webhook_url.contains("logic.azure.com");
             if !ok {
                 return Err(ApiError::new(
                     StatusCode::BAD_REQUEST,
@@ -602,7 +606,9 @@ pub(crate) async fn channel_deliveries(
             channel_id: row.try_get("channel_id").unwrap_or_default(),
             alert_history_id: row.try_get("alert_history_id").ok(),
             alert_rule_name: row.try_get("rule_name").ok(),
-            status: row.try_get("status").unwrap_or_else(|_| "failed".to_string()),
+            status: row
+                .try_get("status")
+                .unwrap_or_else(|_| "failed".to_string()),
             error_message: row.try_get("error_message").ok(),
             delivered_at: row.try_get("delivered_at").unwrap_or_default(),
         });

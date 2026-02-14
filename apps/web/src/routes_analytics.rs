@@ -236,9 +236,10 @@ async fn build_compliance(pool: &sqlx::SqlitePool) -> Result<ComplianceResponse>
     let mappings_total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM mappings")
         .fetch_one(pool)
         .await?;
-    let mappings_active: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM mappings WHERE is_active = 1")
-        .fetch_one(pool)
-        .await?;
+    let mappings_active: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM mappings WHERE is_active = 1")
+            .fetch_one(pool)
+            .await?;
     let mappings_inactive = mappings_total.saturating_sub(mappings_active);
     let stale_24h: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM mappings
@@ -246,11 +247,10 @@ async fn build_compliance(pool: &sqlx::SqlitePool) -> Result<ComplianceResponse>
     )
     .fetch_one(pool)
     .await?;
-    let no_user: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM mappings WHERE user IS NULL OR trim(user) = ''",
-    )
-    .fetch_one(pool)
-    .await?;
+    let no_user: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM mappings WHERE user IS NULL OR trim(user) = ''")
+            .fetch_one(pool)
+            .await?;
     let no_mac: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM mappings WHERE mac IS NULL OR trim(mac) = ''")
             .fetch_one(pool)
@@ -288,10 +288,11 @@ async fn build_compliance(pool: &sqlx::SqlitePool) -> Result<ComplianceResponse>
     let total_subnets: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM subnets")
         .fetch_one(pool)
         .await?;
-    let subnets_with_mappings: i64 =
-        sqlx::query_scalar("SELECT COUNT(DISTINCT subnet_id) FROM mappings WHERE subnet_id IS NOT NULL")
-            .fetch_one(pool)
-            .await?;
+    let subnets_with_mappings: i64 = sqlx::query_scalar(
+        "SELECT COUNT(DISTINCT subnet_id) FROM mappings WHERE subnet_id IS NOT NULL",
+    )
+    .fetch_one(pool)
+    .await?;
     let ips_in_known_subnets: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM mappings WHERE subnet_id IS NOT NULL")
             .fetch_one(pool)
@@ -322,9 +323,11 @@ async fn build_compliance(pool: &sqlx::SqlitePool) -> Result<ComplianceResponse>
             .fetch_one(pool)
             .await?;
     let siem_events_24h: i64 = if siem_targets_enabled > 0 {
-        sqlx::query_scalar("SELECT COUNT(*) FROM events WHERE timestamp >= datetime('now', '-24 hours')")
-            .fetch_one(pool)
-            .await?
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM events WHERE timestamp >= datetime('now', '-24 hours')",
+        )
+        .fetch_one(pool)
+        .await?
     } else {
         0
     };
@@ -358,10 +361,11 @@ async fn build_compliance(pool: &sqlx::SqlitePool) -> Result<ComplianceResponse>
     )
     .fetch_one(pool)
     .await?;
-    let fired_7d: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM alert_history WHERE fired_at >= datetime('now', '-7 days')")
-            .fetch_one(pool)
-            .await?;
+    let fired_7d: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM alert_history WHERE fired_at >= datetime('now', '-7 days')",
+    )
+    .fetch_one(pool)
+    .await?;
     let webhook_rows = sqlx::query(
         "SELECT
             SUM(CASE WHEN webhook_status = 'sent' THEN 1 ELSE 0 END) AS sent_count,
@@ -440,13 +444,12 @@ async fn generate_report_now(db_ref: &trueid_common::db::Db) -> Result<(i64, Str
             .bind(now)
             .fetch_one(db_ref.pool())
             .await?;
-    let new_mappings: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM mappings WHERE last_seen >= ? AND last_seen < ?",
-    )
-    .bind(start)
-    .bind(now)
-    .fetch_one(db_ref.pool())
-    .await?;
+    let new_mappings: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM mappings WHERE last_seen >= ? AND last_seen < ?")
+            .bind(start)
+            .bind(now)
+            .fetch_one(db_ref.pool())
+            .await?;
     let expired_mappings: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM mappings
          WHERE is_active = 0 AND last_seen >= ? AND last_seen < ?",
@@ -469,12 +472,13 @@ async fn generate_report_now(db_ref: &trueid_common::db::Db) -> Result<(i64, Str
     .bind(now)
     .fetch_one(db_ref.pool())
     .await?;
-    let alerts_fired: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM alert_history WHERE fired_at >= ? AND fired_at < ?")
-            .bind(start)
-            .bind(now)
-            .fetch_one(db_ref.pool())
-            .await?;
+    let alerts_fired: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM alert_history WHERE fired_at >= ? AND fired_at < ?",
+    )
+    .bind(start)
+    .bind(now)
+    .fetch_one(db_ref.pool())
+    .await?;
 
     let top_users = db_analytics::top_n_users(db_ref.pool(), 1, "events", 5).await?;
     let top_sources = db_analytics::source_distribution(db_ref.pool(), 1).await?;
@@ -592,7 +596,10 @@ pub(crate) async fn top_n(
     State(state): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
     let db_ref = helpers::require_db(&state, &auth.request_id)?;
-    let metric = q.metric.unwrap_or_else(|| "events".to_string()).to_lowercase();
+    let metric = q
+        .metric
+        .unwrap_or_else(|| "events".to_string())
+        .to_lowercase();
     if !matches!(metric.as_str(), "events" | "conflicts" | "alerts") {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
@@ -645,7 +652,10 @@ pub(crate) async fn top_n(
         }
         "subnets" | "device_types" | "vendors" => {
             let (col, join) = match dimension.as_str() {
-                "subnets" => ("COALESCE(NULLIF(s.name, ''), 'Unassigned')", "LEFT JOIN subnets s ON s.id = m.subnet_id"),
+                "subnets" => (
+                    "COALESCE(NULLIF(s.name, ''), 'Unassigned')",
+                    "LEFT JOIN subnets s ON s.id = m.subnet_id",
+                ),
                 "device_types" => ("COALESCE(NULLIF(m.device_type, ''), 'Unknown')", ""),
                 _ => ("COALESCE(NULLIF(m.vendor, ''), 'Unknown')", ""),
             };
@@ -687,8 +697,12 @@ pub(crate) async fn top_n(
     }
     .map_err(|e| {
         warn!(error = %e, dimension = %dimension, metric = %metric, "Failed to compute top-N");
-        ApiError::new(StatusCode::BAD_REQUEST, error::INVALID_INPUT, "Invalid top-N query")
-            .with_request_id(&auth.request_id)
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            error::INVALID_INPUT,
+            "Invalid top-N query",
+        )
+        .with_request_id(&auth.request_id)
     })?;
 
     let total: i64 = rows.iter().map(|(_, c)| *c).sum();

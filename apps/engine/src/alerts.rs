@@ -302,7 +302,6 @@ pub async fn fire_alert(
             );
         }
     }
-
 }
 
 /// Checks whether a rule+IP pair is on cooldown.

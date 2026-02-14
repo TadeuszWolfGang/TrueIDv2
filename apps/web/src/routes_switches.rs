@@ -353,7 +353,14 @@ pub(crate) async fn create_switch(
 
     let created_id = result.last_insert_rowid();
     let target_id = created_id.to_string();
-    helpers::audit(db, &auth, "switch_create", Some(&target_id), Some(&req.name)).await;
+    helpers::audit(
+        db,
+        &auth,
+        "switch_create",
+        Some(&target_id),
+        Some(&req.name),
+    )
+    .await;
 
     get_switch(auth, Path(created_id), State(state)).await
 }

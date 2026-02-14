@@ -91,7 +91,14 @@ pub async fn create_key(
     let details =
         serde_json::json!({"role": body.role.to_string(), "description": body.description})
             .to_string();
-    helpers::audit(db, &auth, "api_key_created", Some(&target_id), Some(&details)).await;
+    helpers::audit(
+        db,
+        &auth,
+        "api_key_created",
+        Some(&target_id),
+        Some(&details),
+    )
+    .await;
 
     Ok((
         StatusCode::CREATED,
