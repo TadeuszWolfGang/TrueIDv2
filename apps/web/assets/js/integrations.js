@@ -804,7 +804,7 @@ function showNotificationForm() {
       function showTestResult(ok, message) {
         var el = document.getElementById('test-result');
         el.style.display = 'block';
-        el.style.background = ok ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)';
+        el.style.background = ok ? 'var(--status-ok-soft)' : 'var(--status-error-soft)';
         el.style.border = '1px solid ' + (ok ? 'var(--status-ok)' : 'var(--status-error)');
         el.style.color = ok ? 'var(--status-ok)' : 'var(--status-error)';
         el.textContent = (ok ? 'OK: ' : 'Error: ') + message;

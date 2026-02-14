@@ -1,6 +1,201 @@
 /* Admin module (status, retention, security, audit). */
 
 var apiKeysCache = [];
+var usersPasswordPolicy = null;
+
+      function passwordPolicyHint(policy) {
+        if (!policy) return 'Policy unavailable.';
+        var parts = ['min ' + (policy.min_length || 12) + ' chars'];
+        if (policy.require_uppercase) parts.push('uppercase');
+        if (policy.require_lowercase) parts.push('lowercase');
+        if (policy.require_digit) parts.push('digit');
+        if (policy.require_special) parts.push('special');
+        return parts.join(' · ');
+      }
+
+      async function loadUsersPolicy() {
+        if (!currentUser || currentUser.role !== 'Admin') return null;
+        try {
+          var res = await fetch('/api/v2/admin/security/password-policy', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          usersPasswordPolicy = await res.json();
+          var hintEl = document.getElementById('users-policy-hint');
+          if (hintEl) hintEl.textContent = passwordPolicyHint(usersPasswordPolicy);
+          return usersPasswordPolicy;
+        } catch (e) {
+          usersPasswordPolicy = null;
+          var hintErr = document.getElementById('users-policy-hint');
+          if (hintErr) hintErr.textContent = 'Policy load failed';
+          return null;
+        }
+      }
+
+      function validatePasswordAgainstPolicy(password, policy) {
+        if (!policy) return null;
+        if ((password || '').length < (policy.min_length || 12)) {
+          return 'Password is too short.';
+        }
+        if (policy.require_uppercase && !/[A-Z]/.test(password)) {
+          return 'Password must include uppercase letter.';
+        }
+        if (policy.require_lowercase && !/[a-z]/.test(password)) {
+          return 'Password must include lowercase letter.';
+        }
+        if (policy.require_digit && !/[0-9]/.test(password)) {
+          return 'Password must include digit.';
+        }
+        if (policy.require_special && !/[^A-Za-z0-9]/.test(password)) {
+          return 'Password must include special character.';
+        }
+        return null;
+      }
+
+      function setAddUserResult(msg, ok) {
+        var el = document.getElementById('add-user-result');
+        if (!el) return;
+        el.textContent = msg || '';
+        el.style.color = ok ? 'var(--status-ok)' : 'var(--status-error)';
+      }
+
+      function openAddUserModal() {
+        var modal = document.getElementById('add-user-modal');
+        if (!modal) return;
+        modal.style.display = '';
+        document.getElementById('add-user-username').value = '';
+        document.getElementById('add-user-password').value = '';
+        document.getElementById('add-user-password-confirm').value = '';
+        document.getElementById('add-user-role').value = 'Viewer';
+        setAddUserResult('', true);
+        loadUsersPolicy();
+      }
+
+      function closeAddUserModal() {
+        var modal = document.getElementById('add-user-modal');
+        if (!modal) return;
+        modal.style.display = 'none';
+      }
+
+      async function createUserFromModal() {
+        var username = (document.getElementById('add-user-username').value || '').trim();
+        var password = document.getElementById('add-user-password').value || '';
+        var confirmPassword = document.getElementById('add-user-password-confirm').value || '';
+        var role = document.getElementById('add-user-role').value || 'Viewer';
+        if (!username) {
+          setAddUserResult('Username is required.', false);
+          return;
+        }
+        if (!password) {
+          setAddUserResult('Password is required.', false);
+          return;
+        }
+        if (password !== confirmPassword) {
+          setAddUserResult('Passwords do not match.', false);
+          return;
+        }
+        if (!usersPasswordPolicy) await loadUsersPolicy();
+        var policyErr = validatePasswordAgainstPolicy(password, usersPasswordPolicy);
+        if (policyErr) {
+          setAddUserResult(policyErr, false);
+          return;
+        }
+        try {
+          var res = await fetch('/api/v2/admin/users', {
+            method: 'POST',
+            headers: mutHeaders(),
+            credentials: 'include',
+            body: JSON.stringify({
+              username: username,
+              password: password,
+              role: role
+            })
+          });
+          if (!res.ok) {
+            var txt = await res.text();
+            throw new Error(txt || ('HTTP ' + res.status));
+          }
+          setAddUserResult('User created.', true);
+          await loadUsersSection();
+          closeAddUserModal();
+        } catch (e) {
+          setAddUserResult('Create failed: ' + e.message, false);
+        }
+      }
+
+      async function resetUserPassword(id) {
+        if (!currentUser || currentUser.role !== 'Admin') return;
+        var first = prompt('New password for user #' + id + ':');
+        if (!first) return;
+        var second = prompt('Confirm new password for user #' + id + ':');
+        if (first !== second) {
+          alert('Passwords do not match.');
+          return;
+        }
+        if (!usersPasswordPolicy) await loadUsersPolicy();
+        var policyErr = validatePasswordAgainstPolicy(first, usersPasswordPolicy);
+        if (policyErr) {
+          alert(policyErr);
+          return;
+        }
+        try {
+          var res = await fetch('/api/v2/admin/users/' + encodeURIComponent(id) + '/reset-password', {
+            method: 'POST',
+            headers: mutHeaders(),
+            credentials: 'include',
+            body: JSON.stringify({ new_password: first })
+          });
+          if (!res.ok) {
+            var txt = await res.text();
+            throw new Error(txt || ('HTTP ' + res.status));
+          }
+          await loadUsersSection();
+        } catch (e) {
+          alert('Reset failed: ' + e.message);
+        }
+      }
+
+      async function loadUsersSection() {
+        if (!currentUser || currentUser.role !== 'Admin') return;
+        var bodyEl = document.getElementById('users-body');
+        if (!bodyEl) return;
+        await loadUsersPolicy();
+        try {
+          var res = await fetch('/api/v2/admin/users?page=1&per_page=200', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var data = await res.json();
+          var rows = [];
+          if (Array.isArray(data)) {
+            rows = data;
+          } else if (Array.isArray(data.users)) {
+            rows = data.users;
+          } else if (Array.isArray(data.data)) {
+            rows = data.data;
+          }
+          if (!rows.length) {
+            bodyEl.innerHTML = '<tr><td colspan="6" class="muted">No users.</td></tr>';
+            return;
+          }
+          bodyEl.innerHTML = rows.map(function (u) {
+            var source = u.auth_source || 'local';
+            var sourceText = source === 'oidc'
+              ? ('oidc' + (u.oidc_provider ? ' (' + u.oidc_provider + ')' : ''))
+              : 'local';
+            var flags = [];
+            if (u.force_password_change) flags.push('<span class="badge badge-warning">password reset</span>');
+            if (u.locked_until) flags.push('<span class="badge badge-critical">locked</span>');
+            var actions = '<button class="btn btn-sm" onclick="resetUserPassword(' + u.id + ')">Reset Password</button>';
+            return '<tr>' +
+              '<td>' + escapeHtml(u.username || '-') + '</td>' +
+              '<td>' + escapeHtml(u.role || '-') + '</td>' +
+              '<td>' + escapeHtml(sourceText) + '</td>' +
+              '<td>' + (flags.join(' ') || '<span class="muted">-</span>') + '</td>' +
+              '<td>' + escapeHtml(timeAgo(u.created_at)) + '</td>' +
+              '<td>' + actions + '</td>' +
+              '</tr>';
+          }).join('');
+        } catch (e) {
+          bodyEl.innerHTML = '<tr><td colspan="6" style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+        }
+      }
 
       function renderUsageSparkline(points) {
         if (!Array.isArray(points) || points.length === 0) return '<span class="muted">-</span>';
@@ -648,6 +843,7 @@ async function openSecurityModal() {
         await loadAdminSecuritySection();
         await loadOidcConfig();
         await loadApiKeysSection();
+        await loadUsersSection();
         await loadStatusTags();
       }
 
@@ -726,6 +922,10 @@ async function openSecurityModal() {
   if (typeof window.loadStatusTags === 'function') window.TrueID.loadStatusTags = window.loadStatusTags;
   if (typeof window.loadSystemStatus === 'function') window.TrueID.loadSystemStatus = window.loadSystemStatus;
   if (typeof window.loadTotpStatus === 'function') window.TrueID.loadTotpStatus = window.loadTotpStatus;
+  if (typeof window.closeAddUserModal === 'function') window.TrueID.closeAddUserModal = window.closeAddUserModal;
+  if (typeof window.createUserFromModal === 'function') window.TrueID.createUserFromModal = window.createUserFromModal;
+  if (typeof window.loadUsersSection === 'function') window.TrueID.loadUsersSection = window.loadUsersSection;
+  if (typeof window.openAddUserModal === 'function') window.TrueID.openAddUserModal = window.openAddUserModal;
   if (typeof window.openSecurityModal === 'function') window.TrueID.openSecurityModal = window.openSecurityModal;
   if (typeof window.createApiKey === 'function') window.TrueID.createApiKey = window.createApiKey;
   if (typeof window.loadApiKeysSection === 'function') window.TrueID.loadApiKeysSection = window.loadApiKeysSection;
@@ -738,6 +938,7 @@ async function openSecurityModal() {
   if (typeof window.runRetentionNow === 'function') window.TrueID.runRetentionNow = window.runRetentionNow;
   if (typeof window.saveAdminSecurityPolicy === 'function') window.TrueID.saveAdminSecurityPolicy = window.saveAdminSecurityPolicy;
   if (typeof window.saveOidcConfig === 'function') window.TrueID.saveOidcConfig = window.saveOidcConfig;
+  if (typeof window.resetUserPassword === 'function') window.TrueID.resetUserPassword = window.resetUserPassword;
   if (typeof window.saveApiKeyLimits === 'function') window.TrueID.saveApiKeyLimits = window.saveApiKeyLimits;
   if (typeof window.saveRetentionPolicy === 'function') window.TrueID.saveRetentionPolicy = window.saveRetentionPolicy;
   if (typeof window.startTotpSetup === 'function') window.TrueID.startTotpSetup = window.startTotpSetup;

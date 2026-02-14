@@ -92,7 +92,7 @@
       width: w,
       height: h,
       rx: 4,
-      fill: discovered ? 'rgba(0,255,65,0.04)' : 'var(--bg-panel)',
+      fill: discovered ? 'var(--green-ghost)' : 'var(--bg-panel)',
       stroke: discovered ? 'var(--green-mid)' : subnetStroke(subnet.conflict_count || 0),
       'stroke-width': discovered ? 1 : 1.5,
       'stroke-dasharray': discovered ? '5 3' : '',

@@ -47,7 +47,7 @@ function renderBarChart(containerId, data, color) {
           themeColor('--status-info'),
           themeColor('--status-warn'),
           themeColor('--status-error'),
-          'mediumpurple'
+          themeColor('--status-accent')
         ];
         var offset = 0;
         var svg = '<svg width="180" height="180" viewBox="0 0 180 180">';

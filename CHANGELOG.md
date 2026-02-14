@@ -17,6 +17,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - Package versions bumped to `0.8.0` across workspace crates/apps
 - OpenAPI metadata version bumped and extended with Phase 6 endpoint groups
 - HA docs extended with OIDC SSO failover/runtime notes
+- Dashboard navigation refactored from top tabs to a fixed left sidebar with grouped sections and Matrix-styled active state
+- Status/Admin UI extended with Users table, Add User modal, and Reset Password actions wired to `/api/v2/admin/users*`
 
 ## [0.6.0] — 2026-02-13
 

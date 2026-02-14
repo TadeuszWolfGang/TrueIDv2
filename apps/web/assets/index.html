@@ -28,6 +28,16 @@
         --border-bright: #00ff41;
         --scrollbar-thumb: #0a8a2e;
         --scrollbar-track: #020a06;
+        --status-ok-soft: color-mix(in srgb, var(--status-ok) 14%, transparent);
+        --status-warn-soft: color-mix(in srgb, var(--status-warn) 14%, transparent);
+        --status-error-soft: color-mix(in srgb, var(--status-error) 14%, transparent);
+        --status-info-soft: color-mix(in srgb, var(--status-info) 14%, transparent);
+        --status-accent: color-mix(in srgb, var(--status-info) 60%, var(--status-warn) 40%);
+        --danger-glow: 0 0 8px color-mix(in srgb, var(--status-error) 40%, transparent);
+        --matrix-rain-fade: color-mix(in srgb, var(--bg-deep) 92%, transparent);
+        --toast-flash-glow: 0 0 15px color-mix(in srgb, var(--green-bright) 50%, transparent);
+        --overlay-backdrop: color-mix(in srgb, var(--bg-deep) 65%, transparent);
+        --overlay-backdrop-strong: color-mix(in srgb, var(--bg-deep) 68%, transparent);
       }
       body {
         background: var(--bg-deep);
@@ -35,7 +45,38 @@
         font-family: "SFMono-Regular", ui-monospace, Menlo, Monaco, Consolas,
           "Liberation Mono", "Courier New", monospace;
         margin: 0;
-        padding: 24px;
+        padding: 0;
+      }
+      #app-shell {
+        display: block;
+      }
+      #sidebar {
+        position: fixed;
+        left: 0;
+        top: 0;
+        width: 180px;
+        height: 100vh;
+        overflow-y: auto;
+        background: var(--bg-panel);
+        border-right: 1px solid var(--border-dim);
+        box-shadow: 0 0 18px var(--green-ghost);
+        display: flex;
+        flex-direction: column;
+        z-index: 2;
+      }
+      #sidebar-logo {
+        color: var(--green-bright);
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        font-size: 17px;
+        padding: 14px 12px 12px;
+        text-shadow: var(--text-glow);
+      }
+      #main-content {
+        margin-left: 180px;
+        height: 100vh;
+        overflow: auto;
+        padding: 20px 24px;
       }
       body > *:not(#matrix-bg) { position: relative; z-index: 1; }
       h1 {
@@ -94,27 +135,75 @@
       .vendor { display: block; font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
       .status { margin-top: 12px; font-size: 12px; color: var(--text-secondary); }
 
+      #tabs {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        padding: 8px 0 0;
+      }
       .tab {
-        padding: 8px 24px;
-        background: var(--bg-panel);
+        width: 100%;
+        text-align: left;
+        padding: 8px 12px;
+        background: transparent;
         color: var(--text-secondary);
-        border: 1px solid var(--border-dim);
-        border-bottom: none;
+        border: none;
+        border-left: 3px solid transparent;
         cursor: pointer;
         font-family: inherit;
-        font-size: 14px;
+        font-size: 13px;
         transition: all 0.2s;
       }
-      .tab:hover { color: var(--green-bright); }
+      .tab:hover {
+        color: var(--green-bright);
+        background: var(--bg-hover);
+      }
       .tab.active {
         color: var(--green-bright);
-        background: var(--bg-deep);
-        border-color: var(--green-bright);
-        border-bottom: 2px solid var(--green-bright);
-        box-shadow: 0 2px 8px var(--green-ghost);
+        background: var(--green-ghost);
+        border-left: 3px solid var(--green-bright);
+        box-shadow: inset 0 0 8px var(--green-ghost);
         text-shadow: var(--text-glow);
-        margin-bottom: -1px;
-        z-index: 1;
+      }
+      .tab-group-label {
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-size: 10px;
+        padding: 10px 12px 4px;
+      }
+      .sidebar-divider {
+        border-top: 1px solid var(--border-dim);
+        margin: 10px 10px 8px;
+      }
+      #user-bar {
+        margin-top: auto;
+        padding: 8px 10px 12px;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+      }
+      #user-info {
+        color: var(--text-secondary);
+        font-size: 12px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #connection-status {
+        color: var(--text-secondary);
+        font-size: 11px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .sidebar-controls {
+        display: flex;
+        gap: 6px;
+      }
+      .sidebar-controls .btn {
+        flex: 1;
+        padding: 6px 8px;
       }
 
       .setting-row {
@@ -212,7 +301,7 @@
         color: var(--status-error);
         border-color: var(--status-error);
       }
-      .btn-danger:hover { box-shadow: 0 0 8px rgba(255, 45, 45, 0.4); }
+      .btn-danger:hover { box-shadow: var(--danger-glow); }
       .btn-sm { padding: 6px 12px; font-size: 12px; }
       .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
@@ -234,7 +323,7 @@
         0%, 100% { border-color: var(--border-dim); }
         50% {
           border-color: var(--status-error);
-          box-shadow: 0 0 8px rgba(255, 45, 45, 0.4);
+          box-shadow: var(--danger-glow);
         }
       }
 
@@ -246,16 +335,16 @@
         font-weight: 600;
         text-transform: uppercase;
       }
-      .badge-critical { background: rgba(255, 45, 45, 0.16); color: var(--status-error); }
-      .badge-warning { background: rgba(255, 184, 0, 0.16); color: var(--status-warn); }
-      .badge-info { background: rgba(0, 180, 255, 0.16); color: var(--status-info); }
+      .badge-critical { background: var(--status-error-soft); color: var(--status-error); }
+      .badge-warning { background: var(--status-warn-soft); color: var(--status-warn); }
+      .badge-info { background: var(--status-info-soft); color: var(--status-info); }
       .badge-panos,
       .badge-cef,
       .badge-udp { background: var(--green-ghost); color: var(--status-ok); }
       .badge-fortigate,
       .badge-json,
-      .badge-tcp { background: rgba(0, 180, 255, 0.16); color: var(--status-info); }
-      .badge-leef { background: rgba(255, 184, 0, 0.16); color: var(--status-warn); }
+      .badge-tcp { background: var(--status-info-soft); color: var(--status-info); }
+      .badge-leef { background: var(--status-warn-soft); color: var(--status-warn); }
       .check-yes { color: var(--status-ok); font-weight: 700; }
       .check-no { color: var(--status-error); font-weight: 700; }
       .expand-row { cursor: pointer; }
@@ -305,8 +394,8 @@
           0deg,
           transparent,
           transparent 2px,
-          rgba(0, 255, 65, 0.02) 2px,
-          rgba(0, 255, 65, 0.02) 4px
+          color-mix(in srgb, var(--green-bright) 8%, transparent) 2px,
+          color-mix(in srgb, var(--green-bright) 8%, transparent) 4px
         );
         pointer-events: none;
       }
@@ -347,7 +436,7 @@
         10% {
           opacity: 1;
           transform: translateX(0);
-          box-shadow: 0 0 15px rgba(0, 255, 65, 0.5);
+          box-shadow: var(--toast-flash-glow);
         }
         90% { opacity: 1; }
         100% { opacity: 0; }
@@ -380,39 +469,51 @@
   <body>
     <canvas id="matrix-bg" style="position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;opacity:0.04;pointer-events:none;"></canvas>
 
-    <!-- User bar -->
-    <div id="user-bar" style="display:none;justify-content:space-between;align-items:center;margin-bottom:16px;">
-      <span id="user-info" style="color:var(--text-secondary);font-size:13px;"></span>
-      <span id="connection-status" style="color:var(--text-secondary);font-size:12px;display:flex;align-items:center;gap:6px;">
-        <span class="dot offline"></span> Polling
-      </span>
-      <div style="display:flex;gap:8px;">
-        <button class="btn btn-sm" id="matrix-toggle" onclick="toggleMatrixRain()" title="Toggle background effect">◈</button>
-        <button class="btn btn-sm" id="security-btn" onclick="openSecurityModal()">Security</button>
-        <button class="btn btn-sm" id="logout-btn" onclick="doLogout()">Logout</button>
-      </div>
-    </div>
+    <div id="app-shell">
+      <aside id="sidebar">
+        <div id="sidebar-logo">▸ TRUEID</div>
+        <nav id="tabs">
+          <div class="tab-group-label">Core</div>
+          <button class="tab active" id="tab-btn-mappings" onclick="switchTab('mappings')">Mappings</button>
+          <button class="tab" id="tab-btn-search" onclick="switchTab('search')">Search</button>
+          <button class="tab" id="tab-btn-conflicts" onclick="switchTab('conflicts')">Conflicts</button>
+          <button class="tab" id="tab-btn-alerts" onclick="switchTab('alerts')">Alerts</button>
 
-    <!-- Tab navigation -->
-    <nav id="tabs" style="display:flex;gap:0;margin-bottom:20px;">
-      <button class="tab active" id="tab-btn-mappings" onclick="switchTab('mappings')">Mappings</button>
-      <button class="tab" id="tab-btn-search" onclick="switchTab('search')">Search</button>
-      <button class="tab" id="tab-btn-conflicts" onclick="switchTab('conflicts')">Conflicts</button>
-      <button class="tab" id="tab-btn-alerts" onclick="switchTab('alerts')">Alerts</button>
-      <button class="tab" id="tab-btn-analytics" onclick="switchTab('analytics')">Analytics</button>
-      <button class="tab" id="tab-btn-map" onclick="switchTab('map')">Network Map</button>
-      <button class="tab" id="tab-btn-subnets" onclick="switchTab('subnets')">Subnets</button>
-      <button class="tab" id="tab-btn-switches" onclick="switchTab('switches')">Switches</button>
-      <button class="tab" id="tab-btn-fingerprints" onclick="switchTab('fingerprints')">Fingerprints</button>
-      <button class="tab" id="tab-btn-dns" onclick="switchTab('dns')">DNS</button>
-      <button class="tab" id="tab-btn-status" onclick="switchTab('status')">Status</button>
-      <button class="tab" id="tab-btn-firewall" onclick="switchTab('firewall')" style="display:none;">Firewall</button>
-      <button class="tab" id="tab-btn-siem" onclick="switchTab('siem')" style="display:none;">SIEM</button>
-      <button class="tab" id="tab-btn-ldap" onclick="switchTab('ldap')" style="display:none;">LDAP</button>
-      <button class="tab" id="tab-btn-notifications" onclick="switchTab('notifications')" style="display:none;">Notifications</button>
-      <button class="tab" id="tab-btn-sycope" onclick="switchTab('sycope')">Sycope</button>
-      <button class="tab" id="tab-btn-audit" onclick="switchTab('audit')" style="display:none;">Audit Log</button>
-    </nav>
+          <div class="tab-group-label">Analytics</div>
+          <button class="tab" id="tab-btn-analytics" onclick="switchTab('analytics')">Analytics</button>
+          <button class="tab" id="tab-btn-map" onclick="switchTab('map')">Net Map</button>
+
+          <div class="tab-group-label">Network</div>
+          <button class="tab" id="tab-btn-subnets" onclick="switchTab('subnets')">Subnets</button>
+          <button class="tab" id="tab-btn-switches" onclick="switchTab('switches')">Switches</button>
+          <button class="tab" id="tab-btn-fingerprints" onclick="switchTab('fingerprints')">FPrint</button>
+          <button class="tab" id="tab-btn-dns" onclick="switchTab('dns')">DNS</button>
+
+          <div class="tab-group-label">Integrations</div>
+          <button class="tab" id="tab-btn-firewall" onclick="switchTab('firewall')" style="display:none;">Firewall</button>
+          <button class="tab" id="tab-btn-siem" onclick="switchTab('siem')" style="display:none;">SIEM</button>
+          <button class="tab" id="tab-btn-ldap" onclick="switchTab('ldap')" style="display:none;">LDAP</button>
+          <button class="tab" id="tab-btn-notifications" onclick="switchTab('notifications')" style="display:none;">Notifs</button>
+          <button class="tab" id="tab-btn-sycope" onclick="switchTab('sycope')">Sycope</button>
+
+          <div class="tab-group-label">Admin</div>
+          <button class="tab" id="tab-btn-audit" onclick="switchTab('audit')" style="display:none;">Audit</button>
+          <button class="tab" id="tab-btn-status" onclick="switchTab('status')">Status</button>
+        </nav>
+        <div class="sidebar-divider"></div>
+        <div id="user-bar" style="display:none;">
+          <span id="user-info"></span>
+          <span id="connection-status">
+            <span class="dot offline"></span> Polling
+          </span>
+          <div class="sidebar-controls">
+            <button class="btn btn-sm" id="matrix-toggle" onclick="toggleMatrixRain()" title="Toggle background effect">◈</button>
+            <button class="btn btn-sm" id="security-btn" onclick="openSecurityModal()">Security</button>
+            <button class="btn btn-sm" id="logout-btn" onclick="doLogout()">Logout</button>
+          </div>
+        </div>
+      </aside>
+      <main id="main-content">
 
     <!-- ═══ TAB: Mappings ═══ -->
     <div id="tab-mappings">
@@ -1072,6 +1173,28 @@
 
         <div class="setting-divider role-admin" style="margin:16px 0;"></div>
 
+        <h2 class="section-title role-admin">Users (Admin)</h2>
+        <div class="role-admin" style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
+          <button class="btn btn-sm" onclick="openAddUserModal()">+ Add User</button>
+          <button class="btn btn-sm" onclick="loadUsersSection()">Refresh</button>
+          <span id="users-policy-hint" class="muted"></span>
+        </div>
+        <table class="role-admin">
+          <thead>
+            <tr>
+              <th>Username</th>
+              <th>Role</th>
+              <th>Auth Source</th>
+              <th>Flags</th>
+              <th>Created</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="users-body"><tr><td colspan="6" class="muted">Loading...</td></tr></tbody>
+        </table>
+
+        <div class="setting-divider role-admin" style="margin:16px 0;"></div>
+
         <h2 class="section-title role-admin">Tags (Admin)</h2>
         <div class="role-admin" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
           <input id="status-tag-ip" class="setting-input" style="width:170px;" placeholder="IP">
@@ -1472,6 +1595,9 @@
       </div>
     </div>
 
+      </main>
+    </div>
+
     <!-- Timeline slide-in panel -->
     <div id="timeline-panel" style="display:none;position:fixed;top:0;right:0;width:500px;height:100vh;background:var(--bg-panel);border-left:2px solid var(--green-bright);overflow-y:auto;padding:24px;z-index:100;box-shadow:-4px 0 24px var(--green-ghost);">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
@@ -1482,7 +1608,7 @@
     </div>
 
     <!-- Analytics report JSON modal -->
-    <div id="analytics-report-modal" style="display:none;position:fixed;inset:0;background:rgba(2,10,6,0.65);z-index:120;">
+    <div id="analytics-report-modal" style="display:none;position:fixed;inset:0;background:var(--overlay-backdrop);z-index:120;">
       <div style="max-width:900px;margin:40px auto;background:var(--bg-panel);border:1px solid var(--border-dim);border-radius:8px;padding:16px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
           <h2 style="margin:0;color:var(--green-bright);font-size:16px;text-shadow:var(--text-glow);">Report JSON</h2>
@@ -1492,7 +1618,34 @@
       </div>
     </div>
     <div id="live-indicator" style="position:fixed;bottom:16px;right:16px;z-index:200;"></div>
-    <div id="security-modal" style="display:none;position:fixed;inset:0;background:rgba(2,10,6,0.68);z-index:300;">
+    <div id="add-user-modal" style="display:none;position:fixed;inset:0;background:color-mix(in srgb, var(--bg-deep) 74%, transparent);z-index:320;">
+      <div class="security-modal-panel" style="max-width:520px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;">
+          <h2 class="section-title" style="margin:0;">Add User</h2>
+          <button class="btn btn-sm" onclick="closeAddUserModal()">Close</button>
+        </div>
+        <div class="sync-status-box" style="margin-top:12px;">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <input id="add-user-username" class="setting-input" style="width:220px;" placeholder="Username">
+            <select id="add-user-role" class="setting-input" style="width:140px;">
+              <option value="Admin">Admin</option>
+              <option value="Operator">Operator</option>
+              <option value="Viewer" selected>Viewer</option>
+            </select>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+            <input id="add-user-password" type="password" class="setting-input" style="width:220px;" placeholder="Password">
+            <input id="add-user-password-confirm" type="password" class="setting-input" style="width:220px;" placeholder="Confirm password">
+          </div>
+          <div id="add-user-result" class="muted" style="margin-top:8px;"></div>
+          <div style="display:flex;gap:8px;margin-top:10px;">
+            <button class="btn btn-sm" onclick="createUserFromModal()">Create user</button>
+            <button class="btn btn-sm" onclick="closeAddUserModal()">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="security-modal" style="display:none;position:fixed;inset:0;background:var(--overlay-backdrop-strong);z-index:300;">
       <div class="security-modal-panel">
         <div style="display:flex;justify-content:space-between;align-items:center;">
           <h2 class="section-title" style="margin:0;">Security Settings</h2>

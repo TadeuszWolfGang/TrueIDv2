@@ -85,7 +85,7 @@ var currentUser = null;
         var drops = new Array(columns).fill(1);
         var chars = 'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン0123456789ABCDEF';
         function draw() {
-          ctx.fillStyle = 'rgba(2, 10, 6, 0.05)';
+          ctx.fillStyle = themeColor('--matrix-rain-fade');
           ctx.fillRect(0, 0, canvas.width, canvas.height);
           ctx.fillStyle = themeColor('--green-bright');
           ctx.font = fontSize + 'px monospace';
