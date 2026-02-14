@@ -2713,3 +2713,90 @@ async fn test_session_info_includes_ip() {
         "expected bound IP in session info"
     );
 }
+
+#[tokio::test]
+async fn test_ip_tag_crud() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/tags",
+        &json!({
+            "ip": "10.1.2.3",
+            "tag": "server",
+            "color": "#3b82f6"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let tag_id = created["id"].as_i64().unwrap_or_default();
+    assert!(tag_id > 0, "expected created tag id, got: {created}");
+
+    let (status, list) = auth_get(&app, &cookie, "/api/v2/tags").await;
+    assert_eq!(status, StatusCode::OK);
+    let rows = list["data"].as_array().cloned().unwrap_or_default();
+    assert!(
+        rows.iter().any(|r| r["tag"] == "server"),
+        "expected server tag in list, got: {list}"
+    );
+
+    let (status, by_ip) = auth_get(&app, &cookie, "/api/v2/tags/ip/10.1.2.3").await;
+    assert_eq!(status, StatusCode::OK);
+    let tags = by_ip["data"].as_array().cloned().unwrap_or_default();
+    assert!(
+        tags.iter().any(|r| r["tag"] == "server"),
+        "expected server tag on IP, got: {by_ip}"
+    );
+
+    let (status, _) = auth_delete(&app, &cookie, &format!("/api/v2/tags/{tag_id}")).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_ip_tag_search() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, _) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/tags",
+        &json!({"ip": "10.1.2.3", "tag": "vip", "color": "#d4af37"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, _) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/tags",
+        &json!({"ip": "10.1.2.4", "tag": "vip", "color": "#d4af37"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/tags/search?tag=vip").await;
+    assert_eq!(status, StatusCode::OK);
+    let rows = body["data"].as_array().cloned().unwrap_or_default();
+    assert_eq!(rows.len(), 2, "expected 2 rows for vip tag, got: {body}");
+}
+
+#[tokio::test]
+async fn test_discovered_subnets_list() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/subnets/discovered").await;
+    assert_eq!(status, StatusCode::OK);
+    let rows = body["data"].as_array().cloned().unwrap_or_default();
+    assert!(rows.is_empty(), "expected empty discovered subnets, got: {body}");
+}
+
+#[tokio::test]
+async fn test_geo_lookup_private_ip() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/geo/10.0.0.1").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["is_private"], json!(true));
+}

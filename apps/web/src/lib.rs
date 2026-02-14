@@ -17,6 +17,7 @@ pub mod routes_conflicts;
 pub mod routes_dns;
 pub mod routes_fingerprints;
 pub mod routes_firewall;
+pub mod routes_geo;
 pub mod routes_import;
 pub mod routes_ldap;
 pub mod routes_notifications;
@@ -28,6 +29,7 @@ pub mod routes_siem;
 pub mod routes_sse;
 pub mod routes_subnets;
 pub mod routes_switches;
+pub mod routes_tags;
 pub mod routes_timeline;
 pub mod routes_users;
 pub mod routes_v1;
@@ -222,6 +224,17 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v2/dns/stats", get(routes_dns::dns_stats))
         .route("/api/v2/dns/{ip}", get(routes_dns::dns_by_ip))
         .route("/api/v2/dns/:ip", get(routes_dns::dns_by_ip))
+        .route("/api/v2/geo/stats", get(routes_geo::stats))
+        .route("/api/v2/geo/{ip}", get(routes_geo::lookup))
+        .route("/api/v2/geo/:ip", get(routes_geo::lookup))
+        .route("/api/v2/tags", get(routes_tags::list_tags))
+        .route("/api/v2/tags/ip/{ip}", get(routes_tags::tags_for_ip))
+        .route("/api/v2/tags/ip/:ip", get(routes_tags::tags_for_ip))
+        .route("/api/v2/tags/search", get(routes_tags::search_by_tag))
+        .route(
+            "/api/v2/subnets/discovered",
+            get(routes_subnets::list_discovered_subnets),
+        )
         .route("/api/v2/siem/stats", get(routes_siem::siem_stats))
         .route("/api/v2/siem/targets", get(routes_siem::list_targets))
         .route("/api/v2/siem/targets/{id}", get(routes_siem::get_target))
@@ -347,6 +360,13 @@ pub fn build_router(state: AppState) -> Router {
             "/api/v2/conflicts/{id}/resolve",
             post(routes_conflicts::resolve_conflict),
         )
+        .route("/api/v2/tags", post(routes_tags::create_tag))
+        .route("/api/v2/tags/{id}", delete(routes_tags::delete_tag))
+        .route("/api/v2/tags/:id", delete(routes_tags::delete_tag))
+        .route(
+            "/api/v2/subnets/promote",
+            post(routes_subnets::promote_discovered_subnet),
+        )
         .layer(axum_mw::from_fn_with_state(
             state.clone(),
             middleware::require_operator_layer,
@@ -469,6 +489,15 @@ pub fn build_router(state: AppState) -> Router {
         .route(
             "/api/v2/admin/retention/stats",
             get(routes_retention::stats),
+        )
+        .route("/api/v2/geo/refresh", post(routes_geo::refresh))
+        .route(
+            "/api/v2/subnets/discovered/{id}",
+            delete(routes_subnets::dismiss_discovered_subnet),
+        )
+        .route(
+            "/api/v2/subnets/discovered/:id",
+            delete(routes_subnets::dismiss_discovered_subnet),
         )
         .route(
             "/api/v2/notifications/channels",

@@ -244,6 +244,8 @@
               <th>MAC</th>
               <th>User</th>
               <th>Groups</th>
+              <th>Location</th>
+              <th>Tags</th>
               <th>Last Seen</th>
               <th>Source</th>
               <th>Confidence</th>
@@ -251,7 +253,7 @@
           </thead>
           <tbody id="mappings-body">
             <tr>
-              <td colspan="8" class="muted">Waiting for data...</td>
+              <td colspan="10" class="muted">Waiting for data...</td>
             </tr>
           </tbody>
         </table>
@@ -513,6 +515,25 @@
           <tbody id="subnets-body"><tr><td colspan="7" class="muted">Loading...</td></tr></tbody>
         </table>
         <div id="subnets-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:#6b8579;"></div>
+
+        <div class="setting-divider" style="margin:16px 0;"></div>
+        <h2 class="section-title">Discovered Subnets</h2>
+        <div style="display:flex;gap:8px;margin-bottom:12px;">
+          <button class="btn btn-sm" onclick="loadDiscoveredSubnets()">Refresh</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>CIDR</th>
+              <th>IP Count</th>
+              <th>First Seen</th>
+              <th>Last Seen</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="discovered-subnets-body"><tr><td colspan="6" class="muted">Loading...</td></tr></tbody>
+        </table>
       </div>
     </div>
 
@@ -716,6 +737,17 @@
         </div>
         <div id="admin-security-policy" class="sync-status-box role-admin" style="margin-bottom:10px;"></div>
         <div id="admin-security-sessions" class="sync-status-box role-admin" style="max-height:220px;overflow:auto;"></div>
+
+        <div class="setting-divider role-admin" style="margin:16px 0;"></div>
+
+        <h2 class="section-title role-admin">Tags (Admin)</h2>
+        <div class="role-admin" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+          <input id="status-tag-ip" class="setting-input" style="width:170px;" placeholder="IP">
+          <input id="status-tag-name" class="setting-input" style="width:150px;" placeholder="Tag">
+          <input id="status-tag-color" class="setting-input" style="width:110px;" placeholder="#3b82f6">
+          <button class="btn btn-sm" onclick="quickAddTag()">Add Tag</button>
+        </div>
+        <div id="status-tags-list" class="sync-status-box role-admin">Loading...</div>
 
         <div class="setting-divider role-admin" style="margin:16px 0;"></div>
 
@@ -1264,6 +1296,24 @@
         return '<span class="wh-skip">- ' + escapeHtml(status || 'no_webhook') + '</span>';
       }
 
+      function countryCodeToFlag(cc) {
+        if (!cc || cc.length !== 2) return '';
+        var a = cc.toUpperCase().charCodeAt(0);
+        var b = cc.toUpperCase().charCodeAt(1);
+        if (a < 65 || a > 90 || b < 65 || b > 90) return '';
+        return String.fromCodePoint(0x1F1E6 + (a - 65), 0x1F1E6 + (b - 65));
+      }
+
+      function renderTagsBadges(tags) {
+        if (!Array.isArray(tags) || tags.length === 0) return '<span class="muted">-</span>';
+        return tags.slice(0, 4).map(function (t) {
+          var color = t && t.color ? t.color : '#6b8579';
+          var label = t && t.tag ? t.tag : '-';
+          return '<span class="badge" style="margin-right:4px;border:1px solid ' + escapeHtml(color) + ';color:' + escapeHtml(color) + ';">' +
+            escapeHtml(label) + '</span>';
+        }).join('');
+      }
+
       function getRealtimePollInterval(tabName) {
         if ((tabName === 'mappings' || tabName === 'conflicts' || tabName === 'alerts') && sseConnected) {
           return 120000;
@@ -1801,7 +1851,7 @@
       function renderMappingsTable(items) {
         var body = document.getElementById('mappings-body');
         if (!items || items.length === 0) {
-          body.innerHTML = '<tr><td colspan="8" class="muted">No mappings found.</td></tr>';
+          body.innerHTML = '<tr><td colspan="10" class="muted">No mappings found.</td></tr>';
           return;
         }
         body.innerHTML = items.map(function (item) {
@@ -1815,6 +1865,11 @@
           var user = users.length ? users.join(', ') : '-';
           var userPrimary = users.length ? users[0] : (item.user || '-');
           var groups = formatGroups(item.groups);
+          var location = item.country_code
+            ? ((countryCodeToFlag(item.country_code) ? countryCodeToFlag(item.country_code) + ' ' : '') +
+              (item.city || item.country_code))
+            : (item.city === 'Private' ? 'Private' : '-');
+          var tags = renderTagsBadges(item.tags);
           var multiBadge = item.multi_user ? '<span class="multi-badge">🖥 multi</span>' : '';
           var source = item.source || '-';
           var confidence = item.confidence_score != null ? item.confidence_score : '-';
@@ -1824,6 +1879,8 @@
             '<td>' + escapeHtml(mac) + vendor + '</td>' +
             '<td><a href="#" class="ip-link" onclick="openTimeline(\'user\', \'' + escJs(userPrimary) + '\');return false;">' + escapeHtml(user) + '</a>' + multiBadge + '</td>' +
             '<td>' + groups + '</td>' +
+            '<td>' + escapeHtml(location) + '</td>' +
+            '<td>' + tags + '</td>' +
             '<td>' + escapeHtml(timeAgo(item.last_seen)) + '</td>' +
             '<td>' + escapeHtml(source) + '</td>' +
             '<td>' + escapeHtml(confidence) + '</td>' +
@@ -1868,7 +1925,7 @@
           loadMappingsStats();
         } catch (err) {
           document.getElementById('mappings-body').innerHTML =
-            '<tr><td colspan="8" style="color:#ef4444;">Failed: ' + escapeHtml(err.message) + '</td></tr>';
+            '<tr><td colspan="10" style="color:#ef4444;">Failed: ' + escapeHtml(err.message) + '</td></tr>';
           status.textContent = 'Last update failed';
         }
       }
@@ -2496,6 +2553,14 @@
               html += '<div><strong>MAC:</strong> ' + escapeHtml(mapping.mac || '-') + '</div>';
               html += '<div><strong>Source:</strong> ' + escapeHtml(mapping.source || '-') + '</div>';
               html += '<div><strong>Last Seen:</strong> ' + escapeHtml(new Date(mapping.last_seen).toLocaleString()) + '</div>';
+              try {
+                var tagsResp = await fetch('/api/v2/tags/ip/' + encodeURIComponent(value), { credentials: 'include' });
+                if (tagsResp.ok) {
+                  var tagsBody = await tagsResp.json();
+                  var tags = tagsBody.data || [];
+                  html += '<div><strong>Tags:</strong> ' + (tags.length ? renderTagsBadges(tags) : '<span class="muted">-</span>') + '</div>';
+                }
+              } catch (eTags) {}
             } else {
               html += '<div class="muted">No current mapping.</div>';
             }
@@ -2764,6 +2829,7 @@
       async function loadSubnetsTab() {
         await loadSubnetsStats();
         await loadSubnets(1);
+        await loadDiscoveredSubnets();
       }
 
       async function loadSubnetsStats() {
@@ -2922,6 +2988,114 @@
             }).join('') + '</tbody></table>';
         } catch (e) {
           document.getElementById('subnet-map-' + id).innerHTML = '<span style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</span>';
+        }
+      }
+
+      async function loadDiscoveredSubnets() {
+        try {
+          var res = await fetch('/api/v2/subnets/discovered', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var body = await res.json();
+          var rows = body.data || [];
+          var el = document.getElementById('discovered-subnets-body');
+          if (!rows.length) {
+            el.innerHTML = '<tr><td colspan="6" class="muted">No discovered subnets.</td></tr>';
+            return;
+          }
+          el.innerHTML = rows.map(function (r) {
+            var status = r.promoted ? '<span class="badge badge-info">Promoted</span>' : '<span class="badge badge-warning">New</span>';
+            var actions = '';
+            if (!r.promoted) actions += '<button class="btn btn-sm role-operator" onclick="promoteDiscoveredSubnet(' + r.id + ', \'' + escJs(r.cidr) + '\')">Promote</button> ';
+            actions += '<button class="btn btn-sm role-admin" onclick="dismissDiscoveredSubnet(' + r.id + ')">Dismiss</button>';
+            return '<tr>' +
+              '<td>' + escapeHtml(r.cidr || '-') + '</td>' +
+              '<td>' + escapeHtml(r.ip_count || 0) + '</td>' +
+              '<td>' + escapeHtml(timeAgo(r.first_seen)) + '</td>' +
+              '<td>' + escapeHtml(timeAgo(r.last_seen)) + '</td>' +
+              '<td>' + status + '</td>' +
+              '<td>' + actions + '</td>' +
+              '</tr>';
+          }).join('');
+          applyRoleVisibility(currentUser.role);
+        } catch (e) {
+          document.getElementById('discovered-subnets-body').innerHTML =
+            '<tr><td colspan="6" style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+        }
+      }
+
+      async function promoteDiscoveredSubnet(id, cidr) {
+        var name = prompt('Name for discovered subnet ' + cidr + ':', 'Auto-discovered ' + cidr);
+        if (!name) return;
+        try {
+          var res = await fetch('/api/v2/subnets/promote', {
+            method: 'POST',
+            headers: mutHeaders(),
+            credentials: 'include',
+            body: JSON.stringify({ discovered_id: id, name: name, vlan_id: null })
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          await loadSubnetsTab();
+        } catch (e) {
+          alert('Promote failed: ' + e.message);
+        }
+      }
+
+      async function dismissDiscoveredSubnet(id) {
+        if (!confirm('Dismiss discovered subnet #' + id + '?')) return;
+        try {
+          var res = await fetch('/api/v2/subnets/discovered/' + encodeURIComponent(id), {
+            method: 'DELETE',
+            headers: mutHeaders(),
+            credentials: 'include'
+          });
+          if (!res.ok && res.status !== 204) throw new Error('HTTP ' + res.status);
+          await loadDiscoveredSubnets();
+        } catch (e) {
+          alert('Dismiss failed: ' + e.message);
+        }
+      }
+
+      async function quickAddTag() {
+        var ip = document.getElementById('status-tag-ip').value.trim();
+        var tag = document.getElementById('status-tag-name').value.trim();
+        var color = document.getElementById('status-tag-color').value.trim();
+        if (!ip || !tag) return;
+        try {
+          var res = await fetch('/api/v2/tags', {
+            method: 'POST',
+            headers: mutHeaders(),
+            credentials: 'include',
+            body: JSON.stringify({ ip: ip, tag: tag, color: color || '#6b8579' })
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          document.getElementById('status-tag-ip').value = '';
+          document.getElementById('status-tag-name').value = '';
+          await loadStatusTags();
+        } catch (e) {
+          alert('Add tag failed: ' + e.message);
+        }
+      }
+
+      async function loadStatusTags() {
+        if (!currentUser || currentUser.role !== 'Admin') return;
+        var el = document.getElementById('status-tags-list');
+        try {
+          var res = await fetch('/api/v2/tags', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var body = await res.json();
+          var rows = body.data || [];
+          if (!rows.length) {
+            el.innerHTML = '<span class="muted">No tags defined.</span>';
+            return;
+          }
+          el.innerHTML = rows.map(function (r) {
+            return '<div style="padding:4px 0;border-bottom:1px solid #1e2a24;">' +
+              '<span class="badge" style="border:1px solid ' + escapeHtml(r.color || '#6b8579') + ';color:' + escapeHtml(r.color || '#6b8579') + ';">' + escapeHtml(r.tag) + '</span> ' +
+              '<span class="muted">' + escapeHtml(r.ip_count || 0) + ' IPs</span>' +
+              '</div>';
+          }).join('');
+        } catch (e) {
+          el.innerHTML = '<span style="color:#ef4444;">Failed: ' + escapeHtml(e.message) + '</span>';
         }
       }
 
@@ -3527,6 +3701,7 @@
 
         await loadRetentionSection();
         await loadAdminSecuritySection();
+        await loadStatusTags();
       }
 
       function firewallTypeBadge(raw) {

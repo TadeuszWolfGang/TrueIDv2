@@ -87,6 +87,24 @@ pub struct DeviceMapping {
     /// Optional LDAP/AD groups synced for the mapped user.
     #[serde(default)]
     pub groups: Option<Vec<String>>,
+    /// Optional ISO country code resolved by GeoIP.
+    #[serde(default)]
+    pub country_code: Option<String>,
+    /// Optional city resolved by GeoIP.
+    #[serde(default)]
+    pub city: Option<String>,
+    /// Optional manually assigned tags for this IP.
+    #[serde(default)]
+    pub tags: Vec<MappingTag>,
+}
+
+/// Manual context tag assigned to an IP mapping.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MappingTag {
+    /// Tag label (e.g. "server", "vip").
+    pub tag: String,
+    /// Hex color used for dashboard badges.
+    pub color: String,
 }
 
 impl DeviceMapping {
@@ -112,6 +130,9 @@ impl DeviceMapping {
         let multi_user: bool = row.try_get("multi_user").unwrap_or(false);
         let session_users_raw: Option<String> = row.try_get("session_users").ok().flatten();
         let group_names_raw: Option<String> = row.try_get("group_names").ok().flatten();
+        let country_code: Option<String> = row.try_get("country_code").ok();
+        let city: Option<String> = row.try_get("city").ok();
+        let tags_raw: Option<String> = row.try_get("ip_tags_csv").ok().flatten();
         let current_users = match session_users_raw {
             Some(ref csv) if !csv.is_empty() => csv
                 .split(',')
@@ -132,6 +153,28 @@ impl DeviceMapping {
                 Some(parsed)
             }
         });
+        let tags = tags_raw
+            .map(|csv| {
+                csv.split(',')
+                    .filter_map(|entry| {
+                        let mut parts = entry.splitn(2, '|');
+                        let tag = parts.next().unwrap_or("").trim();
+                        if tag.is_empty() {
+                            return None;
+                        }
+                        let color = parts.next().unwrap_or("#6b8579").trim();
+                        Some(MappingTag {
+                            tag: tag.to_string(),
+                            color: if color.is_empty() {
+                                "#6b8579".to_string()
+                            } else {
+                                color.to_string()
+                            },
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
 
         Ok(Self {
             ip,
@@ -148,6 +191,9 @@ impl DeviceMapping {
             device_type,
             multi_user,
             groups,
+            country_code,
+            city,
+            tags,
         })
     }
 }

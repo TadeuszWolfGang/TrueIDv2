@@ -89,6 +89,26 @@ struct PaginatedSubnetMappings {
     per_page: i64,
 }
 
+/// Discovered subnet DTO.
+#[derive(Serialize)]
+struct DiscoveredSubnetResponse {
+    id: i64,
+    cidr: String,
+    ip_count: i64,
+    first_seen: String,
+    last_seen: String,
+    promoted: bool,
+    promoted_subnet_id: Option<i64>,
+}
+
+/// Promote discovered subnet request payload.
+#[derive(Deserialize)]
+pub struct PromoteDiscoveredSubnetRequest {
+    discovered_id: i64,
+    name: String,
+    vlan_id: Option<i64>,
+}
+
 /// Parses IPv4/IPv6 CIDR into network/mask components.
 ///
 /// Parameters: `cidr` - CIDR string.
@@ -676,4 +696,237 @@ pub(crate) async fn subnet_mappings(
         page,
         per_page,
     }))
+}
+
+/// Lists auto-discovered subnets from passive traffic observation.
+///
+/// Parameters: `auth` - authenticated principal, `state` - app state.
+/// Returns: discovered subnet rows and total count.
+pub(crate) async fn list_discovered_subnets(
+    auth: AuthUser,
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, ApiError> {
+    let db = helpers::require_db(&state, &auth.request_id)?;
+    let rows = sqlx::query(
+        "SELECT id, cidr, ip_count, first_seen, last_seen, promoted, promoted_subnet_id
+         FROM discovered_subnets
+         ORDER BY promoted ASC, ip_count DESC, last_seen DESC",
+    )
+    .fetch_all(db.pool())
+    .await
+    .map_err(|e| {
+        warn!(error = %e, "Failed to list discovered subnets");
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error::INTERNAL_ERROR,
+            "Failed to list discovered subnets",
+        )
+        .with_request_id(&auth.request_id)
+    })?;
+    let data: Vec<DiscoveredSubnetResponse> = rows
+        .iter()
+        .map(|row| DiscoveredSubnetResponse {
+            id: row.try_get("id").unwrap_or_default(),
+            cidr: row.try_get("cidr").unwrap_or_default(),
+            ip_count: row.try_get("ip_count").unwrap_or(0),
+            first_seen: row
+                .try_get::<String, _>("first_seen")
+                .unwrap_or_else(|_| "-".to_string()),
+            last_seen: row
+                .try_get::<String, _>("last_seen")
+                .unwrap_or_else(|_| "-".to_string()),
+            promoted: row.try_get::<i64, _>("promoted").unwrap_or(0) != 0,
+            promoted_subnet_id: row.try_get("promoted_subnet_id").ok(),
+        })
+        .collect();
+    Ok(Json(serde_json::json!({
+        "data": data,
+        "total": data.len()
+    })))
+}
+
+/// Promotes one discovered subnet into managed `subnets` table.
+///
+/// Parameters: `auth` - authenticated principal, `state` - app state, `body` - promote payload.
+/// Returns: ids of promoted records.
+pub(crate) async fn promote_discovered_subnet(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Json(body): Json<PromoteDiscoveredSubnetRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    if body.name.trim().is_empty() {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            error::INVALID_INPUT,
+            "name must not be empty",
+        )
+        .with_request_id(&auth.request_id));
+    }
+    if let Some(vlan_id) = body.vlan_id {
+        if !(1..=4094).contains(&vlan_id) {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                error::INVALID_INPUT,
+                "vlan_id must be in range 1..=4094",
+            )
+            .with_request_id(&auth.request_id));
+        }
+    }
+    let db = helpers::require_db(&state, &auth.request_id)?;
+    let mut tx = db.pool().begin().await.map_err(|e| {
+        warn!(error = %e, "Failed to begin subnet promotion transaction");
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error::INTERNAL_ERROR,
+            "Failed to promote subnet",
+        )
+        .with_request_id(&auth.request_id)
+    })?;
+    let discovered = sqlx::query(
+        "SELECT id, cidr, promoted
+         FROM discovered_subnets
+         WHERE id = ?",
+    )
+    .bind(body.discovered_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| {
+        warn!(error = %e, discovered_id = body.discovered_id, "Failed to load discovered subnet");
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error::INTERNAL_ERROR,
+            "Failed to promote subnet",
+        )
+        .with_request_id(&auth.request_id)
+    })?;
+    let Some(discovered) = discovered else {
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            error::NOT_FOUND,
+            "Discovered subnet not found",
+        )
+        .with_request_id(&auth.request_id));
+    };
+    if discovered.try_get::<i64, _>("promoted").unwrap_or(0) != 0 {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            error::INVALID_INPUT,
+            "Discovered subnet is already promoted",
+        )
+        .with_request_id(&auth.request_id));
+    }
+    let cidr: String = discovered.try_get("cidr").unwrap_or_default();
+    let created = sqlx::query(
+        "INSERT INTO subnets (cidr, name, vlan_id, updated_at)
+         VALUES (?, ?, ?, datetime('now'))",
+    )
+    .bind(&cidr)
+    .bind(body.name.trim())
+    .bind(body.vlan_id)
+    .execute(&mut *tx)
+    .await;
+    let created = match created {
+        Ok(v) => v,
+        Err(e) => {
+            let msg = e.to_string().to_lowercase();
+            if msg.contains("unique") {
+                return Err(ApiError::new(
+                    StatusCode::CONFLICT,
+                    error::CONFLICT,
+                    "Subnet CIDR already exists in managed subnets",
+                )
+                .with_request_id(&auth.request_id));
+            }
+            warn!(error = %e, cidr = %cidr, "Failed to create promoted subnet");
+            return Err(ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error::INTERNAL_ERROR,
+                "Failed to promote subnet",
+            )
+            .with_request_id(&auth.request_id));
+        }
+    };
+    let subnet_id = created.last_insert_rowid();
+    sqlx::query(
+        "UPDATE discovered_subnets
+         SET promoted = 1, promoted_subnet_id = ?
+         WHERE id = ?",
+    )
+    .bind(subnet_id)
+    .bind(body.discovered_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        warn!(error = %e, discovered_id = body.discovered_id, "Failed to mark discovered subnet as promoted");
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error::INTERNAL_ERROR,
+            "Failed to promote subnet",
+        )
+        .with_request_id(&auth.request_id)
+    })?;
+    tx.commit().await.map_err(|e| {
+        warn!(error = %e, discovered_id = body.discovered_id, "Failed to commit subnet promotion");
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error::INTERNAL_ERROR,
+            "Failed to promote subnet",
+        )
+        .with_request_id(&auth.request_id)
+    })?;
+    helpers::audit(
+        db,
+        &auth,
+        "promote_discovered_subnet",
+        Some(&format!("subnet:{subnet_id}")),
+        Some(&format!("discovered_id={},cidr={cidr}", body.discovered_id)),
+    )
+    .await;
+    Ok(Json(serde_json::json!({
+        "discovered_id": body.discovered_id,
+        "subnet_id": subnet_id,
+        "cidr": cidr
+    })))
+}
+
+/// Dismisses a discovered subnet entry.
+///
+/// Parameters: `auth` - authenticated principal, `state` - app state, `id` - discovered subnet id.
+/// Returns: HTTP 200 when removed.
+pub(crate) async fn dismiss_discovered_subnet(
+    auth: AuthUser,
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<impl IntoResponse, ApiError> {
+    let db = helpers::require_db(&state, &auth.request_id)?;
+    let res = sqlx::query("DELETE FROM discovered_subnets WHERE id = ?")
+        .bind(id)
+        .execute(db.pool())
+        .await
+        .map_err(|e| {
+            warn!(error = %e, discovered_id = id, "Failed to dismiss discovered subnet");
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error::INTERNAL_ERROR,
+                "Failed to dismiss discovered subnet",
+            )
+            .with_request_id(&auth.request_id)
+        })?;
+    if res.rows_affected() == 0 {
+        return Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            error::NOT_FOUND,
+            "Discovered subnet not found",
+        )
+        .with_request_id(&auth.request_id));
+    }
+    helpers::audit(
+        db,
+        &auth,
+        "dismiss_discovered_subnet",
+        Some(&format!("discovered_subnet:{id}")),
+        None,
+    )
+    .await;
+    Ok(StatusCode::OK)
 }

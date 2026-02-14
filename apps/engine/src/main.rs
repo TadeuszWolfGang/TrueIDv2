@@ -12,6 +12,7 @@ mod conflicts;
 mod dns_resolver;
 mod fingerprints;
 mod firewall_push;
+mod geo_resolver;
 mod ldap_sync;
 mod live_bus;
 mod metrics;
@@ -22,6 +23,7 @@ mod scheduler;
 mod siem_forwarder;
 mod snmp_poller;
 mod subnets;
+mod subnet_discovery;
 mod tls_listener;
 mod tls_parsers;
 mod vendor;
@@ -78,6 +80,8 @@ struct EventLoopCtx {
     http_client: reqwest::Client,
     siem_sender: Sender<siem_forwarder::SiemEvent>,
     notification_dispatcher: Arc<notifications::NotificationDispatcher>,
+    geo_resolver: Arc<geo_resolver::GeoResolver>,
+    subnet_discovery: Arc<subnet_discovery::SubnetDiscovery>,
 }
 
 /// Runs the event processing loop, persisting each event to the database.
@@ -97,6 +101,8 @@ async fn run_event_loop(mut receiver: Receiver<IdentityEvent>, ctx: EventLoopCtx
         http_client,
         siem_sender,
         notification_dispatcher,
+        geo_resolver,
+        subnet_discovery,
     } = ctx;
     while let Some(event) = receiver.recv().await {
         let ip_str = event.ip.to_string();
@@ -232,10 +238,22 @@ async fn run_event_loop(mut receiver: Receiver<IdentityEvent>, ctx: EventLoopCtx
         let mapping_mac = event.mac.clone();
         let mapping_timestamp = event.timestamp;
         let mapping_source = source_name.to_string();
+        let mapping_ip = event.ip;
         if let Err(err) = db.upsert_mapping(event, vendor.as_deref()).await {
             warn!(error = %err, "Failed to upsert mapping");
             continue;
         }
+        if let Some(geo) = geo_resolver.resolve(&mapping_ip).await {
+            let _ = sqlx::query(
+                "UPDATE mappings SET country_code = ?, city = ? WHERE ip = ?",
+            )
+            .bind(geo.country_code.as_deref())
+            .bind(geo.city.as_deref())
+            .bind(&ip_str)
+            .execute(db.pool())
+            .await;
+        }
+        subnet_discovery.observe_ip(&mapping_ip).await;
         live_bus::send(LiveEvent::MappingUpdate {
             ip: ip_str.clone(),
             user: mapping_user,
@@ -391,6 +409,26 @@ async fn main() -> Result<()> {
 
     info!(db_url = %db_url, "Initializing database");
     let db = Arc::new(trueid_common::db::init_db(&db_url).await?);
+    let geo_db_path = std::env::var("GEOIP_DB_PATH")
+        .ok()
+        .filter(|v| !v.trim().is_empty());
+    let geo_resolver = Arc::new(geo_resolver::GeoResolver::new(
+        geo_db_path.as_deref(),
+        db.pool().clone(),
+    ));
+    let subnet_discovery = Arc::new(subnet_discovery::SubnetDiscovery::new(db.pool().clone()).await);
+    {
+        let subnet_discovery = subnet_discovery.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                if let Err(e) = subnet_discovery.refresh_known_subnets().await {
+                    warn!(error = %e, "Failed to refresh known subnet cache for discovery");
+                }
+            }
+        });
+    }
     let (live_tx, _) = tokio::sync::broadcast::channel::<LiveEvent>(1024);
     live_bus::set_sender(live_tx.clone());
 
@@ -559,6 +597,8 @@ async fn main() -> Result<()> {
         http_client: event_http_client,
         siem_sender: event_siem_sender,
         notification_dispatcher,
+        geo_resolver: geo_resolver.clone(),
+        subnet_discovery: subnet_discovery.clone(),
     };
     let event_loop_handle = tokio::spawn(async move {
         if let Err(err) = run_event_loop(receiver, event_ctx).await {

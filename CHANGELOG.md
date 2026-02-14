@@ -42,6 +42,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - New admin security APIs: `/api/v2/admin/security/password-policy`, `/api/v2/admin/security/sessions*`, `/api/v2/admin/security/totp-requirement`
 - New user/admin TOTP APIs: `/api/auth/totp/*` and `DELETE /api/v1/users/{id}/totp`
 - 5 new E2E tests for password policy, TOTP flow, and session IP metadata
+- **Network Context Enrichment**: GeoIP cache, passive discovered subnets, and manual IP tags with API support
+- New Geo API: `/api/v2/geo/{ip}`, `/api/v2/geo/stats`, `/api/v2/geo/refresh` (private-IP safe fallback)
+- New Tags API: `/api/v2/tags*` for create/list/search/delete and per-IP tag lookup
+- New discovered-subnets flows: `/api/v2/subnets/discovered`, `/api/v2/subnets/promote`, dismiss endpoint for admin
+- Dashboard updates: mappings `Location` + `Tags`, discovered subnets section, timeline IP tags, status quick tag management
+- 4 new E2E tests for tags/discovered-subnets/geo-private lookup
 
 ### Fixed
 - `group_names` subquery missing in routes_v1, routes_search, routes_subnets (groups always null)
