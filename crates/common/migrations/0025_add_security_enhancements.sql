@@ -15,7 +15,7 @@ ALTER TABLE users ADD COLUMN totp_backup_codes_enc TEXT;
 
 -- Session hardening support.
 -- NOTE: sessions.ip_address and sessions.user_agent already exist since migration 0009.
-ALTER TABLE sessions ADD COLUMN last_active_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+ALTER TABLE sessions ADD COLUMN last_active_at TEXT DEFAULT NULL;
 
 -- Security policy defaults.
 INSERT OR IGNORE INTO config (key, value) VALUES
