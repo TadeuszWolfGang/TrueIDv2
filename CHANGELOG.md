@@ -6,6 +6,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 ## [0.6.0] — 2026-02-13
 
 ### Added
+- **Network Map Visualization**: new dashboard tab with Matrix-themed SVG topology (adapters, managed/discovered subnets, integrations), animated flow paths, hover tooltips, and auto-refresh
+- **Map API v2**: `GET /api/v2/map/topology` and `GET /api/v2/map/flows` for Viewer+ role
+- New E2E test: `test_map_topology` validating map topology endpoint contract
 - Dashboard JS modularization under `apps/web/assets/js/` with real domain extraction (`mappings`, `conflicts`, `alerts`, `analytics`, `network`, `integrations`, `admin`) plus shared `utils` and `api` helpers
 - Matrix/Cyber UI redesign for dashboard and login pages: neon-green palette variables, glow/scan-line effects, custom scrollbars, and security modal visual refresh
 - Subtle Matrix rain canvas background for dashboard and login, with dashboard toggle persisted via `localStorage` (`trueid_matrix_rain`)

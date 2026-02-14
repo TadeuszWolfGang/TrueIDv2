@@ -353,6 +353,17 @@
         100% { opacity: 0; }
       }
       .live-toast { animation: neon-flash 4s ease-out forwards; }
+      .map-flow-line {
+        stroke-dasharray: 6 6;
+        animation: map-dash 2.6s linear infinite;
+      }
+      .map-node-hover:hover {
+        filter: url(#glow);
+        cursor: pointer;
+      }
+      @keyframes map-dash {
+        to { stroke-dashoffset: -24; }
+      }
 
       ::-webkit-scrollbar {
         width: 6px;
@@ -389,6 +400,7 @@
       <button class="tab" id="tab-btn-conflicts" onclick="switchTab('conflicts')">Conflicts</button>
       <button class="tab" id="tab-btn-alerts" onclick="switchTab('alerts')">Alerts</button>
       <button class="tab" id="tab-btn-analytics" onclick="switchTab('analytics')">Analytics</button>
+      <button class="tab" id="tab-btn-map" onclick="switchTab('map')">Network Map</button>
       <button class="tab" id="tab-btn-subnets" onclick="switchTab('subnets')">Subnets</button>
       <button class="tab" id="tab-btn-switches" onclick="switchTab('switches')">Switches</button>
       <button class="tab" id="tab-btn-fingerprints" onclick="switchTab('fingerprints')">Fingerprints</button>
@@ -666,6 +678,20 @@
           </thead>
           <tbody id="analytics-reports-body"><tr><td colspan="4" class="muted">Loading...</td></tr></tbody>
         </table>
+      </div>
+    </div>
+
+    <!-- ═══ TAB: Network Map ═══ -->
+    <div id="tab-map" style="display:none;">
+      <h1>TrueID :: Network Map</h1>
+      <div class="panel" style="position:relative;">
+        <div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
+          <div class="stat-card" id="map-stat-ips" style="min-width:180px;">IPs: -</div>
+          <div class="stat-card" id="map-stat-users" style="min-width:180px;">Users: -</div>
+          <div class="stat-card" id="map-stat-conflicts" style="min-width:180px;">Conflicts: -</div>
+        </div>
+        <svg id="network-svg" width="100%" height="600" style="background:var(--bg-deep);border:1px solid var(--border-dim);border-radius:4px;"></svg>
+        <div id="map-tooltip" style="display:none;position:absolute;z-index:240;background:var(--bg-panel);border:1px solid var(--green-dim);padding:8px 10px;border-radius:4px;max-width:300px;color:var(--text-primary);font-size:12px;pointer-events:none;white-space:pre-line;"></div>
       </div>
     </div>
 
@@ -1385,5 +1411,6 @@
     <script src="js/network.js"></script>
     <script src="js/integrations.js"></script>
     <script src="js/admin.js"></script>
+    <script src="js/map.js"></script>
   </body>
 </html>

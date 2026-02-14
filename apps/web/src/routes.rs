@@ -8,7 +8,7 @@ use crate::middleware;
 use crate::{
     routes_alerts, routes_analytics, routes_api_keys, routes_audit, routes_auth, routes_conflicts,
     routes_dns, routes_fingerprints, routes_firewall, routes_geo, routes_import, routes_ldap,
-    routes_notifications, routes_proxy, routes_retention, routes_search, routes_security,
+    routes_map, routes_notifications, routes_proxy, routes_retention, routes_search, routes_security,
     routes_siem, routes_sse, routes_subnets, routes_switches, routes_tags, routes_timeline,
     routes_totp, routes_users, routes_v1, AppState,
 };
@@ -225,6 +225,8 @@ pub fn v2_routes(state: AppState) -> Router<AppState> {
             "/api/v2/analytics/reports/:id",
             get(routes_analytics::get_report),
         )
+        .route("/api/v2/map/topology", get(routes_map::topology))
+        .route("/api/v2/map/flows", get(routes_map::flows))
         .route("/api/v2/events/stream", get(routes_sse::event_stream))
         .layer(axum_mw::from_fn_with_state(
             state.clone(),

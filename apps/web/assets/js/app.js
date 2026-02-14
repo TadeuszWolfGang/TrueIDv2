@@ -6,11 +6,11 @@ var currentUser = null;
       var matrixRainTimer = null;
       var matrixRainEnabled = localStorage.getItem('trueid_matrix_rain') !== 'false';
       var tabLoaded = {
-        mappings: false, search: false, conflicts: false, alerts: false, analytics: false, status: false,
+        mappings: false, search: false, conflicts: false, alerts: false, analytics: false, map: false, status: false,
         subnets: false, switches: false, fingerprints: false, dns: false,
         firewall: false, siem: false, ldap: false, notifications: false, sycope: false, audit: false
       };
-      var tabRefreshTimers = { mappings: null, conflicts: null, alerts: null, analytics: null, status: null, audit: null };
+      var tabRefreshTimers = { mappings: null, conflicts: null, alerts: null, analytics: null, map: null, status: null, audit: null };
 
       var mappingsCurrentPage = 1;
       var mappingsPerPage = 50;
@@ -299,7 +299,7 @@ var currentUser = null;
       setInterval(refreshToken, 10 * 60 * 1000);
 
       function clearTabTimers() {
-        ['mappings', 'conflicts', 'alerts', 'analytics', 'status', 'audit'].forEach(function (k) {
+        ['mappings', 'conflicts', 'alerts', 'analytics', 'map', 'status', 'audit'].forEach(function (k) {
           if (tabRefreshTimers[k]) {
             clearInterval(tabRefreshTimers[k]);
             tabRefreshTimers[k] = null;
@@ -309,7 +309,7 @@ var currentUser = null;
 
       function switchTab(name) {
         activeTab = name;
-        ['mappings', 'search', 'conflicts', 'alerts', 'analytics', 'subnets', 'switches', 'fingerprints', 'dns', 'status', 'firewall', 'siem', 'ldap', 'notifications', 'sycope', 'audit'].forEach(function (n) {
+        ['mappings', 'search', 'conflicts', 'alerts', 'analytics', 'map', 'subnets', 'switches', 'fingerprints', 'dns', 'status', 'firewall', 'siem', 'ldap', 'notifications', 'sycope', 'audit'].forEach(function (n) {
           var panel = document.getElementById('tab-' + n);
           if (panel) panel.style.display = n === name ? 'block' : 'none';
         });
@@ -370,6 +370,17 @@ var currentUser = null;
           clearTabTimers();
           tabRefreshTimers.analytics = setInterval(function () {
             if (activeTab === 'analytics') loadAnalyticsTab();
+          }, 60000);
+        } else if (name === 'map') {
+          if (!tabLoaded.map) {
+            tabLoaded.map = true;
+            loadMapTab();
+          } else {
+            loadMapTab();
+          }
+          clearTabTimers();
+          tabRefreshTimers.map = setInterval(function () {
+            if (activeTab === 'map') loadMapTab();
           }, 60000);
         } else if (name === 'subnets') {
           if (!tabLoaded.subnets) tabLoaded.subnets = true;

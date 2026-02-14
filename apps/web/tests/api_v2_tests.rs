@@ -1688,6 +1688,17 @@ async fn test_analytics_viewer_cannot_generate() {
 }
 
 #[tokio::test]
+async fn test_map_topology() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/map/topology").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["subnets"].is_array());
+    assert!(body["adapters"].is_array());
+    assert!(body["stats"].is_object());
+}
+
+#[tokio::test]
 async fn test_sse_endpoint_requires_auth() {
     let (app, _) = build_test_app().await;
     let req = Request::builder()
