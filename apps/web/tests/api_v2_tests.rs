@@ -1925,6 +1925,59 @@ async fn test_retention_audit_minimum() {
 }
 
 #[tokio::test]
+async fn test_import_events_success() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let payload = json!({
+        "events": [
+            {"ip": "10.20.30.1", "user": "import_user_1", "source": "Radius"},
+            {"ip": "10.20.30.2", "user": "import_user_2", "source": "AdLog"},
+            {"ip": "10.20.30.3", "user": "import_user_3", "source": "DhcpLease"},
+            {"ip": "10.20.30.4", "user": "import_user_4", "source": "Manual"},
+            {"ip": "10.20.30.5", "user": "import_user_5", "source": "Radius"}
+        ]
+    });
+    let (status, body) = auth_post(&app, &cookie, "/api/v2/import/events", &payload).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["imported"], 5);
+    assert_eq!(body["skipped"], 0);
+}
+
+#[tokio::test]
+async fn test_import_events_invalid_ip() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let payload = json!({
+        "events": [
+            {"ip": "999.999.999.999", "user": "broken_user", "source": "Radius"}
+        ]
+    });
+    let (status, body) = auth_post(&app, &cookie, "/api/v2/import/events", &payload).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["imported"], 0);
+    assert_eq!(body["skipped"], 1);
+    let errors = body["errors"].as_array().cloned().unwrap_or_default();
+    assert!(!errors.is_empty());
+}
+
+#[tokio::test]
+async fn test_import_events_max_limit() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let mut events = Vec::with_capacity(10_001);
+    for i in 0..10_001_u32 {
+        events.push(json!({
+            "ip": format!("10.66.{}.{}", (i / 255) % 255, i % 255),
+            "user": format!("user_{i}"),
+            "source": "Manual"
+        }));
+    }
+    let payload = json!({ "events": events });
+    let (status, _) = auth_post(&app, &cookie, "/api/v2/import/events", &payload).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn test_firewall_create_target() {
     let (app, _) = build_test_app().await;
     let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;

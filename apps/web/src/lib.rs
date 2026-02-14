@@ -16,6 +16,7 @@ pub mod routes_conflicts;
 pub mod routes_dns;
 pub mod routes_fingerprints;
 pub mod routes_firewall;
+pub mod routes_import;
 pub mod routes_ldap;
 pub mod routes_notifications;
 pub mod routes_proxy;
@@ -416,6 +417,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v2/ldap/config", get(routes_ldap::get_ldap_config))
         .route("/api/v2/ldap/config", put(routes_ldap::update_ldap_config))
         .route("/api/v2/ldap/sync", post(routes_ldap::force_ldap_sync))
+        .route("/api/v2/import/events", post(routes_import::import_events))
         .route(
             "/api/v2/admin/retention",
             get(routes_retention::list_policies),

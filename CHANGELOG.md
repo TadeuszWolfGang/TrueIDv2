@@ -35,6 +35,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - **Retention Admin API**: `/api/v2/admin/retention*` list/update/run/stats endpoints
 - Dashboard **Status** tab now includes **Data Retention** controls and DB/table stats
 - 3 new E2E tests for retention list/update/audit-minimum validation
+- **CLI Tool (`trueid`)**: new API-driven command-line client (`apps/cli`) with commands for lookup/search/mappings/conflicts/alerts/status/stats/users/export/import/retention/health
+- **Bulk Import API**: `POST /api/v2/import/events` for JSON batch ingestion with per-row validation and error reporting
+- 3 new E2E tests for import endpoint (success/invalid IP/max limit)
 
 ### Fixed
 - `group_names` subquery missing in routes_v1, routes_search, routes_subnets (groups always null)
