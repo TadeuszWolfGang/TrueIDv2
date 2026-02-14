@@ -82,8 +82,8 @@ impl PasswordPolicy {
             .await
             .map_err(|_| "Failed to validate password history".to_string())?;
         for hash in rows {
-            let reused =
-                verify_password(password, &hash, db.pepper()).map_err(|_| "Failed to validate password history".to_string())?;
+            let reused = verify_password(password, &hash, db.pepper())
+                .map_err(|_| "Failed to validate password history".to_string())?;
             if reused {
                 return Err(format!(
                     "Password must not match the last {} passwords",
@@ -101,7 +101,10 @@ impl PasswordPolicy {
 /// Returns: parsed boolean value.
 async fn config_bool(db: &Db, key: &str, default_value: bool) -> bool {
     match db.get_config(key).await.ok().flatten() {
-        Some(v) => matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"),
+        Some(v) => matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        ),
         None => default_value,
     }
 }

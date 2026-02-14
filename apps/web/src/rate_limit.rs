@@ -104,16 +104,23 @@ impl PerKeyLimiter {
     pub fn check(&self, key_id: &str, rpm: u32, burst: u32) -> Result<u32, u64> {
         let now = Instant::now();
         let effective_rpm = if rpm == 0 { self.default_rpm } else { rpm };
-        let effective_burst = if burst == 0 { self.default_burst } else { burst };
+        let effective_burst = if burst == 0 {
+            self.default_burst
+        } else {
+            burst
+        };
         let max_tokens = f64::from(effective_burst);
         let refill_rate = f64::from(effective_rpm) / 60.0;
 
-        let mut bucket = self.buckets.entry(key_id.to_string()).or_insert_with(|| TokenBucket {
-            tokens: max_tokens,
-            max_tokens,
-            refill_rate,
-            last_refill: now,
-        });
+        let mut bucket = self
+            .buckets
+            .entry(key_id.to_string())
+            .or_insert_with(|| TokenBucket {
+                tokens: max_tokens,
+                max_tokens,
+                refill_rate,
+                last_refill: now,
+            });
 
         if (bucket.max_tokens - max_tokens).abs() > f64::EPSILON
             || (bucket.refill_rate - refill_rate).abs() > f64::EPSILON

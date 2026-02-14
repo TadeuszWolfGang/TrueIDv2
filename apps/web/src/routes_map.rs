@@ -176,7 +176,10 @@ async fn load_adapters(state: &AppState, db_counts: &HashMap<String, i64>) -> Ve
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
             .to_string();
-        let event_count = row.get("events_total").and_then(|v| v.as_i64()).unwrap_or(0);
+        let event_count = row
+            .get("events_total")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
         out.push(MapAdapter {
             r#type: adapter_type_from_source(&name),
             name,
@@ -333,15 +336,14 @@ pub(crate) async fn topology(
             .fetch_one(pool)
             .await
             .unwrap_or(0);
-    let ldap_configured: bool = sqlx::query_scalar::<_, i64>(
-        "SELECT COALESCE(enabled, 0) FROM ldap_config WHERE id = 1",
-    )
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten()
-    .unwrap_or(0)
-        == 1;
+    let ldap_configured: bool =
+        sqlx::query_scalar::<_, i64>("SELECT COALESCE(enabled, 0) FROM ldap_config WHERE id = 1")
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or(0)
+            == 1;
 
     let total_ips: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT ip) FROM mappings")
         .fetch_one(pool)
@@ -421,7 +423,9 @@ pub(crate) async fn flows(
             source_type: r.try_get("source_type").unwrap_or_default(),
             ip: r.try_get("ip").unwrap_or_default(),
             user: r.try_get("user").unwrap_or_default(),
-            subnet_name: r.try_get("subnet_name").unwrap_or_else(|_| "Unassigned".to_string()),
+            subnet_name: r
+                .try_get("subnet_name")
+                .unwrap_or_else(|_| "Unassigned".to_string()),
             timestamp: r.try_get::<String, _>("timestamp").unwrap_or_default(),
         })
         .collect::<Vec<_>>();

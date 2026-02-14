@@ -93,49 +93,82 @@ pub(crate) async fn update_password_policy(
     let db = helpers::require_db(&state, &auth.request_id)?;
     db.set_config("password_min_length", &body.min_length.to_string())
         .await
-        .map_err(to_internal(&auth.request_id, "Failed to update password policy"))?;
+        .map_err(to_internal(
+            &auth.request_id,
+            "Failed to update password policy",
+        ))?;
     db.set_config(
         "password_require_uppercase",
         &body.require_uppercase.to_string(),
     )
     .await
-    .map_err(to_internal(&auth.request_id, "Failed to update password policy"))?;
+    .map_err(to_internal(
+        &auth.request_id,
+        "Failed to update password policy",
+    ))?;
     db.set_config(
         "password_require_lowercase",
         &body.require_lowercase.to_string(),
     )
     .await
-    .map_err(to_internal(&auth.request_id, "Failed to update password policy"))?;
+    .map_err(to_internal(
+        &auth.request_id,
+        "Failed to update password policy",
+    ))?;
     db.set_config("password_require_digit", &body.require_digit.to_string())
         .await
-        .map_err(to_internal(&auth.request_id, "Failed to update password policy"))?;
-    db.set_config("password_require_special", &body.require_special.to_string())
-        .await
-        .map_err(to_internal(&auth.request_id, "Failed to update password policy"))?;
+        .map_err(to_internal(
+            &auth.request_id,
+            "Failed to update password policy",
+        ))?;
+    db.set_config(
+        "password_require_special",
+        &body.require_special.to_string(),
+    )
+    .await
+    .map_err(to_internal(
+        &auth.request_id,
+        "Failed to update password policy",
+    ))?;
     db.set_config("password_history_count", &body.history_count.to_string())
         .await
-        .map_err(to_internal(&auth.request_id, "Failed to update password policy"))?;
+        .map_err(to_internal(
+            &auth.request_id,
+            "Failed to update password policy",
+        ))?;
     db.set_config("password_max_age_days", &body.max_age_days.to_string())
         .await
-        .map_err(to_internal(&auth.request_id, "Failed to update password policy"))?;
+        .map_err(to_internal(
+            &auth.request_id,
+            "Failed to update password policy",
+        ))?;
     db.set_config(
         "session_max_idle_minutes",
         &body.session_max_idle_minutes.to_string(),
     )
     .await
-    .map_err(to_internal(&auth.request_id, "Failed to update password policy"))?;
+    .map_err(to_internal(
+        &auth.request_id,
+        "Failed to update password policy",
+    ))?;
     db.set_config(
         "session_absolute_max_hours",
         &body.session_absolute_max_hours.to_string(),
     )
     .await
-    .map_err(to_internal(&auth.request_id, "Failed to update password policy"))?;
+    .map_err(to_internal(
+        &auth.request_id,
+        "Failed to update password policy",
+    ))?;
     db.set_config(
         "totp_required_for_admins",
         &body.totp_required_for_admins.to_string(),
     )
     .await
-    .map_err(to_internal(&auth.request_id, "Failed to update password policy"))?;
+    .map_err(to_internal(
+        &auth.request_id,
+        "Failed to update password policy",
+    ))?;
     {
         let mut runtime = state.config.write().await;
         runtime.reload(db).await;
@@ -241,7 +274,11 @@ fn to_internal<'a>(
     message: &'static str,
 ) -> impl Fn(anyhow::Error) -> ApiError + 'a {
     move |_| {
-        ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, error::INTERNAL_ERROR, message)
-            .with_request_id(request_id)
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error::INTERNAL_ERROR,
+            message,
+        )
+        .with_request_id(request_id)
     }
 }

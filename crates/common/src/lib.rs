@@ -1,7 +1,7 @@
 //! Shared types, database access, and helpers for TrueID.
 
-pub mod auth_provider;
 pub mod app_config;
+pub mod auth_provider;
 pub mod db;
 pub mod db_analytics;
 pub mod db_auth;

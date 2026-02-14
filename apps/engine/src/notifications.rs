@@ -274,9 +274,15 @@ impl NotificationDispatcher {
         report: &ScheduledReportPayload,
     ) -> Result<()> {
         match (&channel.channel_type[..], &channel.config) {
-            ("email", ChannelConfig::Email { .. }) => self.send_report_email(&channel.config, report).await,
-            ("slack", ChannelConfig::Slack { .. }) => self.send_report_slack(&channel.config, report).await,
-            ("teams", ChannelConfig::Teams { .. }) => self.send_report_teams(&channel.config, report).await,
+            ("email", ChannelConfig::Email { .. }) => {
+                self.send_report_email(&channel.config, report).await
+            }
+            ("slack", ChannelConfig::Slack { .. }) => {
+                self.send_report_slack(&channel.config, report).await
+            }
+            ("teams", ChannelConfig::Teams { .. }) => {
+                self.send_report_teams(&channel.config, report).await
+            }
             ("webhook", ChannelConfig::Webhook { .. }) => {
                 self.send_report_webhook(&channel.config, report).await
             }

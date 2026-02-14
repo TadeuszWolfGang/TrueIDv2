@@ -116,8 +116,8 @@ pub async fn load_enabled_schedules(db: &Db) -> anyhow::Result<Vec<ReportSchedul
             .try_get("include_sections")
             .unwrap_or_else(|_| "[\"summary\",\"conflicts\",\"alerts\"]".into());
         let channel_ids = serde_json::from_str::<Vec<i64>>(&channel_ids_raw).unwrap_or_default();
-        let include_sections =
-            serde_json::from_str::<Vec<String>>(&include_sections_raw).unwrap_or_else(|_| {
+        let include_sections = serde_json::from_str::<Vec<String>>(&include_sections_raw)
+            .unwrap_or_else(|_| {
                 vec![
                     "summary".to_string(),
                     "conflicts".to_string(),
@@ -149,7 +149,11 @@ pub async fn generate_report_for_schedule(
     db: &Db,
     schedule: &ReportSchedule,
 ) -> anyhow::Result<ScheduledReportPayload> {
-    let lookback_days = if schedule.report_type == "weekly" { 7 } else { 1 };
+    let lookback_days = if schedule.report_type == "weekly" {
+        7
+    } else {
+        1
+    };
     let period_end = Utc::now();
     let period_start = period_end - chrono::Duration::days(lookback_days);
 
@@ -302,9 +306,12 @@ pub async fn deliver_report(
             attempted: 0,
         };
     }
-    let outcomes = dispatcher.dispatch_report(&schedule.channel_ids, report).await;
+    let outcomes = dispatcher
+        .dispatch_report(&schedule.channel_ids, report)
+        .await;
     let attempted = i64::try_from(outcomes.len()).unwrap_or(0);
-    let delivered = i64::try_from(outcomes.iter().filter(|o| o.outcome.is_ok()).count()).unwrap_or(0);
+    let delivered =
+        i64::try_from(outcomes.iter().filter(|o| o.outcome.is_ok()).count()).unwrap_or(0);
     SendNowResult {
         success: delivered == attempted,
         delivered,
@@ -356,11 +363,15 @@ pub async fn run_schedule_now(db: Arc<Db>, schedule: ReportSchedule) -> SendNowR
 ///
 /// Parameters: `db` - shared DB handle, `schedule_id` - schedule id.
 /// Returns: send result.
-pub async fn run_schedule_now_by_id(db: Arc<Db>, schedule_id: i64) -> anyhow::Result<SendNowResult> {
+pub async fn run_schedule_now_by_id(
+    db: Arc<Db>,
+    schedule_id: i64,
+) -> anyhow::Result<SendNowResult> {
     let rows = load_enabled_schedules(db.as_ref()).await?;
-    let schedule = rows.into_iter().find(|s| s.id == schedule_id).ok_or_else(|| {
-        anyhow::anyhow!("schedule not found or disabled")
-    })?;
+    let schedule = rows
+        .into_iter()
+        .find(|s| s.id == schedule_id)
+        .ok_or_else(|| anyhow::anyhow!("schedule not found or disabled"))?;
     Ok(run_schedule_now(db, schedule).await)
 }
 

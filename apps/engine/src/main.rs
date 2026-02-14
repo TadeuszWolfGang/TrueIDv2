@@ -23,8 +23,8 @@ mod retention;
 mod scheduler;
 mod siem_forwarder;
 mod snmp_poller;
-mod subnets;
 mod subnet_discovery;
+mod subnets;
 mod tls_listener;
 mod tls_parsers;
 mod vendor;
@@ -245,14 +245,12 @@ async fn run_event_loop(mut receiver: Receiver<IdentityEvent>, ctx: EventLoopCtx
             continue;
         }
         if let Some(geo) = geo_resolver.resolve(&mapping_ip).await {
-            let _ = sqlx::query(
-                "UPDATE mappings SET country_code = ?, city = ? WHERE ip = ?",
-            )
-            .bind(geo.country_code.as_deref())
-            .bind(geo.city.as_deref())
-            .bind(&ip_str)
-            .execute(db.pool())
-            .await;
+            let _ = sqlx::query("UPDATE mappings SET country_code = ?, city = ? WHERE ip = ?")
+                .bind(geo.country_code.as_deref())
+                .bind(geo.city.as_deref())
+                .bind(&ip_str)
+                .execute(db.pool())
+                .await;
         }
         subnet_discovery.observe_ip(&mapping_ip).await;
         live_bus::send(LiveEvent::MappingUpdate {
@@ -417,7 +415,8 @@ async fn main() -> Result<()> {
         geo_db_path.as_deref(),
         db.pool().clone(),
     ));
-    let subnet_discovery = Arc::new(subnet_discovery::SubnetDiscovery::new(db.pool().clone()).await);
+    let subnet_discovery =
+        Arc::new(subnet_discovery::SubnetDiscovery::new(db.pool().clone()).await);
     {
         let subnet_discovery = subnet_discovery.clone();
         tokio::spawn(async move {

@@ -67,7 +67,10 @@ impl AppConfig {
             },
             session_idle_minutes: db.get_config_i64("session_max_idle_minutes", 480).await,
             session_max_hours: db.get_config_i64("session_absolute_max_hours", 24).await,
-            retention_interval_hours: db.get_config_i64("retention_interval_hours", 6).await.max(1),
+            retention_interval_hours: db
+                .get_config_i64("retention_interval_hours", 6)
+                .await
+                .max(1),
             report_interval_hours: db.get_config_i64("report_interval_hours", 24).await.max(1),
             totp_required_for_admins: config_bool(db, "totp_required_for_admins", false).await,
         }

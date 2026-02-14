@@ -153,14 +153,15 @@ where
         }
 
         // Session hardening checks (cookie auth only).
-        let refresh_token = extract_cookie(cookie_header, auth::REFRESH_COOKIE_NAME).ok_or_else(|| {
-            ApiError::new(
-                StatusCode::UNAUTHORIZED,
-                error::AUTH_REQUIRED,
-                "Refresh token missing",
-            )
-            .with_request_id(&rid)
-        })?;
+        let refresh_token =
+            extract_cookie(cookie_header, auth::REFRESH_COOKIE_NAME).ok_or_else(|| {
+                ApiError::new(
+                    StatusCode::UNAUTHORIZED,
+                    error::AUTH_REQUIRED,
+                    "Refresh token missing",
+                )
+                .with_request_id(&rid)
+            })?;
         let refresh_hash = trueid_common::db_auth::sha256_hex(refresh_token);
         let session = db
             .get_session_for_security_checks(&refresh_hash)

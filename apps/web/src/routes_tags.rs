@@ -284,8 +284,10 @@ pub(crate) async fn delete_tag(
             .with_request_id(&auth.request_id)
         })?;
     if res.rows_affected() == 0 {
-        return Err(ApiError::new(StatusCode::NOT_FOUND, error::NOT_FOUND, "Tag not found")
-            .with_request_id(&auth.request_id));
+        return Err(
+            ApiError::new(StatusCode::NOT_FOUND, error::NOT_FOUND, "Tag not found")
+                .with_request_id(&auth.request_id),
+        );
     }
     helpers::audit(
         db,

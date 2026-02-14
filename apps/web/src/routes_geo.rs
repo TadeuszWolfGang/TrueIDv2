@@ -1,11 +1,6 @@
 //! GeoIP lookup and statistics endpoints backed by cache and private-IP detection.
 
-use axum::{
-    extract::Path,
-    http::StatusCode,
-    response::IntoResponse,
-    Json,
-};
+use axum::{extract::Path, http::StatusCode, response::IntoResponse, Json};
 use serde::Serialize;
 use sqlx::Row;
 use tracing::warn;
@@ -48,8 +43,12 @@ pub(crate) async fn lookup(
     Path(ip): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
     let parsed = ip.parse::<std::net::IpAddr>().map_err(|_| {
-        ApiError::new(StatusCode::BAD_REQUEST, error::INVALID_INPUT, "Invalid IP format")
-            .with_request_id(&auth.request_id)
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            error::INVALID_INPUT,
+            "Invalid IP format",
+        )
+        .with_request_id(&auth.request_id)
     })?;
     if is_private(&parsed) {
         return Ok(Json(GeoLookupResponse {
@@ -134,20 +133,21 @@ pub(crate) async fn stats(
         })?
         .try_get("c")
         .unwrap_or(0);
-    let private_ips: i64 = sqlx::query("SELECT COUNT(*) as c FROM ip_geo_cache WHERE is_private = 1")
-        .fetch_one(db.pool())
-        .await
-        .map_err(|e| {
-            warn!(error = %e, "Failed to count private geo rows");
-            ApiError::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                error::INTERNAL_ERROR,
-                "Failed to read geo stats",
-            )
-            .with_request_id(&auth.request_id)
-        })?
-        .try_get("c")
-        .unwrap_or(0);
+    let private_ips: i64 =
+        sqlx::query("SELECT COUNT(*) as c FROM ip_geo_cache WHERE is_private = 1")
+            .fetch_one(db.pool())
+            .await
+            .map_err(|e| {
+                warn!(error = %e, "Failed to count private geo rows");
+                ApiError::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    error::INTERNAL_ERROR,
+                    "Failed to read geo stats",
+                )
+                .with_request_id(&auth.request_id)
+            })?
+            .try_get("c")
+            .unwrap_or(0);
     let rows = sqlx::query(
         "SELECT COALESCE(country_code, '??') as country_code,
                 COALESCE(country_name, 'Unknown') as country_name,
@@ -172,8 +172,12 @@ pub(crate) async fn stats(
     let countries: Vec<CountryCount> = rows
         .iter()
         .map(|r| CountryCount {
-            country_code: r.try_get("country_code").unwrap_or_else(|_| "??".to_string()),
-            country_name: r.try_get("country_name").unwrap_or_else(|_| "Unknown".to_string()),
+            country_code: r
+                .try_get("country_code")
+                .unwrap_or_else(|_| "??".to_string()),
+            country_name: r
+                .try_get("country_name")
+                .unwrap_or_else(|_| "Unknown".to_string()),
             count: r.try_get("c").unwrap_or(0),
         })
         .collect();

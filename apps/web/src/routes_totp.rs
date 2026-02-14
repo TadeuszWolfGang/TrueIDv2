@@ -183,10 +183,14 @@ pub(crate) async fn verify(
 
     let backup_codes = generate_backup_codes();
     let backup_codes_enc = db
-        .encrypt_config_value(
-            &serde_json::to_string(&backup_codes)
-                .map_err(|_| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, error::INTERNAL_ERROR, "Failed to encode backup codes").with_request_id(&auth.request_id))?,
-        )
+        .encrypt_config_value(&serde_json::to_string(&backup_codes).map_err(|_| {
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error::INTERNAL_ERROR,
+                "Failed to encode backup codes",
+            )
+            .with_request_id(&auth.request_id)
+        })?)
         .map_err(|_| {
             ApiError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -358,7 +362,11 @@ pub(crate) async fn regenerate_backup_codes(
 ///
 /// Parameters: `db` - database handle, `user` - user record, `code` - submitted code.
 /// Returns: `true` when code is valid.
-pub(crate) async fn verify_user_totp_or_backup(db: &trueid_common::db::Db, user: &trueid_common::model::User, code: &str) -> bool {
+pub(crate) async fn verify_user_totp_or_backup(
+    db: &trueid_common::db::Db,
+    user: &trueid_common::model::User,
+    code: &str,
+) -> bool {
     if !user.totp_enabled {
         return false;
     }
@@ -396,7 +404,11 @@ fn build_totp(secret_base32: &str, username: &str) -> anyhow::Result<TOTP> {
 ///
 /// Parameters: `secret_base32` - encoded secret, `username` - account label, `code` - user code.
 /// Returns: true when code is valid.
-pub(crate) fn verify_totp_code_for_user_secret(secret_base32: &str, username: &str, code: &str) -> bool {
+pub(crate) fn verify_totp_code_for_user_secret(
+    secret_base32: &str,
+    username: &str,
+    code: &str,
+) -> bool {
     let clean = code.trim().replace(' ', "");
     if clean.len() < 6 {
         return false;
@@ -436,7 +448,12 @@ async fn consume_backup_code(db: &trueid_common::db::Db, user_id: i64, input: &s
     if normalized.is_empty() {
         return false;
     }
-    let Some(enc) = db.get_user_totp_backup_codes_enc(user_id).await.ok().flatten() else {
+    let Some(enc) = db
+        .get_user_totp_backup_codes_enc(user_id)
+        .await
+        .ok()
+        .flatten()
+    else {
         return false;
     };
     let decoded = match db.decrypt_config_value(&enc) {
