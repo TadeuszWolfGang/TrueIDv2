@@ -18,6 +18,7 @@ mod live_bus;
 mod metrics;
 mod notifications;
 mod report_generator;
+mod report_scheduler;
 mod retention;
 mod scheduler;
 mod siem_forwarder;
@@ -622,6 +623,7 @@ async fn main() -> Result<()> {
     snmp_poller::start_snmp_poller(db.clone());
     firewall_push::start_firewall_push(db.clone());
     report_generator::start_report_generator(db.clone());
+    report_scheduler::start_report_scheduler(db.clone());
     {
         let retention_interval_hours = db
             .get_config_i64("retention_interval_hours", 6)

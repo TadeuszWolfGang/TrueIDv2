@@ -24,6 +24,7 @@ pub mod routes_ldap;
 pub mod routes_map;
 pub mod routes_notifications;
 pub mod routes_proxy;
+pub mod routes_report_schedules;
 pub mod routes_retention;
 pub mod routes_search;
 pub mod routes_security;

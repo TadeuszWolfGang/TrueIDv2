@@ -698,6 +698,8 @@ async fn auto_encrypt_sensitive_config(pool: &SqlitePool, key: &[u8; 32]) -> Res
 
 /// Initialises the database: connects, runs migrations, reads secrets from env.
 ///
+/// Migration source is `crates/common/migrations/`.
+///
 /// Parameters: `db_url` - SQLite connection string (e.g. "sqlite://trueid.db").
 /// Returns: initialized `Db` or an error.
 /// Reads `ARGON2_PEPPER` and `CONFIG_ENCRYPTION_KEY` env vars.

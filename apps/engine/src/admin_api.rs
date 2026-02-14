@@ -114,6 +114,10 @@ pub fn admin_router(state: EngineAdminState) -> Router {
             post(test_notification_channel),
         )
         .route("/engine/retention/run", post(run_retention_now))
+        .route(
+            "/engine/reports/schedules/{id}/send-now",
+            post(run_report_schedule_now),
+        )
         .route("/engine/events/stream", get(sse_stream))
         .layer(axum_mw::from_fn_with_state(
             state.clone(),
@@ -607,4 +611,30 @@ async fn run_retention_now(State(s): State<EngineAdminState>) -> impl IntoRespon
     Json(serde_json::json!({
         "results": executor.run_all().await
     }))
+}
+
+/// Runs one report schedule immediately and delivers via configured channels.
+///
+/// Parameters: `s` - shared admin state, `id` - report schedule id.
+/// Returns: JSON status payload.
+async fn run_report_schedule_now(
+    State(s): State<EngineAdminState>,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    match crate::report_scheduler::run_schedule_now_by_id(s.db.clone(), id).await {
+        Ok(result) => Json(serde_json::json!({
+            "success": result.success,
+            "delivered": result.delivered,
+            "attempted": result.attempted
+        })),
+        Err(e) => {
+            warn!(error = %e, schedule_id = id, "Report schedule send-now failed");
+            Json(serde_json::json!({
+                "success": false,
+                "error": e.to_string(),
+                "delivered": 0,
+                "attempted": 0
+            }))
+        }
+    }
 }

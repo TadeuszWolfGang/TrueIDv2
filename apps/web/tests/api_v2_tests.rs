@@ -1699,6 +1699,92 @@ async fn test_map_topology() {
 }
 
 #[tokio::test]
+async fn test_report_schedule_crud() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (create_status, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/reports/schedules",
+        &json!({
+            "name": "Weekly Ops Report",
+            "report_type": "weekly",
+            "schedule_cron": "0 8 * * 1",
+            "enabled": true,
+            "channel_ids": [],
+            "include_sections": ["summary","conflicts","alerts"]
+        }),
+    )
+    .await;
+    assert_eq!(create_status, StatusCode::CREATED);
+    let id = created["id"].as_i64().unwrap_or_default();
+    assert!(id > 0);
+
+    let (list_status, listed) = auth_get(&app, &cookie, "/api/v2/reports/schedules").await;
+    assert_eq!(list_status, StatusCode::OK);
+    let rows = listed["schedules"].as_array().cloned().unwrap_or_default();
+    assert!(rows.iter().any(|r| r["id"].as_i64().unwrap_or_default() == id));
+
+    let (update_status, updated) = auth_put(
+        &app,
+        &cookie,
+        &format!("/api/v2/reports/schedules/{id}"),
+        &json!({
+            "name": "Weekly Security Report",
+            "report_type": "weekly",
+            "schedule_cron": "0 8 * * 2",
+            "enabled": false,
+            "channel_ids": [],
+            "include_sections": ["summary","compliance"]
+        }),
+    )
+    .await;
+    assert_eq!(update_status, StatusCode::OK);
+    assert_eq!(updated["name"], "Weekly Security Report");
+    assert_eq!(updated["enabled"], false);
+
+    let (delete_status, _) =
+        auth_delete(&app, &cookie, &format!("/api/v2/reports/schedules/{id}")).await;
+    assert_eq!(delete_status, StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
+async fn test_report_schedule_send_now_no_channels() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (create_status, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/reports/schedules",
+        &json!({
+            "name": "No Channels Report",
+            "report_type": "daily",
+            "schedule_cron": "0 8 * * 1",
+            "enabled": true,
+            "channel_ids": [],
+            "include_sections": ["summary"]
+        }),
+    )
+    .await;
+    assert_eq!(create_status, StatusCode::CREATED);
+    let id = created["id"].as_i64().unwrap_or_default();
+    assert!(id > 0);
+
+    let (send_status, body) = auth_post(
+        &app,
+        &cookie,
+        &format!("/api/v2/reports/schedules/{id}/send-now"),
+        &json!({}),
+    )
+    .await;
+    assert_eq!(send_status, StatusCode::OK);
+    assert_eq!(body["success"], true);
+    assert_eq!(body["delivered"].as_i64().unwrap_or(-1), 0);
+}
+
+#[tokio::test]
 async fn test_sse_endpoint_requires_auth() {
     let (app, _) = build_test_app().await;
     let req = Request::builder()

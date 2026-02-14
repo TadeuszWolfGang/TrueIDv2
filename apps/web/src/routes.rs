@@ -8,8 +8,8 @@ use crate::middleware;
 use crate::{
     routes_alerts, routes_analytics, routes_api_keys, routes_audit, routes_auth, routes_conflicts,
     routes_dns, routes_fingerprints, routes_firewall, routes_geo, routes_import, routes_ldap,
-    routes_map, routes_notifications, routes_proxy, routes_retention, routes_search, routes_security,
-    routes_siem, routes_sse, routes_subnets, routes_switches, routes_tags, routes_timeline,
+    routes_map, routes_notifications, routes_proxy, routes_report_schedules, routes_retention,
+    routes_search, routes_security, routes_siem, routes_sse, routes_subnets, routes_switches, routes_tags, routes_timeline,
     routes_totp, routes_users, routes_v1, AppState,
 };
 
@@ -475,6 +475,29 @@ pub fn admin_routes(state: AppState) -> Router<AppState> {
         .route(
             "/api/v2/analytics/reports/generate",
             post(routes_analytics::generate_report),
+        )
+        .route(
+            "/api/v2/reports/schedules",
+            get(routes_report_schedules::list_schedules)
+                .post(routes_report_schedules::create_schedule),
+        )
+        .route(
+            "/api/v2/reports/schedules/{id}",
+            put(routes_report_schedules::update_schedule)
+                .delete(routes_report_schedules::delete_schedule),
+        )
+        .route(
+            "/api/v2/reports/schedules/:id",
+            put(routes_report_schedules::update_schedule)
+                .delete(routes_report_schedules::delete_schedule),
+        )
+        .route(
+            "/api/v2/reports/schedules/{id}/send-now",
+            post(routes_report_schedules::send_now),
+        )
+        .route(
+            "/api/v2/reports/schedules/:id/send-now",
+            post(routes_report_schedules::send_now),
         )
         .layer(axum_mw::from_fn_with_state(
             state,

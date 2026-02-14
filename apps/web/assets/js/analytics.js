@@ -1,4 +1,5 @@
 /* Analytics module. */
+var editingReportScheduleId = null;
 
 function renderBarChart(containerId, data, color) {
         var el = document.getElementById(containerId);
@@ -79,7 +80,8 @@ function renderBarChart(containerId, data, color) {
           loadAnalyticsTrends(),
           loadAnalyticsSources(),
           loadAnalyticsCompliance(),
-          loadAnalyticsReports()
+          loadAnalyticsReports(),
+          loadReportSchedules()
         ]);
       }
 
@@ -190,6 +192,139 @@ function renderBarChart(containerId, data, color) {
         }
       }
 
+      async function loadReportScheduleChannels() {
+        try {
+          var channels = await authGet('/api/v2/notifications/channels');
+          var host = document.getElementById('report-schedule-channels');
+          if (!host) return [];
+          if (!Array.isArray(channels) || channels.length === 0) {
+            host.innerHTML = '<span class="muted">No channels configured.</span>';
+            return [];
+          }
+          host.innerHTML = channels.map(function (c) {
+            return '<label class="setting-desc"><input type="checkbox" class="report-schedule-channel" value="' +
+              c.id + '"> ' + escapeHtml(c.name + ' (' + c.channel_type + ')') + '</label>';
+          }).join('');
+          return channels;
+        } catch (e) {
+          var hostErr = document.getElementById('report-schedule-channels');
+          if (hostErr) hostErr.innerHTML = '<span style="color:var(--status-error);">Failed to load channels</span>';
+          return [];
+        }
+      }
+
+      function selectedReportSections() {
+        return Array.from(document.querySelectorAll('.report-section:checked')).map(function (el) {
+          return el.value;
+        });
+      }
+
+      function selectedScheduleChannelIds() {
+        return Array.from(document.querySelectorAll('.report-schedule-channel:checked')).map(function (el) {
+          return Number(el.value);
+        });
+      }
+
+      async function loadReportSchedules() {
+        await loadReportScheduleChannels();
+        try {
+          var data = await authGet('/api/v2/reports/schedules');
+          var rows = data.schedules || [];
+          var body = document.getElementById('report-schedules-body');
+          if (!body) return;
+          if (!rows.length) {
+            body.innerHTML = '<tr><td colspan="6" class="muted">No schedules.</td></tr>';
+            return;
+          }
+          body.innerHTML = rows.map(function (r) {
+            var channels = Array.isArray(r.channel_ids) ? r.channel_ids.join(', ') : '';
+            return '<tr>' +
+              '<td>' + escapeHtml(r.name || '-') + '</td>' +
+              '<td>' + escapeHtml(r.report_type || '-') + '</td>' +
+              '<td>' + escapeHtml(r.schedule_cron || '-') + '</td>' +
+              '<td>' + escapeHtml(channels || '-') + '</td>' +
+              '<td>' + escapeHtml(r.last_sent_at ? String(r.last_sent_at).replace('T', ' ').replace('Z', '') : '-') + '</td>' +
+              '<td>' +
+              '<button class="btn btn-sm role-admin" onclick="editReportSchedule(' + r.id + ')">Edit</button> ' +
+              '<button class="btn btn-sm role-admin" onclick="sendReportScheduleNow(' + r.id + ')">Send now</button> ' +
+              '<button class="btn btn-sm btn-danger role-admin" onclick="deleteReportSchedule(' + r.id + ')">Delete</button>' +
+              '</td>' +
+              '</tr>';
+          }).join('');
+          window.TrueID = window.TrueID || {};
+          window.TrueID.reportSchedules = rows;
+        } catch (e) {
+          var bodyErr = document.getElementById('report-schedules-body');
+          if (bodyErr) bodyErr.innerHTML = '<tr><td colspan="6" style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+        }
+      }
+
+      function editReportSchedule(id) {
+        var schedules = (window.TrueID && window.TrueID.reportSchedules) || [];
+        var row = schedules.find(function (r) { return r.id === id; });
+        if (!row) return;
+        editingReportScheduleId = id;
+        document.getElementById('report-schedule-name').value = row.name || '';
+        document.getElementById('report-schedule-type').value = row.report_type || 'daily';
+        document.getElementById('report-schedule-cron').value = row.schedule_cron || '0 8 * * 1';
+        document.getElementById('report-schedule-enabled').checked = !!row.enabled;
+        var channelSet = new Set((row.channel_ids || []).map(function (v) { return Number(v); }));
+        document.querySelectorAll('.report-schedule-channel').forEach(function (el) {
+          el.checked = channelSet.has(Number(el.value));
+        });
+        var sectionSet = new Set(row.include_sections || []);
+        document.querySelectorAll('.report-section').forEach(function (el) {
+          el.checked = sectionSet.has(el.value);
+        });
+      }
+
+      async function saveReportSchedule() {
+        var payload = {
+          name: document.getElementById('report-schedule-name').value.trim(),
+          report_type: document.getElementById('report-schedule-type').value,
+          schedule_cron: document.getElementById('report-schedule-cron').value,
+          enabled: document.getElementById('report-schedule-enabled').checked,
+          channel_ids: selectedScheduleChannelIds(),
+          include_sections: selectedReportSections()
+        };
+        try {
+          if (!payload.name) throw new Error('Name is required');
+          if (!payload.include_sections.length) throw new Error('Select at least one section');
+          if (editingReportScheduleId) {
+            await authPut('/api/v2/reports/schedules/' + editingReportScheduleId, payload);
+          } else {
+            await authPost('/api/v2/reports/schedules', payload);
+          }
+          editingReportScheduleId = null;
+          document.getElementById('report-schedule-name').value = '';
+          await loadReportSchedules();
+        } catch (e) {
+          alert('Save failed: ' + e.message);
+        }
+      }
+
+      async function sendReportScheduleNow(id) {
+        try {
+          var res = await authPost('/api/v2/reports/schedules/' + id + '/send-now', {});
+          var delivered = res.delivered != null ? res.delivered : 0;
+          showFlash('Send now done. delivered=' + delivered, true);
+          await loadReportSchedules();
+        } catch (e) {
+          alert('Send now failed: ' + e.message);
+        }
+      }
+
+      async function deleteReportSchedule(id) {
+        if (!confirm('Delete schedule #' + id + '?')) return;
+        try {
+          await authDelete('/api/v2/reports/schedules/' + id);
+          if (editingReportScheduleId === id) editingReportScheduleId = null;
+          await loadReportSchedules();
+        } catch (e) {
+          alert('Delete failed: ' + e.message);
+        }
+      }
+
 (function () {
   window.TrueID = window.TrueID || {};
   if (typeof window.closeAnalyticsReportModal === 'function') window.TrueID.closeAnalyticsReportModal = window.closeAnalyticsReportModal;
@@ -200,6 +335,11 @@ function renderBarChart(containerId, data, color) {
   if (typeof window.loadAnalyticsSources === 'function') window.TrueID.loadAnalyticsSources = window.loadAnalyticsSources;
   if (typeof window.loadAnalyticsTab === 'function') window.TrueID.loadAnalyticsTab = window.loadAnalyticsTab;
   if (typeof window.loadAnalyticsTrends === 'function') window.TrueID.loadAnalyticsTrends = window.loadAnalyticsTrends;
+  if (typeof window.loadReportSchedules === 'function') window.TrueID.loadReportSchedules = window.loadReportSchedules;
+  if (typeof window.saveReportSchedule === 'function') window.TrueID.saveReportSchedule = window.saveReportSchedule;
+  if (typeof window.sendReportScheduleNow === 'function') window.TrueID.sendReportScheduleNow = window.sendReportScheduleNow;
+  if (typeof window.deleteReportSchedule === 'function') window.TrueID.deleteReportSchedule = window.deleteReportSchedule;
+  if (typeof window.editReportSchedule === 'function') window.TrueID.editReportSchedule = window.editReportSchedule;
   if (typeof window.openAnalyticsReport === 'function') window.TrueID.openAnalyticsReport = window.openAnalyticsReport;
   if (typeof window.renderBarChart === 'function') window.TrueID.renderBarChart = window.renderBarChart;
   if (typeof window.renderDonutChart === 'function') window.TrueID.renderDonutChart = window.renderDonutChart;

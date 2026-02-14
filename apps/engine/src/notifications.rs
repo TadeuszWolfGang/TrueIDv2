@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use lettre::message::header::ContentType;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
-use serde_json::json;
+use serde_json::{json, Value};
 use sqlx::Row;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -22,6 +22,16 @@ pub struct AlertPayload {
     pub user: Option<String>,
     pub details: String,
     pub timestamp: DateTime<Utc>,
+}
+
+/// Normalized scheduled report payload used by notification integrations.
+#[derive(Debug, Clone)]
+pub struct ScheduledReportPayload {
+    pub title: String,
+    pub report_type: String,
+    pub period_start: String,
+    pub period_end: String,
+    pub sections: Value,
 }
 
 /// Delivery result for one notification channel.
@@ -109,6 +119,48 @@ impl NotificationDispatcher {
             timestamp: Utc::now(),
         };
         self.dispatch_channel(&channel, &payload).await
+    }
+
+    /// Sends a scheduled report to provided channel ids.
+    ///
+    /// Parameters: `channel_ids` - channel ids, `report` - scheduled report payload.
+    /// Returns: per-channel delivery outcomes.
+    pub async fn dispatch_report(
+        &self,
+        channel_ids: &[i64],
+        report: &ScheduledReportPayload,
+    ) -> Vec<DeliveryResult> {
+        let mut results = Vec::with_capacity(channel_ids.len());
+        for channel_id in channel_ids {
+            let channel = match self.load_channel_by_id(*channel_id).await {
+                Ok(Some(channel)) => channel,
+                Ok(None) => {
+                    results.push(DeliveryResult {
+                        channel_name: format!("channel-{channel_id}"),
+                        outcome: Err("channel not found".to_string()),
+                    });
+                    continue;
+                }
+                Err(e) => {
+                    results.push(DeliveryResult {
+                        channel_name: format!("channel-{channel_id}"),
+                        outcome: Err(e.to_string()),
+                    });
+                    continue;
+                }
+            };
+            let outcome = self.dispatch_report_channel(&channel, report).await;
+            let status = if outcome.is_ok() { "sent" } else { "failed" };
+            let error_message = outcome.as_ref().err().map(|e| e.to_string());
+            let _ = self
+                .record_delivery(channel.id, None, status, error_message.as_deref())
+                .await;
+            results.push(DeliveryResult {
+                channel_name: channel.name,
+                outcome: outcome.map_err(|e| e.to_string()),
+            });
+        }
+        results
     }
 
     /// Loads all enabled channels linked to a rule.
@@ -207,6 +259,26 @@ impl NotificationDispatcher {
             ("teams", ChannelConfig::Teams { .. }) => self.send_teams(&channel.config, alert).await,
             ("webhook", ChannelConfig::Webhook { .. }) => {
                 self.send_generic_webhook(&channel.config, alert).await
+            }
+            _ => Err(anyhow!("Notification channel type/config mismatch")),
+        }
+    }
+
+    /// Dispatches a scheduled report to one channel by config variant.
+    ///
+    /// Parameters: `channel` - target channel, `report` - report payload.
+    /// Returns: delivery result.
+    async fn dispatch_report_channel(
+        &self,
+        channel: &NotificationChannel,
+        report: &ScheduledReportPayload,
+    ) -> Result<()> {
+        match (&channel.channel_type[..], &channel.config) {
+            ("email", ChannelConfig::Email { .. }) => self.send_report_email(&channel.config, report).await,
+            ("slack", ChannelConfig::Slack { .. }) => self.send_report_slack(&channel.config, report).await,
+            ("teams", ChannelConfig::Teams { .. }) => self.send_report_teams(&channel.config, report).await,
+            ("webhook", ChannelConfig::Webhook { .. }) => {
+                self.send_report_webhook(&channel.config, report).await
             }
             _ => Err(anyhow!("Notification channel type/config mismatch")),
         }
@@ -404,6 +476,195 @@ impl NotificationDispatcher {
         }
         Ok(())
     }
+
+    /// Sends scheduled report as Matrix-themed HTML email.
+    ///
+    /// Parameters: `config` - typed channel config, `report` - report payload.
+    /// Returns: SMTP send result.
+    async fn send_report_email(
+        &self,
+        config: &ChannelConfig,
+        report: &ScheduledReportPayload,
+    ) -> Result<()> {
+        let ChannelConfig::Email {
+            smtp_host,
+            smtp_port,
+            smtp_tls,
+            smtp_user,
+            smtp_pass,
+            from_address,
+            to_addresses,
+            subject_prefix,
+        } = config
+        else {
+            return Err(anyhow!("Invalid email channel config"));
+        };
+
+        let mut builder = Message::builder()
+            .from(from_address.parse().context("invalid from_address")?)
+            .subject(format!(
+                "{} {} report",
+                subject_prefix.as_deref().unwrap_or("[TrueID]"),
+                report.report_type.to_uppercase()
+            ))
+            .header(ContentType::TEXT_HTML);
+        for recipient in to_addresses {
+            builder = builder.to(recipient.parse().context("invalid recipient")?);
+        }
+
+        let message = builder
+            .body(format_report_email_body(report))
+            .context("failed to build report email message")?;
+
+        let mut transport_builder = if *smtp_tls {
+            AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(smtp_host)
+                .context("failed to create STARTTLS SMTP transport")?
+                .port(*smtp_port)
+        } else {
+            AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(smtp_host).port(*smtp_port)
+        };
+        if let (Some(user), Some(pass)) = (smtp_user.as_ref(), smtp_pass.as_ref()) {
+            transport_builder =
+                transport_builder.credentials(Credentials::new(user.clone(), pass.clone()));
+        }
+        transport_builder
+            .build()
+            .send(message)
+            .await
+            .context("SMTP report send failed")?;
+        Ok(())
+    }
+
+    /// Sends scheduled report to Slack webhook endpoint.
+    ///
+    /// Parameters: `config` - typed channel config, `report` - report payload.
+    /// Returns: HTTP send result.
+    async fn send_report_slack(
+        &self,
+        config: &ChannelConfig,
+        report: &ScheduledReportPayload,
+    ) -> Result<()> {
+        let ChannelConfig::Slack {
+            webhook_url,
+            channel,
+            username,
+            icon_emoji,
+        } = config
+        else {
+            return Err(anyhow!("Invalid Slack channel config"));
+        };
+        let payload = json!({
+            "channel": channel,
+            "username": username.as_deref().unwrap_or("TrueID"),
+            "icon_emoji": icon_emoji.as_deref().unwrap_or(":shield:"),
+            "blocks": [
+                {"type":"header","text":{"type":"plain_text","text": report.title}},
+                {"type":"section","text":{"type":"mrkdwn","text":
+                    format!("*Type:* {}\n*Period:* {} → {}", report.report_type, report.period_start, report.period_end)
+                }},
+                {"type":"section","text":{"type":"mrkdwn","text":
+                    format!("```{}```", serde_json::to_string_pretty(&report.sections).unwrap_or_else(|_| "{}".to_string()))
+                }}
+            ]
+        });
+        let resp = self
+            .http_client
+            .post(webhook_url)
+            .json(&payload)
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            return Err(anyhow!("Slack webhook returned HTTP {}", resp.status()));
+        }
+        Ok(())
+    }
+
+    /// Sends scheduled report to Teams webhook endpoint as adaptive card.
+    ///
+    /// Parameters: `config` - typed channel config, `report` - report payload.
+    /// Returns: HTTP send result.
+    async fn send_report_teams(
+        &self,
+        config: &ChannelConfig,
+        report: &ScheduledReportPayload,
+    ) -> Result<()> {
+        let ChannelConfig::Teams { webhook_url } = config else {
+            return Err(anyhow!("Invalid Teams channel config"));
+        };
+        let payload = json!({
+            "type": "message",
+            "attachments": [{
+                "contentType": "application/vnd.microsoft.card.adaptive",
+                "content": {
+                    "type": "AdaptiveCard",
+                    "version": "1.4",
+                    "body": [
+                        {"type":"TextBlock","text":report.title,"weight":"Bolder","size":"Medium","color":"accent"},
+                        {"type":"FactSet","facts":[
+                            {"title":"Type","value":report.report_type},
+                            {"title":"Period Start","value":report.period_start},
+                            {"title":"Period End","value":report.period_end}
+                        ]},
+                        {"type":"TextBlock","text":serde_json::to_string_pretty(&report.sections).unwrap_or_else(|_| "{}".to_string()),"wrap":true}
+                    ]
+                }
+            }]
+        });
+        let resp = self
+            .http_client
+            .post(webhook_url)
+            .json(&payload)
+            .send()
+            .await?;
+        if !resp.status().is_success() {
+            return Err(anyhow!("Teams webhook returned HTTP {}", resp.status()));
+        }
+        Ok(())
+    }
+
+    /// Sends scheduled report to generic webhook endpoint.
+    ///
+    /// Parameters: `config` - typed channel config, `report` - report payload.
+    /// Returns: HTTP send result.
+    async fn send_report_webhook(
+        &self,
+        config: &ChannelConfig,
+        report: &ScheduledReportPayload,
+    ) -> Result<()> {
+        let ChannelConfig::Webhook {
+            url,
+            headers,
+            method,
+        } = config
+        else {
+            return Err(anyhow!("Invalid webhook channel config"));
+        };
+        let method_norm = method.as_deref().unwrap_or("POST").trim().to_uppercase();
+        let req_method = if method_norm == "PUT" {
+            reqwest::Method::PUT
+        } else {
+            reqwest::Method::POST
+        };
+        let payload = json!({
+            "type": "scheduled_report",
+            "title": report.title,
+            "report_type": report.report_type,
+            "period_start": report.period_start,
+            "period_end": report.period_end,
+            "sections": report.sections,
+        });
+        let mut req = self.http_client.request(req_method, url).json(&payload);
+        if let Some(map) = headers {
+            for (k, v) in map {
+                req = req.header(k, v);
+            }
+        }
+        let resp = req.send().await?;
+        if !resp.status().is_success() {
+            return Err(anyhow!("Webhook returned HTTP {}", resp.status()));
+        }
+        Ok(())
+    }
 }
 
 /// Renders a compact HTML email body for alert notifications.
@@ -436,5 +697,26 @@ fn format_email_body(alert: &AlertPayload) -> String {
          <p style=\"margin-top:12px;\"><strong>Details:</strong></p>\
          <pre style=\"background:#f5f7fa;padding:10px;border:1px solid #d9e0e6;\">{details}</pre>\
          </body></html>"
+    )
+}
+
+/// Renders Matrix-themed HTML email body for scheduled reports.
+///
+/// Parameters: `report` - scheduled report payload.
+/// Returns: HTML body string.
+fn format_report_email_body(report: &ScheduledReportPayload) -> String {
+    let sections_pretty =
+        serde_json::to_string_pretty(&report.sections).unwrap_or_else(|_| "{}".to_string());
+    let escaped_sections = sections_pretty
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;");
+    format!(
+        "<html><body style=\"background:#020a06;color:#c8f7d0;font-family:Consolas,Menlo,monospace;padding:14px;\">\
+         <h2 style=\"color:#00ff41;margin:0 0 10px;\">{}</h2>\
+         <div style=\"margin-bottom:10px;color:#5a9a6b;\">type={} · period={} → {}</div>\
+         <pre style=\"background:#091a11;border:1px solid #0a8a2e;padding:10px;border-radius:4px;color:#c8f7d0;overflow:auto;\">{}</pre>\
+         </body></html>",
+        report.title, report.report_type, report.period_start, report.period_end, escaped_sections
     )
 }

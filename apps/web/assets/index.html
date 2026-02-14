@@ -678,6 +678,52 @@
           </thead>
           <tbody id="analytics-reports-body"><tr><td colspan="4" class="muted">Loading...</td></tr></tbody>
         </table>
+
+        <div class="setting-divider" style="margin:16px 0;"></div>
+        <h2 class="section-title">Scheduled Reports</h2>
+        <div id="report-schedule-form" class="sync-status-box" style="margin-bottom:10px;">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            <input id="report-schedule-name" class="setting-input" style="width:180px;" placeholder="Schedule name">
+            <select id="report-schedule-type" class="setting-input" style="width:140px;">
+              <option value="daily">Daily</option>
+              <option value="weekly">Weekly</option>
+              <option value="compliance">Compliance</option>
+            </select>
+            <select id="report-schedule-cron" class="setting-input" style="width:170px;">
+              <option value="0 8 * * 1">Weekly Mon 08:00</option>
+              <option value="0 8 * * 2">Weekly Tue 08:00</option>
+              <option value="0 8 * * 3">Weekly Wed 08:00</option>
+              <option value="0 8 * * 4">Weekly Thu 08:00</option>
+              <option value="0 8 * * 5">Weekly Fri 08:00</option>
+              <option value="0 8 * * 6">Weekly Sat 08:00</option>
+              <option value="0 8 * * 0">Weekly Sun 08:00</option>
+            </select>
+            <label class="setting-desc"><input type="checkbox" id="report-schedule-enabled" checked> Enabled</label>
+          </div>
+          <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;">
+            <div>
+              <div class="muted" style="margin-bottom:4px;">Channels</div>
+              <div id="report-schedule-channels" class="sync-status-box">Loading...</div>
+            </div>
+            <div>
+              <div class="muted" style="margin-bottom:4px;">Sections</div>
+              <label class="setting-desc"><input type="checkbox" value="summary" class="report-section" checked> summary</label>
+              <label class="setting-desc"><input type="checkbox" value="conflicts" class="report-section" checked> conflicts</label>
+              <label class="setting-desc"><input type="checkbox" value="alerts" class="report-section" checked> alerts</label>
+              <label class="setting-desc"><input type="checkbox" value="compliance" class="report-section"> compliance</label>
+              <label class="setting-desc"><input type="checkbox" value="top_users" class="report-section"> top_users</label>
+              <label class="setting-desc"><input type="checkbox" value="top_ips" class="report-section"> top_ips</label>
+            </div>
+          </div>
+          <div style="margin-top:8px;">
+            <button class="btn btn-sm role-admin" onclick="saveReportSchedule()">Save schedule</button>
+            <button class="btn btn-sm" onclick="loadReportSchedules()">Refresh</button>
+          </div>
+        </div>
+        <table>
+          <thead><tr><th>Name</th><th>Type</th><th>Cron</th><th>Channels</th><th>Last Sent</th><th>Actions</th></tr></thead>
+          <tbody id="report-schedules-body"><tr><td colspan="6" class="muted">Loading...</td></tr></tbody>
+        </table>
       </div>
     </div>
 

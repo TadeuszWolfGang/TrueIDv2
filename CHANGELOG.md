@@ -6,6 +6,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 ## [0.6.0] — 2026-02-13
 
 ### Added
+- **Scheduled Reports & Delivery**: `report_schedules` model and engine scheduler loop for cron-based report execution with duplicate-window protection
+- **Scheduled Report Channels**: report delivery via existing notification channels (email/slack/teams/webhook), including Matrix-themed HTML email format
+- **Report Schedules API**: admin CRUD + send-now endpoints under `/api/v2/reports/schedules*`
+- Analytics tab extension with **Scheduled Reports** management UI (schedule form, sections/channels selection, send-now action, list table)
+- 2 new E2E tests: `test_report_schedule_crud` and `test_report_schedule_send_now_no_channels`
 - **Network Map Visualization**: new dashboard tab with Matrix-themed SVG topology (adapters, managed/discovered subnets, integrations), animated flow paths, hover tooltips, and auto-refresh
 - **Map API v2**: `GET /api/v2/map/topology` and `GET /api/v2/map/flows` for Viewer+ role
 - New E2E test: `test_map_topology` validating map topology endpoint contract
