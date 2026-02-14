@@ -1006,6 +1006,37 @@
 
         <div class="setting-divider role-admin" style="margin:16px 0;"></div>
 
+        <h2 class="section-title role-admin">API Keys (Admin)</h2>
+        <div class="role-admin" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+          <input id="api-key-name" class="setting-input" style="width:180px;" placeholder="Key name">
+          <select id="api-key-role" class="setting-input" style="width:130px;">
+            <option value="Viewer">Viewer</option>
+            <option value="Operator">Operator</option>
+            <option value="Admin">Admin</option>
+          </select>
+          <input id="api-key-rpm" class="setting-input" style="width:120px;" type="number" min="1" max="10000" value="100" placeholder="RPM">
+          <input id="api-key-burst" class="setting-input" style="width:120px;" type="number" min="1" max="1000" value="20" placeholder="Burst">
+          <button class="btn btn-sm" onclick="createApiKey()">Create</button>
+          <button class="btn btn-sm" onclick="loadApiKeysSection()">Refresh</button>
+        </div>
+        <div id="api-key-create-result" class="sync-status-box role-admin" style="margin-bottom:8px;">No new key generated.</div>
+        <table class="role-admin">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Role</th>
+              <th>RPM Limit</th>
+              <th>Usage 24h</th>
+              <th>Errors 24h</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="api-keys-body"><tr><td colspan="6" class="muted">Loading...</td></tr></tbody>
+        </table>
+        <div id="api-key-details" class="sync-status-box role-admin" style="margin-top:10px;">Select a key to view 7-day usage.</div>
+
+        <div class="setting-divider role-admin" style="margin:16px 0;"></div>
+
         <h2 class="section-title role-admin">Tags (Admin)</h2>
         <div class="role-admin" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
           <input id="status-tag-ip" class="setting-input" style="width:170px;" placeholder="IP">

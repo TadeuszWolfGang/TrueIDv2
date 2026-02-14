@@ -407,7 +407,17 @@ pub struct ApiKeyRecord {
     pub expires_at: Option<DateTime<Utc>>,
     pub last_used_at: Option<DateTime<Utc>>,
     pub is_active: bool,
+    pub rate_limit_rpm: i64,
+    pub rate_limit_burst: i64,
     pub created_at: DateTime<Utc>,
+}
+
+/// Hourly API key usage aggregate row.
+#[derive(Debug, Clone, Serialize)]
+pub struct ApiKeyUsageHourly {
+    pub hour: String,
+    pub requests: i64,
+    pub errors: i64,
 }
 
 /// Append-only audit log entry.

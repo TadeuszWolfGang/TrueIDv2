@@ -54,7 +54,8 @@ async fn build_test_app_with_engine_url(
         jwt_config: auth::JwtConfig::from_env(true),
         engine_service_token: None,
         login_limiter: Arc::new(rate_limit::RateLimiter::new(1000, 60)),
-        api_key_limiter: Arc::new(rate_limit::RateLimiter::new(1000, 60)),
+        per_key_limiter: Arc::new(rate_limit::PerKeyLimiter::new(1000, 1000)),
+        session_limiter: Arc::new(rate_limit::PerKeyLimiter::new(1000, 1000)),
         auth_chain: Some(Arc::new(
             trueid_common::auth_provider::AuthProviderChain::default_chain(db.clone()),
         )),
@@ -3386,4 +3387,139 @@ async fn test_mapping_includes_geo_fields() {
         rows[0].get("country_code").is_some(),
         "country_code field missing in mapping payload: {body}"
     );
+}
+
+#[tokio::test]
+async fn test_api_key_rate_limit_headers() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v1/api-keys",
+        &json!({
+            "description": "rate-limit-header-key",
+            "role": "Viewer",
+            "rate_limit_rpm": 200,
+            "rate_limit_burst": 50
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let key = created["key"].as_str().unwrap_or_default().to_string();
+    assert!(!key.is_empty(), "expected created API key in response");
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/v1/mappings")
+        .header("x-api-key", key)
+        .body(Body::empty())
+        .expect("build API key stats request failed");
+    let resp = app
+        .clone()
+        .oneshot(req)
+        .await
+        .expect("execute API key stats request failed");
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(
+        resp.headers().contains_key("x-ratelimit-limit"),
+        "missing x-ratelimit-limit header"
+    );
+    assert!(
+        resp.headers().contains_key("x-ratelimit-remaining"),
+        "missing x-ratelimit-remaining header"
+    );
+    assert!(
+        resp.headers().contains_key("x-ratelimit-reset"),
+        "missing x-ratelimit-reset header"
+    );
+}
+
+#[tokio::test]
+async fn test_api_key_usage_tracking() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v1/api-keys",
+        &json!({
+            "description": "usage-tracking-key",
+            "role": "Viewer",
+            "rate_limit_rpm": 300,
+            "rate_limit_burst": 80
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let key = created["key"].as_str().unwrap_or_default().to_string();
+    let key_id = created["record"]["id"].as_i64().unwrap_or_default();
+    assert!(key_id > 0, "expected record.id in create response");
+
+    for _ in 0..3 {
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/v1/mappings")
+            .header("x-api-key", key.clone())
+            .body(Body::empty())
+            .expect("build API key request failed");
+        let resp = app
+            .clone()
+            .oneshot(req)
+            .await
+            .expect("execute API key request failed");
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    let (status, usage) = auth_get(
+        &app,
+        &cookie,
+        &format!("/api/v2/api-keys/{key_id}/usage?days=7"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let total = usage["total_requests_7d"].as_i64().unwrap_or(0);
+    assert!(
+        total >= 3,
+        "expected total_requests_7d >= 3, got {total}, body: {usage}"
+    );
+}
+
+#[tokio::test]
+async fn test_api_key_rate_limit_429() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v1/api-keys",
+        &json!({
+            "description": "tiny-limit-key",
+            "role": "Viewer",
+            "rate_limit_rpm": 1,
+            "rate_limit_burst": 1
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let key = created["key"].as_str().unwrap_or_default().to_string();
+    let mut seen_429 = false;
+    for _ in 0..5 {
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/v1/mappings")
+            .header("x-api-key", key.clone())
+            .body(Body::empty())
+            .expect("build throttled API key request failed");
+        let resp = app
+            .clone()
+            .oneshot(req)
+            .await
+            .expect("execute throttled API key request failed");
+        if resp.status() == StatusCode::TOO_MANY_REQUESTS {
+            seen_429 = true;
+            break;
+        }
+    }
+    assert!(seen_429, "expected at least one 429 response");
 }

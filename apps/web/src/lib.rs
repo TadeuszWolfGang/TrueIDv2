@@ -40,12 +40,13 @@ pub mod routes_totp;
 
 use axum::{
     extract::{Request, State},
-    http::StatusCode,
+    http::{HeaderValue, StatusCode},
     middleware as axum_mw,
     response::{IntoResponse, Response},
     Json, Router,
 };
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use trueid_common::db::Db;
 
 use crate::auth::JwtConfig;
@@ -67,7 +68,8 @@ pub struct AppState {
     pub jwt_config: JwtConfig,
     pub engine_service_token: Option<String>,
     pub login_limiter: Arc<rate_limit::RateLimiter>,
-    pub api_key_limiter: Arc<rate_limit::RateLimiter>,
+    pub per_key_limiter: Arc<rate_limit::PerKeyLimiter>,
+    pub session_limiter: Arc<rate_limit::PerKeyLimiter>,
     pub auth_chain: Option<Arc<trueid_common::auth_provider::AuthProviderChain>>,
 }
 
@@ -150,6 +152,126 @@ async fn security_headers_layer(req: Request, next: axum_mw::Next) -> Response {
     resp
 }
 
+/// Middleware that enforces auth principal rate limits and emits rate-limit headers.
+///
+/// Parameters: `state` - shared state, `req` - incoming request, `next` - next handler.
+/// Returns: throttled or forwarded response with rate-limit headers.
+pub(crate) async fn auth_rate_limit_layer(
+    State(state): State<AppState>,
+    req: Request,
+    next: axum_mw::Next,
+) -> Response {
+    let reset_epoch = next_minute_epoch();
+    let rate_headers = |resp: &mut Response, limit: u32, remaining: u32, reset: u64| {
+        if let Ok(v) = HeaderValue::from_str(&limit.to_string()) {
+            resp.headers_mut().insert("x-ratelimit-limit", v);
+        }
+        if let Ok(v) = HeaderValue::from_str(&remaining.to_string()) {
+            resp.headers_mut().insert("x-ratelimit-remaining", v);
+        }
+        if let Ok(v) = HeaderValue::from_str(&reset.to_string()) {
+            resp.headers_mut().insert("x-ratelimit-reset", v);
+        }
+    };
+
+    if let Some(api_key) = req
+        .headers()
+        .get("x-api-key")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string)
+    {
+        if let Some(db) = state.db.as_ref() {
+            if let Ok(Some(record)) = db.lookup_api_key(&api_key).await {
+                let rpm = record.rate_limit_rpm.max(1) as u32;
+                let burst = record.rate_limit_burst.max(1) as u32;
+                match state
+                    .per_key_limiter
+                    .check(&format!("api_key:{}", record.id), rpm, burst)
+                {
+                    Ok(remaining) => {
+                        let mut resp = next.run(req).await;
+                        rate_headers(&mut resp, rpm, remaining, reset_epoch);
+                        let status = resp.status();
+                        let db_clone = Arc::clone(db);
+                        tokio::spawn(async move {
+                            let _ = db_clone
+                                .record_api_key_usage(record.id, status.as_u16() >= 400)
+                                .await;
+                        });
+                        return resp;
+                    }
+                    Err(retry_after) => {
+                        let body = serde_json::json!({
+                            "error": "Rate limit exceeded",
+                            "code": "RATE_LIMITED",
+                        });
+                        let mut resp =
+                            (StatusCode::TOO_MANY_REQUESTS, Json(body)).into_response();
+                        if let Ok(v) = HeaderValue::from_str(&retry_after.to_string()) {
+                            resp.headers_mut().insert("retry-after", v);
+                        }
+                        rate_headers(&mut resp, rpm, 0, reset_epoch);
+                        let db_clone = Arc::clone(db);
+                        tokio::spawn(async move {
+                            let _ = db_clone.record_api_key_usage(record.id, true).await;
+                        });
+                        return resp;
+                    }
+                }
+            }
+        }
+        return next.run(req).await;
+    }
+
+    let cookie_header = req
+        .headers()
+        .get(axum::http::header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if let Some(token) = crate::auth::extract_cookie(cookie_header, crate::auth::COOKIE_NAME) {
+        if let Ok(claims) = crate::auth::validate_token(&state.jwt_config, token) {
+            let rpm = 300_u32;
+            let burst = 60_u32;
+            match state
+                .session_limiter
+                .check(&format!("user:{}", claims.sub), rpm, burst)
+            {
+                Ok(remaining) => {
+                    let mut resp = next.run(req).await;
+                    rate_headers(&mut resp, rpm, remaining, reset_epoch);
+                    return resp;
+                }
+                Err(retry_after) => {
+                    let body = serde_json::json!({
+                        "error": "Rate limit exceeded",
+                        "code": "RATE_LIMITED",
+                    });
+                    let mut resp = (StatusCode::TOO_MANY_REQUESTS, Json(body)).into_response();
+                    if let Ok(v) = HeaderValue::from_str(&retry_after.to_string()) {
+                        resp.headers_mut().insert("retry-after", v);
+                    }
+                    rate_headers(&mut resp, rpm, 0, reset_epoch);
+                    return resp;
+                }
+            }
+        }
+    }
+
+    next.run(req).await
+}
+
+/// Returns UNIX timestamp for the next minute boundary.
+///
+/// Parameters: none.
+/// Returns: seconds since UNIX epoch.
+fn next_minute_epoch() -> u64 {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    ((now / 60) + 1) * 60
+}
+
 /// Builds the application router with all routes and middleware.
 ///
 /// Used by both production startup and in-process integration tests.
@@ -163,6 +285,10 @@ pub fn build_router(state: AppState) -> Router {
         .merge(routes::v1_routes(state.clone()))
         .merge(routes::v2_routes(state.clone()))
         .merge(routes::admin_routes(state.clone()))
+        .layer(axum_mw::from_fn_with_state(
+            state.clone(),
+            auth_rate_limit_layer,
+        ))
         .layer(axum_mw::from_fn(middleware::csrf_guard))
         .layer(axum_mw::from_fn(request_id_layer))
         .layer(axum_mw::from_fn(security_headers_layer))

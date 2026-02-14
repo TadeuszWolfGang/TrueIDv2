@@ -296,6 +296,22 @@ pub fn admin_routes(state: AppState) -> Router<AppState> {
         )
         .route("/api/v1/api-keys/{id}", delete(routes_api_keys::revoke_key))
         .route(
+            "/api/v2/api-keys/{id}/usage",
+            get(routes_api_keys::get_usage),
+        )
+        .route(
+            "/api/v2/api-keys/:id/usage",
+            get(routes_api_keys::get_usage),
+        )
+        .route(
+            "/api/v2/api-keys/{id}/limits",
+            put(routes_api_keys::update_limits),
+        )
+        .route(
+            "/api/v2/api-keys/:id/limits",
+            put(routes_api_keys::update_limits),
+        )
+        .route(
             "/api/v1/audit-logs",
             get(routes_audit::list_audit_logs),
         )

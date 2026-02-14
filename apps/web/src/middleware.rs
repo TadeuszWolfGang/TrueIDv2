@@ -56,15 +56,6 @@ where
                 if let Some(ref db) = app_state.db {
                     match db.validate_api_key(raw_key).await {
                         Ok(Some(record)) => {
-                            // Rate limit per API key prefix.
-                            if !app_state.api_key_limiter.check(&record.key_prefix) {
-                                return Err(ApiError::new(
-                                    StatusCode::TOO_MANY_REQUESTS,
-                                    error::RATE_LIMITED,
-                                    "API key rate limit exceeded. Try again later.",
-                                )
-                                .with_request_id(&rid));
-                            }
                             return Ok(AuthUser {
                                 user_id: record.created_by,
                                 username: format!("apikey:{}", record.key_prefix),

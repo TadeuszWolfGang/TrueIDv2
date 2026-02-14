@@ -15,7 +15,7 @@ use sqlx::Row;
 use tracing::info;
 
 use crate::db::Db;
-use crate::model::{ApiKeyRecord, AuditEntry, Session, User, UserPublic, UserRole};
+use crate::model::{ApiKeyRecord, ApiKeyUsageHourly, AuditEntry, Session, User, UserPublic, UserRole};
 
 // ── Password hashing (module-level functions) ──────────────
 
@@ -706,14 +706,16 @@ impl Db {
         role: UserRole,
         created_by: i64,
         expires_at: Option<DateTime<Utc>>,
+        rate_limit_rpm: i64,
+        rate_limit_burst: i64,
     ) -> Result<(String, ApiKeyRecord)> {
         let raw_key = generate_api_key();
         let key_hash = sha256_hex(&raw_key);
         let key_prefix = &raw_key[..12]; // "tid_" + 8 chars
 
         sqlx::query(
-            "INSERT INTO api_keys (key_hash, key_prefix, description, role, created_by, expires_at)
-             VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO api_keys (key_hash, key_prefix, description, role, created_by, expires_at, rate_limit_rpm, rate_limit_burst)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&key_hash)
         .bind(key_prefix)
@@ -721,12 +723,14 @@ impl Db {
         .bind(role.to_string())
         .bind(created_by)
         .bind(expires_at)
+        .bind(rate_limit_rpm)
+        .bind(rate_limit_burst)
         .execute(self.pool())
         .await?;
 
         let record = sqlx::query(
             "SELECT id, key_hash, key_prefix, description, role, created_by,
-                    expires_at, last_used_at, is_active, created_at
+                    expires_at, last_used_at, is_active, rate_limit_rpm, rate_limit_burst, created_at
              FROM api_keys WHERE key_hash = ?",
         )
         .bind(&key_hash)
@@ -741,10 +745,28 @@ impl Db {
     /// Parameters: `raw_key` — the full API key string.
     /// Returns: `Some(ApiKeyRecord)` if valid and active.
     pub async fn validate_api_key(&self, raw_key: &str) -> Result<Option<ApiKeyRecord>> {
+        let Some(record) = self.lookup_api_key(raw_key).await? else {
+            return Ok(None);
+        };
+
+        // Update last_used_at.
+        sqlx::query("UPDATE api_keys SET last_used_at = datetime('now') WHERE id = ?")
+            .bind(record.id)
+            .execute(self.pool())
+            .await?;
+
+        Ok(Some(record))
+    }
+
+    /// Looks up and validates a raw API key without updating usage timestamp.
+    ///
+    /// Parameters: `raw_key` - full API key.
+    /// Returns: `Some(ApiKeyRecord)` when active and not expired.
+    pub async fn lookup_api_key(&self, raw_key: &str) -> Result<Option<ApiKeyRecord>> {
         let key_hash = sha256_hex(raw_key);
         let row = sqlx::query(
             "SELECT id, key_hash, key_prefix, description, role, created_by,
-                    expires_at, last_used_at, is_active, created_at
+                    expires_at, last_used_at, is_active, rate_limit_rpm, rate_limit_burst, created_at
              FROM api_keys
              WHERE key_hash = ? AND is_active = true",
         )
@@ -761,13 +783,6 @@ impl Db {
                 return Ok(None);
             }
         }
-
-        // Update last_used_at.
-        sqlx::query("UPDATE api_keys SET last_used_at = datetime('now') WHERE id = ?")
-            .bind(record.id)
-            .execute(self.pool())
-            .await?;
-
         Ok(Some(record))
     }
 
@@ -777,7 +792,7 @@ impl Db {
     pub async fn list_api_keys(&self) -> Result<Vec<ApiKeyRecord>> {
         let rows = sqlx::query(
             "SELECT id, key_hash, key_prefix, description, role, created_by,
-                    expires_at, last_used_at, is_active, created_at
+                    expires_at, last_used_at, is_active, rate_limit_rpm, rate_limit_burst, created_at
              FROM api_keys ORDER BY created_at DESC",
         )
         .fetch_all(self.pool())
@@ -800,6 +815,107 @@ impl Db {
             .execute(self.pool())
             .await?;
         Ok(res.rows_affected() > 0)
+    }
+
+    /// Returns one API key by ID.
+    ///
+    /// Parameters: `key_id` - API key ID.
+    /// Returns: optional `ApiKeyRecord` when found.
+    pub async fn get_api_key_by_id(&self, key_id: i64) -> Result<Option<ApiKeyRecord>> {
+        let row = sqlx::query(
+            "SELECT id, key_hash, key_prefix, description, role, created_by,
+                    expires_at, last_used_at, is_active, rate_limit_rpm, rate_limit_burst, created_at
+             FROM api_keys WHERE id = ?",
+        )
+        .bind(key_id)
+        .fetch_optional(self.pool())
+        .await?;
+        row.map(|r| api_key_from_row(&r)).transpose()
+    }
+
+    /// Updates per-key API rate limits.
+    ///
+    /// Parameters: `key_id` - API key ID, `rpm` - requests per minute, `burst` - bucket size.
+    /// Returns: `true` when a key row was updated.
+    pub async fn update_api_key_limits(&self, key_id: i64, rpm: i64, burst: i64) -> Result<bool> {
+        let res = sqlx::query(
+            "UPDATE api_keys SET rate_limit_rpm = ?, rate_limit_burst = ? WHERE id = ?",
+        )
+        .bind(rpm)
+        .bind(burst)
+        .bind(key_id)
+        .execute(self.pool())
+        .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// Increments hourly API usage counters for one key.
+    ///
+    /// Parameters: `api_key_id` - API key ID, `is_error` - true for 4xx/5xx responses.
+    /// Returns: nothing.
+    pub async fn record_api_key_usage(&self, api_key_id: i64, is_error: bool) -> Result<()> {
+        let err = if is_error { 1 } else { 0 };
+        sqlx::query(
+            "INSERT INTO api_usage_hourly (api_key_id, hour, request_count, error_count)
+             VALUES (?, strftime('%Y-%m-%dT%H:00:00Z', 'now'), 1, ?)
+             ON CONFLICT(api_key_id, hour) DO UPDATE SET
+                 request_count = request_count + 1,
+                 error_count = error_count + ?",
+        )
+        .bind(api_key_id)
+        .bind(err)
+        .bind(err)
+        .execute(self.pool())
+        .await?;
+        Ok(())
+    }
+
+    /// Lists hourly API usage for a key within the lookback window.
+    ///
+    /// Parameters: `api_key_id` - API key ID, `days` - lookback period in days.
+    /// Returns: hourly rows ordered ascending by hour.
+    pub async fn list_api_key_usage_hourly(
+        &self,
+        api_key_id: i64,
+        days: i64,
+    ) -> Result<Vec<ApiKeyUsageHourly>> {
+        let rows = sqlx::query(
+            "SELECT hour, request_count, error_count
+             FROM api_usage_hourly
+             WHERE api_key_id = ? AND hour >= strftime('%Y-%m-%dT%H:00:00Z', 'now', '-' || ? || ' days')
+             ORDER BY hour ASC",
+        )
+        .bind(api_key_id)
+        .bind(days)
+        .fetch_all(self.pool())
+        .await?;
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            out.push(ApiKeyUsageHourly {
+                hour: row.try_get("hour")?,
+                requests: row.try_get("request_count")?,
+                errors: row.try_get("error_count")?,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Returns total API usage counters for a key within the lookback window.
+    ///
+    /// Parameters: `api_key_id` - API key ID, `days` - lookback period in days.
+    /// Returns: tuple `(total_requests, total_errors)`.
+    pub async fn sum_api_key_usage(&self, api_key_id: i64, days: i64) -> Result<(i64, i64)> {
+        let row = sqlx::query(
+            "SELECT COALESCE(SUM(request_count), 0) AS requests,
+                    COALESCE(SUM(error_count), 0) AS errors
+             FROM api_usage_hourly
+             WHERE api_key_id = ? AND hour >= strftime('%Y-%m-%dT%H:00:00Z', 'now', '-' || ? || ' days')",
+        )
+        .bind(api_key_id)
+        .bind(days)
+        .fetch_one(self.pool())
+        .await?;
+        Ok((row.try_get("requests")?, row.try_get("errors")?))
     }
 }
 
@@ -1089,6 +1205,8 @@ fn api_key_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<ApiKeyRecord> {
         expires_at: row.try_get("expires_at")?,
         last_used_at: row.try_get("last_used_at")?,
         is_active: row.try_get("is_active")?,
+        rate_limit_rpm: row.try_get("rate_limit_rpm")?,
+        rate_limit_burst: row.try_get("rate_limit_burst")?,
         created_at: row.try_get("created_at")?,
     })
 }

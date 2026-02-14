@@ -157,7 +157,8 @@ async fn main() -> Result<()> {
         .ok()
         .filter(|s| !s.is_empty());
     let login_limiter = Arc::new(rate_limit::RateLimiter::new(10, 60));
-    let api_key_limiter = Arc::new(rate_limit::RateLimiter::new(100, 60));
+    let per_key_limiter = Arc::new(rate_limit::PerKeyLimiter::new(100, 20));
+    let session_limiter = Arc::new(rate_limit::PerKeyLimiter::new(300, 60));
 
     let auth_chain = db.as_ref().map(|d| {
         Arc::new(trueid_common::auth_provider::AuthProviderChain::default_chain(Arc::clone(d)))
@@ -176,20 +177,23 @@ async fn main() -> Result<()> {
         jwt_config,
         engine_service_token,
         login_limiter: login_limiter.clone(),
-        api_key_limiter: api_key_limiter.clone(),
+        per_key_limiter: per_key_limiter.clone(),
+        session_limiter: session_limiter.clone(),
         auth_chain,
     };
 
     // ── Background: rate limiter cleanup every 5 min ─────
     {
         let ll = login_limiter;
-        let al = api_key_limiter;
+        let pkl = per_key_limiter;
+        let sl = session_limiter;
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
             loop {
                 interval.tick().await;
                 ll.cleanup();
-                al.cleanup();
+                pkl.cleanup();
+                sl.cleanup();
             }
         });
     }

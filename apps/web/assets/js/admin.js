@@ -1,5 +1,181 @@
 /* Admin module (status, retention, security, audit). */
 
+var apiKeysCache = [];
+
+      function renderUsageSparkline(points) {
+        if (!Array.isArray(points) || points.length === 0) return '<span class="muted">-</span>';
+        var values = points.slice(-24).map(function (p) { return p.requests || 0; });
+        var max = Math.max.apply(null, values.concat([1]));
+        var w = 120;
+        var h = 28;
+        var bar = Math.max(2, Math.floor(w / values.length) - 1);
+        var svg = '<svg width="' + w + '" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '">';
+        values.forEach(function (v, i) {
+          var bh = Math.max(1, Math.round((v / max) * (h - 4)));
+          var x = i * (bar + 1);
+          var y = h - bh;
+          svg += '<rect x="' + x + '" y="' + y + '" width="' + bar + '" height="' + bh + '" fill="var(--green-mid)" rx="1"></rect>';
+        });
+        svg += '</svg>';
+        return svg;
+      }
+
+      function renderUsageChart7d(points) {
+        if (!Array.isArray(points) || points.length === 0) return '<span class="muted">No usage data.</span>';
+        var data = points.slice(-24 * 7);
+        var max = Math.max.apply(null, data.map(function (p) { return p.requests || 0; }).concat([1]));
+        var barWidth = 6;
+        var gap = 1;
+        var height = 120;
+        var width = data.length * (barWidth + gap);
+        var svg = '<svg width="' + width + '" height="' + (height + 20) + '">';
+        data.forEach(function (d, i) {
+          var barH = Math.round(((d.requests || 0) / max) * height);
+          var x = i * (barWidth + gap);
+          var y = height - barH;
+          svg += '<rect x="' + x + '" y="' + y + '" width="' + barWidth + '" height="' + barH + '" fill="var(--green-mid)" rx="1"></rect>';
+        });
+        svg += '</svg>';
+        return svg;
+      }
+
+      async function loadApiKeysSection() {
+        if (!currentUser || currentUser.role !== 'Admin') return;
+        var bodyEl = document.getElementById('api-keys-body');
+        if (!bodyEl) return;
+        try {
+          var keysRes = await fetch('/api/v1/api-keys', { credentials: 'include' });
+          if (!keysRes.ok) throw new Error('HTTP ' + keysRes.status);
+          var keys = await keysRes.json();
+          apiKeysCache = Array.isArray(keys) ? keys : [];
+          if (!apiKeysCache.length) {
+            bodyEl.innerHTML = '<tr><td colspan="6" class="muted">No API keys.</td></tr>';
+            return;
+          }
+          var usage = await Promise.all(apiKeysCache.map(async function (k) {
+            try {
+              var r = await fetch('/api/v2/api-keys/' + encodeURIComponent(k.id) + '/usage?days=1', { credentials: 'include' });
+              if (!r.ok) return null;
+              return await r.json();
+            } catch (e) {
+              return null;
+            }
+          }));
+          bodyEl.innerHTML = apiKeysCache.map(function (k, idx) {
+            var u = usage[idx];
+            var req24 = u ? (u.total_requests_7d || 0) : 0;
+            var err24 = u ? (u.total_errors_7d || 0) : 0;
+            var errRate = req24 > 0 ? ((err24 * 100) / req24).toFixed(1) + '%' : '0%';
+            return '<tr>' +
+              '<td>' + escapeHtml(k.description || '-') + '</td>' +
+              '<td>' + escapeHtml(k.role || '-') + '</td>' +
+              '<td>' + escapeHtml(k.rate_limit_rpm || 100) + '</td>' +
+              '<td>' + renderUsageSparkline(u && u.usage ? u.usage : []) + '</td>' +
+              '<td>' + escapeHtml(err24) + ' <span class="muted">(' + escapeHtml(errRate) + ')</span></td>' +
+              '<td>' +
+                '<button class="btn btn-sm" onclick="loadApiKeyUsage(' + k.id + ')">Details</button> ' +
+                '<button class="btn btn-sm btn-danger" onclick="revokeApiKey(' + k.id + ')">Revoke</button>' +
+              '</td>' +
+              '</tr>';
+          }).join('');
+        } catch (e) {
+          bodyEl.innerHTML = '<tr><td colspan="6" style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+        }
+      }
+
+      async function loadApiKeyUsage(id) {
+        var detailsEl = document.getElementById('api-key-details');
+        if (!detailsEl) return;
+        try {
+          var res = await fetch('/api/v2/api-keys/' + encodeURIComponent(id) + '/usage?days=7', { credentials: 'include' });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var data = await res.json();
+          var req = data.total_requests_7d || 0;
+          var err = data.total_errors_7d || 0;
+          var errRate = req > 0 ? ((err * 100) / req).toFixed(2) : '0.00';
+          detailsEl.innerHTML =
+            '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">' +
+              '<div><strong>' + escapeHtml(data.key_name || ('Key #' + id)) + '</strong> · 7d requests: ' + escapeHtml(req) + ' · errors: ' + escapeHtml(err) + ' (' + escapeHtml(errRate) + '%)</div>' +
+              '<div style="display:flex;gap:6px;">' +
+                '<input id="api-key-limit-rpm-' + id + '" class="setting-input" type="number" min="1" max="10000" style="width:110px;" value="' + escapeHtml(data.rate_limit_rpm || 100) + '">' +
+                '<input id="api-key-limit-burst-' + id + '" class="setting-input" type="number" min="1" max="1000" style="width:110px;" value="' + escapeHtml((apiKeysCache.find(function (k) { return k.id === id; }) || {}).rate_limit_burst || 20) + '">' +
+                '<button class="btn btn-sm" onclick="saveApiKeyLimits(' + id + ')">Save limits</button>' +
+              '</div>' +
+            '</div>' +
+            '<div style="margin-top:10px;overflow:auto;">' + renderUsageChart7d(data.usage || []) + '</div>';
+        } catch (e) {
+          detailsEl.innerHTML = '<span style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</span>';
+        }
+      }
+
+      async function saveApiKeyLimits(id) {
+        var rpmEl = document.getElementById('api-key-limit-rpm-' + id);
+        var burstEl = document.getElementById('api-key-limit-burst-' + id);
+        if (!rpmEl || !burstEl) return;
+        var payload = {
+          rate_limit_rpm: parseInt(rpmEl.value || '100', 10),
+          rate_limit_burst: parseInt(burstEl.value || '20', 10)
+        };
+        try {
+          var res = await fetch('/api/v2/api-keys/' + encodeURIComponent(id) + '/limits', {
+            method: 'PUT',
+            headers: mutHeaders(),
+            credentials: 'include',
+            body: JSON.stringify(payload)
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          await loadApiKeysSection();
+          await loadApiKeyUsage(id);
+        } catch (e) {
+          alert('Save limits failed: ' + e.message);
+        }
+      }
+
+      async function createApiKey() {
+        var name = (document.getElementById('api-key-name').value || '').trim();
+        var role = document.getElementById('api-key-role').value || 'Viewer';
+        var rpm = parseInt(document.getElementById('api-key-rpm').value || '100', 10);
+        var burst = parseInt(document.getElementById('api-key-burst').value || '20', 10);
+        if (!name) return;
+        try {
+          var res = await fetch('/api/v1/api-keys', {
+            method: 'POST',
+            headers: mutHeaders(),
+            credentials: 'include',
+            body: JSON.stringify({
+              description: name,
+              role: role,
+              rate_limit_rpm: rpm,
+              rate_limit_burst: burst
+            })
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          var body = await res.json();
+          document.getElementById('api-key-create-result').innerHTML =
+            '<strong>New key:</strong> <code>' + escapeHtml(body.key || '-') + '</code>';
+          document.getElementById('api-key-name').value = '';
+          await loadApiKeysSection();
+        } catch (e) {
+          document.getElementById('api-key-create-result').textContent = 'Create failed: ' + e.message;
+        }
+      }
+
+      async function revokeApiKey(id) {
+        if (!confirm('Revoke API key #' + id + '?')) return;
+        try {
+          var res = await fetch('/api/v1/api-keys/' + encodeURIComponent(id), {
+            method: 'DELETE',
+            headers: mutHeaders(),
+            credentials: 'include'
+          });
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          await loadApiKeysSection();
+          document.getElementById('api-key-details').textContent = 'Select a key to view 7-day usage.';
+        } catch (e) {
+          alert('Revoke failed: ' + e.message);
+        }
+      }
+
 async function openSecurityModal() {
         document.getElementById('security-modal').style.display = '';
         document.getElementById('totp-setup-box').style.display = 'none';
@@ -391,6 +567,7 @@ async function openSecurityModal() {
 
         await loadRetentionSection();
         await loadAdminSecuritySection();
+        await loadApiKeysSection();
         await loadStatusTags();
       }
 
@@ -469,12 +646,17 @@ async function openSecurityModal() {
   if (typeof window.loadSystemStatus === 'function') window.TrueID.loadSystemStatus = window.loadSystemStatus;
   if (typeof window.loadTotpStatus === 'function') window.TrueID.loadTotpStatus = window.loadTotpStatus;
   if (typeof window.openSecurityModal === 'function') window.TrueID.openSecurityModal = window.openSecurityModal;
+  if (typeof window.createApiKey === 'function') window.TrueID.createApiKey = window.createApiKey;
+  if (typeof window.loadApiKeysSection === 'function') window.TrueID.loadApiKeysSection = window.loadApiKeysSection;
+  if (typeof window.loadApiKeyUsage === 'function') window.TrueID.loadApiKeyUsage = window.loadApiKeyUsage;
   if (typeof window.quickAddTag === 'function') window.TrueID.quickAddTag = window.quickAddTag;
+  if (typeof window.revokeApiKey === 'function') window.TrueID.revokeApiKey = window.revokeApiKey;
   if (typeof window.regenBackupCodes === 'function') window.TrueID.regenBackupCodes = window.regenBackupCodes;
   if (typeof window.renderAuditPaging === 'function') window.TrueID.renderAuditPaging = window.renderAuditPaging;
   if (typeof window.renderAuditTable === 'function') window.TrueID.renderAuditTable = window.renderAuditTable;
   if (typeof window.runRetentionNow === 'function') window.TrueID.runRetentionNow = window.runRetentionNow;
   if (typeof window.saveAdminSecurityPolicy === 'function') window.TrueID.saveAdminSecurityPolicy = window.saveAdminSecurityPolicy;
+  if (typeof window.saveApiKeyLimits === 'function') window.TrueID.saveApiKeyLimits = window.saveApiKeyLimits;
   if (typeof window.saveRetentionPolicy === 'function') window.TrueID.saveRetentionPolicy = window.saveRetentionPolicy;
   if (typeof window.startTotpSetup === 'function') window.TrueID.startTotpSetup = window.startTotpSetup;
   if (typeof window.terminateAdminSession === 'function') window.TrueID.terminateAdminSession = window.terminateAdminSession;

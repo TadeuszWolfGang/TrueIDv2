@@ -6,6 +6,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 ## [0.6.0] — 2026-02-13
 
 ### Added
+- **API Rate Limiting Per-Key**: token-bucket limiter with per-key RPM/burst overrides (`api_keys.rate_limit_rpm`, `api_keys.rate_limit_burst`)
+- **Rate Limit Response Headers**: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` on authenticated API responses (API key + session)
+- **API Key Usage Rollups**: hourly usage/error aggregates in new `api_usage_hourly` table with non-blocking request tracking
+- **API Key Admin API v2**: usage endpoint (`GET /api/v2/api-keys/{id}/usage`) and limits update endpoint (`PUT /api/v2/api-keys/{id}/limits`)
+- Dashboard **Status** tab extension: API keys panel with RPM/error visibility, 7-day inline SVG usage chart, and limit editing
+- 3 new E2E tests: `test_api_key_rate_limit_headers`, `test_api_key_usage_tracking`, `test_api_key_rate_limit_429`
 - **Scheduled Reports & Delivery**: `report_schedules` model and engine scheduler loop for cron-based report execution with duplicate-window protection
 - **Scheduled Report Channels**: report delivery via existing notification channels (email/slack/teams/webhook), including Matrix-themed HTML email format
 - **Report Schedules API**: admin CRUD + send-now endpoints under `/api/v2/reports/schedules*`
