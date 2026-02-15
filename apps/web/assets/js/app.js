@@ -4,7 +4,8 @@ var currentUser = null;
       var evtSource = null;
       var sseConnected = false;
       var matrixRainTimer = null;
-      var matrixRainEnabled = localStorage.getItem('trueid_matrix_rain') !== 'false';
+      var matrixRainPref = localStorage.getItem('trueid_matrix_rain');
+      var matrixRainEnabled = matrixRainPref === null || matrixRainPref === 'on' || matrixRainPref === 'true';
       var tabLoaded = {
         mappings: false, search: false, conflicts: false, alerts: false, analytics: false, map: false, status: false,
         subnets: false, switches: false, fingerprints: false, dns: false,
@@ -103,7 +104,7 @@ var currentUser = null;
 
       function toggleMatrixRain() {
         matrixRainEnabled = !matrixRainEnabled;
-        localStorage.setItem('trueid_matrix_rain', matrixRainEnabled ? 'true' : 'false');
+        localStorage.setItem('trueid_matrix_rain', matrixRainEnabled ? 'on' : 'off');
         if (matrixRainEnabled) {
           startMatrixRain();
         } else {
@@ -113,6 +114,8 @@ var currentUser = null;
       }
 
       (function initMatrixRain() {
+        var pref = localStorage.getItem('trueid_matrix_rain');
+        matrixRainEnabled = pref === null || pref === 'on' || pref === 'true';
         updateMatrixToggleUi();
         if (matrixRainEnabled) {
           startMatrixRain();
@@ -316,6 +319,7 @@ var currentUser = null;
         var el = document.querySelector('[data-group="' + name + '"]');
         if (el) el.classList.toggle('expanded');
       }
+      window.toggleGroup = toggleGroup;
 
       /**
        * Expands only the group that contains provided tab.
@@ -336,6 +340,7 @@ var currentUser = null;
           if (el) el.classList.add('expanded');
         }
       }
+      window.expandGroupForTab = expandGroupForTab;
 
       function switchTab(name) {
         activeTab = name;
@@ -492,5 +497,5 @@ var currentUser = null;
       document.querySelectorAll('#tabs .tab-group').forEach(function (node) {
         node.classList.remove('expanded');
       });
-      expandGroupForTab(activeTab);
+      expandGroupForTab(activeTab || 'mappings');
       initAuth();
