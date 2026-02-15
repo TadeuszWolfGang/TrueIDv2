@@ -100,14 +100,17 @@ pub fn v2_routes(state: AppState) -> Router<AppState> {
             "/api/v2/timeline/ip/{ip}",
             get(routes_timeline::timeline_ip),
         )
+        .route("/api/v2/timeline/ip/:ip", get(routes_timeline::timeline_ip))
         .route(
             "/api/v2/timeline/user/{user}",
             get(routes_timeline::timeline_user),
         )
+        .route("/api/v2/timeline/user/:user", get(routes_timeline::timeline_user))
         .route(
             "/api/v2/timeline/mac/{mac}",
             get(routes_timeline::timeline_mac),
         )
+        .route("/api/v2/timeline/mac/:mac", get(routes_timeline::timeline_mac))
         .route("/api/v2/conflicts", get(routes_conflicts::list_conflicts))
         .route(
             "/api/v2/conflicts/stats",
