@@ -293,6 +293,15 @@ where
 /// Skips validation for GET/HEAD/OPTIONS and for API-key auth.
 pub async fn csrf_guard(req: Request, next: Next) -> Result<Response, ApiError> {
     let method = req.method().clone();
+    let path = req.uri().path();
+
+    // Skip CSRF for login/OIDC public endpoints — no token available before authentication.
+    if path == "/api/auth/login"
+        || path == "/api/auth/oidc/callback"
+        || path == "/api/auth/oidc/status"
+    {
+        return Ok(next.run(req).await);
+    }
 
     // Safe methods: skip.
     if method == Method::GET || method == Method::HEAD || method == Method::OPTIONS {
