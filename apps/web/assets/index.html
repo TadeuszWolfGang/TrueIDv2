@@ -57,7 +57,7 @@
         width: 180px;
         height: 100vh;
         overflow-y: auto;
-        background: var(--bg-panel);
+        background: rgba(9, 26, 17, 0.92);
         border-right: 1px solid var(--border-dim);
         box-shadow: 0 0 18px var(--green-ghost);
         display: flex;
@@ -77,6 +77,9 @@
         height: 100vh;
         overflow: auto;
         padding: 20px 24px;
+        position: relative;
+        z-index: 1;
+        background: transparent;
       }
       body > *:not(#matrix-bg) { position: relative; z-index: 1; }
       h1 {
@@ -89,11 +92,15 @@
       .panel {
         border: 1px solid var(--border-dim);
         border-radius: 8px;
-        background: var(--bg-panel);
+        background: color-mix(in srgb, var(--bg-panel) 95%, transparent);
         padding: 16px;
         box-shadow: 0 0 18px var(--green-ghost);
       }
-      table { width: 100%; border-collapse: collapse; }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        background: color-mix(in srgb, var(--bg-panel) 95%, transparent);
+      }
       thead th {
         text-align: left;
         font-weight: 600;
@@ -165,13 +172,31 @@
         box-shadow: inset 0 0 8px var(--green-ghost);
         text-shadow: var(--text-glow);
       }
-      .tab-group-label {
+      .tab-group-header {
         color: var(--text-secondary);
         text-transform: uppercase;
         letter-spacing: 0.08em;
         font-size: 10px;
         padding: 10px 12px 4px;
+        cursor: pointer;
+        user-select: none;
+        display: flex;
+        align-items: center;
+        gap: 4px;
       }
+      .tab-group-header:hover { color: var(--green-bright); }
+      .tab-group-arrow {
+        display: inline-block;
+        transition: transform 0.2s;
+        font-size: 9px;
+      }
+      .tab-group.expanded .tab-group-arrow { transform: rotate(90deg); }
+      .tab-group-items {
+        max-height: 0;
+        overflow: hidden;
+        transition: max-height 0.25s ease;
+      }
+      .tab-group.expanded .tab-group-items { max-height: 500px; }
       .sidebar-divider {
         border-top: 1px solid var(--border-dim);
         margin: 10px 10px 8px;
@@ -306,7 +331,7 @@
       .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
       .sync-status-box {
-        background: var(--bg-deep);
+        background: color-mix(in srgb, var(--bg-panel) 95%, transparent);
         border: 1px solid var(--border-dim);
         border-radius: 4px;
         padding: 12px;
@@ -376,7 +401,7 @@
       .wh-skip { color: var(--text-secondary); }
 
       .stat-card {
-        background: var(--bg-panel);
+        background: color-mix(in srgb, var(--bg-panel) 95%, transparent);
         border: 1px solid var(--border-dim);
         border-radius: 4px;
         padding: 12px 16px;
@@ -406,7 +431,7 @@
       .security-modal-panel {
         max-width: 640px;
         margin: 6vh auto;
-        background: var(--bg-panel);
+        background: color-mix(in srgb, var(--bg-panel) 95%, transparent);
         border: 1px solid var(--green-dim);
         border-radius: 8px;
         padding: 16px;
@@ -429,6 +454,27 @@
       #matrix-toggle {
         min-width: 34px;
         padding: 6px 8px;
+      }
+      th.sortable {
+        cursor: pointer;
+        user-select: none;
+        white-space: nowrap;
+      }
+      th.sortable:hover { color: var(--green-bright); }
+      th.sortable::after {
+        content: ' ⇅';
+        opacity: 0.3;
+        font-size: 11px;
+      }
+      th.sortable.sort-asc::after {
+        content: ' ▲';
+        opacity: 1;
+        color: var(--green-bright);
+      }
+      th.sortable.sort-desc::after {
+        content: ' ▼';
+        opacity: 1;
+        color: var(--green-bright);
       }
 
       @keyframes neon-flash {
@@ -467,38 +513,68 @@
     </style>
   </head>
   <body>
-    <canvas id="matrix-bg" style="position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;opacity:0.04;pointer-events:none;"></canvas>
+    <canvas id="matrix-bg" style="position:fixed;inset:0;width:100%;height:100%;z-index:0;opacity:0.04;pointer-events:none;"></canvas>
 
     <div id="app-shell">
       <aside id="sidebar">
         <div id="sidebar-logo">▸ TRUEID</div>
         <nav id="tabs">
-          <div class="tab-group-label">Core</div>
-          <button class="tab active" id="tab-btn-mappings" onclick="switchTab('mappings')">Mappings</button>
-          <button class="tab" id="tab-btn-search" onclick="switchTab('search')">Search</button>
-          <button class="tab" id="tab-btn-conflicts" onclick="switchTab('conflicts')">Conflicts</button>
-          <button class="tab" id="tab-btn-alerts" onclick="switchTab('alerts')">Alerts</button>
+          <div class="tab-group" data-group="core">
+            <div class="tab-group-header" onclick="toggleGroup('core')">
+              <span class="tab-group-arrow">▸</span> CORE
+            </div>
+            <div class="tab-group-items" id="group-core">
+              <button class="tab active" id="tab-btn-mappings" onclick="switchTab('mappings')">Mappings</button>
+              <button class="tab" id="tab-btn-search" onclick="switchTab('search')">Search</button>
+              <button class="tab" id="tab-btn-conflicts" onclick="switchTab('conflicts')">Conflicts</button>
+              <button class="tab" id="tab-btn-alerts" onclick="switchTab('alerts')">Alerts</button>
+            </div>
+          </div>
 
-          <div class="tab-group-label">Analytics</div>
-          <button class="tab" id="tab-btn-analytics" onclick="switchTab('analytics')">Analytics</button>
-          <button class="tab" id="tab-btn-map" onclick="switchTab('map')">Net Map</button>
+          <div class="tab-group" data-group="analytics">
+            <div class="tab-group-header" onclick="toggleGroup('analytics')">
+              <span class="tab-group-arrow">▸</span> ANALYTICS
+            </div>
+            <div class="tab-group-items" id="group-analytics">
+              <button class="tab" id="tab-btn-analytics" onclick="switchTab('analytics')">Analytics</button>
+              <button class="tab" id="tab-btn-map" onclick="switchTab('map')">Net Map</button>
+            </div>
+          </div>
 
-          <div class="tab-group-label">Network</div>
-          <button class="tab" id="tab-btn-subnets" onclick="switchTab('subnets')">Subnets</button>
-          <button class="tab" id="tab-btn-switches" onclick="switchTab('switches')">Switches</button>
-          <button class="tab" id="tab-btn-fingerprints" onclick="switchTab('fingerprints')">FPrint</button>
-          <button class="tab" id="tab-btn-dns" onclick="switchTab('dns')">DNS</button>
+          <div class="tab-group" data-group="network">
+            <div class="tab-group-header" onclick="toggleGroup('network')">
+              <span class="tab-group-arrow">▸</span> NETWORK
+            </div>
+            <div class="tab-group-items" id="group-network">
+              <button class="tab" id="tab-btn-subnets" onclick="switchTab('subnets')">Subnets</button>
+              <button class="tab" id="tab-btn-switches" onclick="switchTab('switches')">Switches</button>
+              <button class="tab" id="tab-btn-fingerprints" onclick="switchTab('fingerprints')">FPrint</button>
+              <button class="tab" id="tab-btn-dns" onclick="switchTab('dns')">DNS</button>
+            </div>
+          </div>
 
-          <div class="tab-group-label">Integrations</div>
-          <button class="tab" id="tab-btn-firewall" onclick="switchTab('firewall')" style="display:none;">Firewall</button>
-          <button class="tab" id="tab-btn-siem" onclick="switchTab('siem')" style="display:none;">SIEM</button>
-          <button class="tab" id="tab-btn-ldap" onclick="switchTab('ldap')" style="display:none;">LDAP</button>
-          <button class="tab" id="tab-btn-notifications" onclick="switchTab('notifications')" style="display:none;">Notifs</button>
-          <button class="tab" id="tab-btn-sycope" onclick="switchTab('sycope')">Sycope</button>
+          <div class="tab-group" data-group="integrations">
+            <div class="tab-group-header" onclick="toggleGroup('integrations')">
+              <span class="tab-group-arrow">▸</span> INTEGRATIONS
+            </div>
+            <div class="tab-group-items" id="group-integrations">
+              <button class="tab" id="tab-btn-firewall" onclick="switchTab('firewall')" style="display:none;">Firewall</button>
+              <button class="tab" id="tab-btn-siem" onclick="switchTab('siem')" style="display:none;">SIEM</button>
+              <button class="tab" id="tab-btn-ldap" onclick="switchTab('ldap')" style="display:none;">LDAP</button>
+              <button class="tab" id="tab-btn-notifications" onclick="switchTab('notifications')" style="display:none;">Notifs</button>
+              <button class="tab" id="tab-btn-sycope" onclick="switchTab('sycope')">Sycope</button>
+            </div>
+          </div>
 
-          <div class="tab-group-label">Admin</div>
-          <button class="tab" id="tab-btn-audit" onclick="switchTab('audit')" style="display:none;">Audit</button>
-          <button class="tab" id="tab-btn-status" onclick="switchTab('status')">Status</button>
+          <div class="tab-group" data-group="admin">
+            <div class="tab-group-header" onclick="toggleGroup('admin')">
+              <span class="tab-group-arrow">▸</span> ADMIN
+            </div>
+            <div class="tab-group-items" id="group-admin">
+              <button class="tab" id="tab-btn-audit" onclick="switchTab('audit')" style="display:none;">Audit</button>
+              <button class="tab" id="tab-btn-status" onclick="switchTab('status')">Status</button>
+            </div>
+          </div>
         </nav>
         <div class="sidebar-divider"></div>
         <div id="user-bar" style="display:none;">
@@ -543,19 +619,19 @@
           <button class="btn btn-sm" onclick="exportMappings('json')">Export JSON</button>
         </div>
         <div id="mappings-stats" style="display:flex;gap:24px;margin-bottom:12px;font-size:13px;color:var(--text-secondary);"></div>
-        <table>
+        <table id="mappings-table">
           <thead>
             <tr>
               <th></th>
-              <th>IP</th>
-              <th>MAC</th>
-              <th>User</th>
+              <th data-sort="ip">IP</th>
+              <th data-sort="mac">MAC</th>
+              <th data-sort="user">User</th>
               <th>Groups</th>
               <th>Location</th>
               <th>Tags</th>
-              <th>Last Seen</th>
-              <th>Source</th>
-              <th>Confidence</th>
+              <th data-sort="last_seen">Last Seen</th>
+              <th data-sort="source">Source</th>
+              <th data-sort="confidence">Confidence</th>
             </tr>
           </thead>
           <tbody id="mappings-body">
@@ -601,16 +677,16 @@
 
         <div id="search-mappings-section" style="display:none;">
           <h2 class="section-title">Mappings <span id="search-mappings-count" class="muted" style="font-weight:normal;font-size:13px;"></span></h2>
-          <table>
-            <thead><tr><th></th><th>IP</th><th>MAC</th><th>User</th><th>Groups</th><th>Last Seen</th><th>Source</th><th>Confidence</th></tr></thead>
+          <table id="search-mappings-table">
+            <thead><tr><th></th><th data-sort="ip">IP</th><th data-sort="mac">MAC</th><th data-sort="user">User</th><th>Groups</th><th data-sort="last_seen">Last Seen</th><th data-sort="source">Source</th><th data-sort="confidence">Confidence</th></tr></thead>
             <tbody id="search-mappings-body"></tbody>
           </table>
         </div>
 
         <div id="search-events-section" style="display:none;margin-top:16px;">
           <h2 class="section-title">Events <span id="search-events-count" class="muted" style="font-weight:normal;font-size:13px;"></span></h2>
-          <table>
-            <thead><tr><th>ID</th><th>IP</th><th>User</th><th>Source</th><th>Timestamp</th></tr></thead>
+          <table id="search-events-table">
+            <thead><tr><th data-sort="id">ID</th><th data-sort="ip">IP</th><th data-sort="user">User</th><th data-sort="source">Source</th><th data-sort="timestamp">Timestamp</th></tr></thead>
             <tbody id="search-events-body"></tbody>
           </table>
         </div>
@@ -645,16 +721,16 @@
           </select>
           <button class="btn btn-sm" onclick="loadConflicts(1)">Apply</button>
         </div>
-        <table>
+        <table id="conflicts-table">
           <thead>
             <tr>
-              <th>Severity</th>
-              <th>Type</th>
-              <th>IP</th>
-              <th>User (old → new)</th>
-              <th>MAC</th>
-              <th>Source</th>
-              <th>Detected</th>
+              <th data-sort="severity">Severity</th>
+              <th data-sort="type">Type</th>
+              <th data-sort="ip">IP</th>
+              <th data-sort="user">User (old → new)</th>
+              <th data-sort="mac">MAC</th>
+              <th data-sort="source">Source</th>
+              <th data-sort="detected_at">Detected</th>
               <th>Action</th>
             </tr>
           </thead>
@@ -705,8 +781,8 @@
               <button class="btn btn-sm" onclick="hideRuleForm()">Cancel</button>
             </div>
           </div>
-          <table>
-            <thead><tr><th>Enabled</th><th>Name</th><th>Type</th><th>Severity</th><th>Webhook</th><th>Cooldown</th><th>Actions</th></tr></thead>
+          <table id="alerts-rules-table">
+            <thead><tr><th>Enabled</th><th data-sort="name">Name</th><th data-sort="rule_type">Type</th><th data-sort="severity">Severity</th><th>Webhook</th><th data-sort="cooldown_seconds">Cooldown</th><th>Actions</th></tr></thead>
             <tbody id="rules-body"></tbody>
           </table>
         </div>
@@ -731,8 +807,8 @@
           </select>
           <button class="btn btn-sm" onclick="loadAlertHistory(1)">Apply</button>
         </div>
-        <table>
-          <thead><tr><th>Severity</th><th>Rule</th><th>Type</th><th>IP</th><th>User</th><th>Webhook</th><th>Fired At</th></tr></thead>
+        <table id="alert-history-table">
+          <thead><tr><th data-sort="severity">Severity</th><th data-sort="rule_name">Rule</th><th data-sort="rule_type">Type</th><th data-sort="ip">IP</th><th data-sort="user">User</th><th data-sort="webhook_status">Webhook</th><th data-sort="fired_at">Fired At</th></tr></thead>
           <tbody id="alert-history-body"></tbody>
         </table>
         <div id="alert-history-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text-secondary);"></div>
@@ -867,15 +943,15 @@
             <button class="btn btn-sm" onclick="hideSubnetForm()">Cancel</button>
           </div>
         </div>
-        <table>
+        <table id="subnets-table">
           <thead>
             <tr>
-              <th>Name</th>
-              <th>CIDR</th>
-              <th>VLAN ID</th>
-              <th>Location</th>
-              <th>Gateway</th>
-              <th>Mappings</th>
+              <th data-sort="name">Name</th>
+              <th data-sort="cidr">CIDR</th>
+              <th data-sort="vlan_id">VLAN ID</th>
+              <th data-sort="location">Location</th>
+              <th data-sort="gateway">Gateway</th>
+              <th data-sort="mappings">Mappings</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -937,17 +1013,17 @@
             <button class="btn btn-sm" onclick="hideSwitchForm()">Cancel</button>
           </div>
         </div>
-        <table>
+        <table id="switches-table">
           <thead>
             <tr>
-              <th>Name</th>
-              <th>IP</th>
-              <th>SNMP Version</th>
-              <th>Poll Interval</th>
-              <th>Enabled</th>
-              <th>Last Poll</th>
-              <th>Last Poll Status</th>
-              <th>Port Count</th>
+              <th data-sort="name">Name</th>
+              <th data-sort="ip">IP</th>
+              <th data-sort="snmp_version">SNMP Version</th>
+              <th data-sort="poll_interval_secs">Poll Interval</th>
+              <th data-sort="enabled">Enabled</th>
+              <th data-sort="last_polled_at">Last Poll</th>
+              <th data-sort="last_poll_status">Last Poll Status</th>
+              <th data-sort="mac_count">Port Count</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -983,14 +1059,14 @@
         </div>
 
         <h2 class="section-title">Fingerprint Database</h2>
-        <table>
+        <table id="fingerprints-table">
           <thead>
             <tr>
-              <th>Fingerprint</th>
-              <th>Device Type</th>
-              <th>OS Family</th>
+              <th data-sort="fingerprint">Fingerprint</th>
+              <th data-sort="device_type">Device Type</th>
+              <th data-sort="os_family">OS Family</th>
               <th>Description</th>
-              <th>Observations</th>
+              <th data-sort="observations">Observations</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -1001,16 +1077,16 @@
         <div class="setting-divider" style="margin:16px 0;"></div>
 
         <h2 class="section-title">Recent Observations</h2>
-        <table>
+        <table id="fp-obs-table">
           <thead>
             <tr>
-              <th>MAC</th>
-              <th>IP</th>
-              <th>Fingerprint</th>
-              <th>Device Type</th>
-              <th>Hostname</th>
-              <th>First Seen</th>
-              <th>Last Seen</th>
+              <th data-sort="mac">MAC</th>
+              <th data-sort="ip">IP</th>
+              <th data-sort="fingerprint">Fingerprint</th>
+              <th data-sort="device_type">Device Type</th>
+              <th data-sort="hostname">Hostname</th>
+              <th data-sort="observed_at">First Seen</th>
+              <th data-sort="last_seen">Last Seen</th>
             </tr>
           </thead>
           <tbody id="fp-obs-body"><tr><td colspan="7" class="muted">Loading...</td></tr></tbody>
@@ -1031,13 +1107,13 @@
           <button class="btn btn-sm" onclick="loadDnsTab()">Refresh</button>
           <span id="dns-lookup-result" class="muted"></span>
         </div>
-        <table>
+        <table id="dns-table">
           <thead>
             <tr>
-              <th>IP</th>
-              <th>Hostname</th>
-              <th>Resolved At</th>
-              <th>TTL</th>
+              <th data-sort="ip">IP</th>
+              <th data-sort="hostname">Hostname</th>
+              <th data-sort="resolved_at">Resolved At</th>
+              <th data-sort="expires_at">TTL</th>
             </tr>
           </thead>
           <tbody id="dns-body"><tr><td colspan="4" class="muted">Loading...</td></tr></tbody>
@@ -1573,16 +1649,16 @@
           <button class="btn btn-sm" onclick="loadAuditLogs(1)">Apply</button>
         </div>
         <!-- Table -->
-        <table>
+        <table id="audit-table">
           <thead>
             <tr>
-              <th>Timestamp</th>
-              <th>User</th>
-              <th>Type</th>
-              <th>Action</th>
-              <th>Target</th>
-              <th>IP</th>
-              <th>Request ID</th>
+              <th data-sort="timestamp">Timestamp</th>
+              <th data-sort="username">User</th>
+              <th data-sort="principal_type">Type</th>
+              <th data-sort="action">Action</th>
+              <th data-sort="target">Target</th>
+              <th data-sort="ip_address">IP</th>
+              <th data-sort="request_id">Request ID</th>
             </tr>
           </thead>
           <tbody id="audit-body">

@@ -6,6 +6,30 @@ async function loadSubnetsTab() {
         await loadDiscoveredSubnets();
       }
 
+      /**
+       * Sorts rows using per-tab sort state.
+       * Parameters: tabName - logical tab key, rows - list of objects.
+       * Returns: sorted rows.
+       */
+      function sortNetworkRows(tabName, rows) {
+        var state = window.sortState && window.sortState[tabName];
+        if (!state || !state.column) return rows;
+        var dir = state.direction === 'desc' ? -1 : 1;
+        return rows.slice().sort(function (a, b) {
+          var av = a[state.column];
+          var bv = b[state.column];
+          if (state.column === 'mappings') {
+            av = subnetCounts[a.id] != null ? subnetCounts[a.id] : 0;
+            bv = subnetCounts[b.id] != null ? subnetCounts[b.id] : 0;
+          }
+          if (av == null && bv == null) return 0;
+          if (av == null) return -1 * dir;
+          if (bv == null) return 1 * dir;
+          if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir;
+          return String(av).localeCompare(String(bv)) * dir;
+        });
+      }
+
       async function loadSubnetsStats() {
         try {
           var res = await fetch('/api/v2/subnets/stats', { credentials: 'include' });
@@ -34,11 +58,13 @@ async function loadSubnetsTab() {
           var all = await res.json();
           subnets = Array.isArray(all) ? all : [];
           var start = (subnetCurrentPage - 1) * subnetPageSize;
-          var rows = subnets.slice(start, start + subnetPageSize);
+          var sorted = sortNetworkRows('subnets', subnets);
+          var rows = sorted.slice(start, start + subnetPageSize);
           var body = document.getElementById('subnets-body');
           if (!rows.length) {
             body.innerHTML = '<tr><td colspan="7" class="muted">No subnets configured.</td></tr>';
-            renderPager('subnets-paging', subnetCurrentPage, subnetPageSize, subnets.length, 'loadSubnets');
+            renderPager('subnets-paging', subnetCurrentPage, subnetPageSize, sorted.length, 'loadSubnets');
+            applySortHeaders('subnets-table', 'subnets', null, loadSubnets);
             return;
           }
           body.innerHTML = rows.map(function (s) {
@@ -56,7 +82,8 @@ async function loadSubnetsTab() {
               '</tr>' +
               '<tr id="subnet-map-row-' + s.id + '" style="display:' + (subnetMappingOpen[s.id] ? '' : 'none') + ';"><td colspan="7"><div id="subnet-map-' + s.id + '" class="muted">Loading mappings...</div></td></tr>';
           }).join('');
-          renderPager('subnets-paging', subnetCurrentPage, subnetPageSize, subnets.length, 'loadSubnets');
+          renderPager('subnets-paging', subnetCurrentPage, subnetPageSize, sorted.length, 'loadSubnets');
+          applySortHeaders('subnets-table', 'subnets', null, loadSubnets);
           applyRoleVisibility(currentUser.role);
         } catch (e) {
           document.getElementById('subnets-body').innerHTML =
@@ -257,11 +284,13 @@ async function loadSubnetsTab() {
           var all = await res.json();
           switches = Array.isArray(all) ? all : [];
           var start = (switchesCurrentPage - 1) * switchesPageSize;
-          var rows = switches.slice(start, start + switchesPageSize);
+          var sorted = sortNetworkRows('switches', switches);
+          var rows = sorted.slice(start, start + switchesPageSize);
           var body = document.getElementById('switches-body');
           if (!rows.length) {
             body.innerHTML = '<tr><td colspan="9" class="muted">No switches configured.</td></tr>';
-            renderPager('switches-paging', switchesCurrentPage, switchesPageSize, switches.length, 'loadSwitches');
+            renderPager('switches-paging', switchesCurrentPage, switchesPageSize, sorted.length, 'loadSwitches');
+            applySortHeaders('switches-table', 'switches', null, loadSwitches);
             return;
           }
           body.innerHTML = rows.map(function (s) {
@@ -282,7 +311,8 @@ async function loadSubnetsTab() {
               '</tr>' +
               '<tr id="sw-ports-row-' + s.id + '" style="display:' + (switchPortOpen[s.id] ? '' : 'none') + ';"><td colspan="9"><div id="sw-ports-' + s.id + '" class="muted">Loading ports...</div></td></tr>';
           }).join('');
-          renderPager('switches-paging', switchesCurrentPage, switchesPageSize, switches.length, 'loadSwitches');
+          renderPager('switches-paging', switchesCurrentPage, switchesPageSize, sorted.length, 'loadSwitches');
+          applySortHeaders('switches-table', 'switches', null, loadSwitches);
           applyRoleVisibility(currentUser.role);
         } catch (e) {
           document.getElementById('switches-body').innerHTML =
@@ -491,7 +521,8 @@ async function loadSubnetsTab() {
           var all = await res.json();
           fingerprints = Array.isArray(all) ? all : [];
           var start = (fpCurrentPage - 1) * fpPageSize;
-          var rows = fingerprints.slice(start, start + fpPageSize);
+          var sorted = sortNetworkRows('fingerprints', fingerprints);
+          var rows = sorted.slice(start, start + fpPageSize);
           var obsMap = {};
           try {
             var obsRes = await fetch('/api/v2/fingerprints/observations?page=1&limit=200', { credentials: 'include' });
@@ -506,7 +537,8 @@ async function loadSubnetsTab() {
           var body = document.getElementById('fp-body');
           if (!rows.length) {
             body.innerHTML = '<tr><td colspan="6" class="muted">No fingerprints.</td></tr>';
-            renderPager('fp-paging', fpCurrentPage, fpPageSize, fingerprints.length, 'loadFingerprintList');
+            renderPager('fp-paging', fpCurrentPage, fpPageSize, sorted.length, 'loadFingerprintList');
+            applySortHeaders('fingerprints-table', 'fingerprints', null, loadFingerprintList);
             return;
           }
           body.innerHTML = rows.map(function (f) {
@@ -520,7 +552,8 @@ async function loadSubnetsTab() {
               '<td>' + actions + '</td>' +
               '</tr>';
           }).join('');
-          renderPager('fp-paging', fpCurrentPage, fpPageSize, fingerprints.length, 'loadFingerprintList');
+          applySortHeaders('fingerprints-table', 'fingerprints', null, loadFingerprintList);
+          renderPager('fp-paging', fpCurrentPage, fpPageSize, sorted.length, 'loadFingerprintList');
           applyRoleVisibility(currentUser.role);
         } catch (e) {
           document.getElementById('fp-body').innerHTML =
@@ -565,7 +598,7 @@ async function loadSubnetsTab() {
           var res = await fetch('/api/v2/fingerprints/observations?page=' + fpObsCurrentPage + '&limit=50', { credentials: 'include' });
           if (!res.ok) throw new Error('HTTP ' + res.status);
           var data = await res.json();
-          var rows = data.data || [];
+          var rows = sortNetworkRows('fingerprintObservations', data.data || []);
           var body = document.getElementById('fp-obs-body');
           if (!rows.length) {
             body.innerHTML = '<tr><td colspan="7" class="muted">No observations.</td></tr>';
@@ -583,6 +616,7 @@ async function loadSubnetsTab() {
               '<td>' + escapeHtml(timeAgo(o.observed_at)) + '</td>' +
               '</tr>';
           }).join('');
+          applySortHeaders('fp-obs-table', 'fingerprintObservations', null, loadFingerprintObservations);
           renderPager('fp-obs-paging', fpObsCurrentPage, 50, data.total || 0, 'loadFingerprintObservations');
         } catch (e) {
           document.getElementById('fp-obs-body').innerHTML =
@@ -612,10 +646,13 @@ async function loadSubnetsTab() {
       async function loadDnsList(page) {
         dnsCurrentPage = page || 1;
         try {
-          var res = await fetch('/api/v2/dns?page=' + dnsCurrentPage + '&limit=50', { credentials: 'include' });
+          var sortParams = getSortParams('dns');
+          var url = '/api/v2/dns?page=' + dnsCurrentPage + '&limit=50';
+          if (sortParams) url += sortParams;
+          var res = await fetch(url, { credentials: 'include' });
           if (!res.ok) throw new Error('HTTP ' + res.status);
           var data = await res.json();
-          var rows = data.data || [];
+          var rows = sortNetworkRows('dns', data.data || []);
           var body = document.getElementById('dns-body');
           if (!rows.length) {
             body.innerHTML = '<tr><td colspan="4" class="muted">No DNS cache entries.</td></tr>';
@@ -630,6 +667,7 @@ async function loadSubnetsTab() {
               '<td>' + escapeHtml(timeAgo(d.expires_at)) + '</td>' +
               '</tr>';
           }).join('');
+          applySortHeaders('dns-table', 'dns', null, loadDnsList);
           renderPager('dns-paging', dnsCurrentPage, 50, data.total || 0, 'loadDnsList');
         } catch (e) {
           document.getElementById('dns-body').innerHTML =

@@ -847,20 +847,49 @@ async function openSecurityModal() {
         await loadStatusTags();
       }
 
+      /**
+       * Sorts rows using audit tab sort state.
+       * Parameters: rows - audit entries list.
+       * Returns: sorted entries.
+       */
+      function sortAuditRows(rows) {
+        var state = window.sortState && window.sortState.audit;
+        if (!state || !state.column) return rows;
+        var dir = state.direction === 'desc' ? -1 : 1;
+        return rows.slice().sort(function (a, b) {
+          var av = a[state.column];
+          var bv = b[state.column];
+          if (av == null && bv == null) return 0;
+          if (av == null) return -1 * dir;
+          if (bv == null) return 1 * dir;
+          return String(av).localeCompare(String(bv)) * dir;
+        });
+      }
+
       async function loadAuditLogs(page) {
         auditCurrentPage = page || 1;
-        var action = document.getElementById('audit-filter-action').value.trim();
-        var user = document.getElementById('audit-filter-user').value.trim();
+        var action = document.getElementById('audit-filter-action').value;
+        var user = document.getElementById('audit-filter-user').value;
         var params = new URLSearchParams({ page: auditCurrentPage, per_page: 50 });
         if (action) params.set('action', action);
         if (user) params.set('username', user);
+        if (!window.sortState || !window.sortState.audit || !window.sortState.audit.column) {
+          params.set('sort', 'timestamp');
+          params.set('order', 'desc');
+        }
+        var sortParams = getSortParams('audit');
+        if (sortParams) {
+          var sortQuery = new URLSearchParams(sortParams.slice(1));
+          sortQuery.forEach(function (value, key) { params.set(key, value); });
+        }
 
         try {
           var res = await fetch('/api/v1/audit-logs?' + params.toString(), { credentials: 'include' });
           if (!res.ok) throw new Error('HTTP ' + res.status);
           var data = await res.json();
-          renderAuditTable(data.entries);
+          renderAuditTable(sortAuditRows(data.entries || []));
           renderAuditPaging(data.page, data.per_page, data.total);
+          applySortHeaders('audit-table', 'audit', null, loadAuditLogs);
         } catch (err) {
           document.getElementById('audit-body').innerHTML =
             '<tr><td colspan="7" style="color:var(--status-error);">Failed: ' + err.message + '</td></tr>';

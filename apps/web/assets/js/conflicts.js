@@ -33,6 +33,15 @@ async function loadConflictsStats() {
         if (type) params.set('type', type);
         if (severity) params.set('severity', severity);
         if (resolved !== '') params.set('resolved', resolved);
+        if (!window.sortState || !window.sortState.conflicts || !window.sortState.conflicts.column) {
+          params.set('sort', 'detected_at');
+          params.set('order', 'desc');
+        }
+        var sortParams = getSortParams('conflicts');
+        if (sortParams) {
+          var sortQuery = new URLSearchParams(sortParams.slice(1));
+          sortQuery.forEach(function (value, key) { params.set(key, value); });
+        }
 
         try {
           var res = await fetch('/api/v2/conflicts?' + params.toString(), { credentials: 'include' });
@@ -61,6 +70,7 @@ async function loadConflictsStats() {
                 '</tr>';
             }).join('');
           }
+          applySortHeaders('conflicts-table', 'conflicts', null, loadConflicts);
           renderConflictsPaging(data.page || conflictsCurrentPage, data.limit || 50, data.total || 0);
         } catch (err) {
           document.getElementById('conflicts-body').innerHTML =

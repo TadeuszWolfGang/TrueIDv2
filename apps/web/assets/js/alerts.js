@@ -19,6 +19,26 @@ async function loadAlertStats() {
         }
       }
 
+      /**
+       * Sorts in-memory rows using tab sort state.
+       * Parameters: tabName - sort key namespace, rows - mutable row list.
+       * Returns: sorted row list.
+       */
+      function sortRowsByState(tabName, rows) {
+        var state = window.sortState && window.sortState[tabName];
+        if (!state || !state.column) return rows;
+        var dir = state.direction === 'desc' ? -1 : 1;
+        return rows.slice().sort(function (a, b) {
+          var av = a[state.column];
+          var bv = b[state.column];
+          if (av == null && bv == null) return 0;
+          if (av == null) return -1 * dir;
+          if (bv == null) return 1 * dir;
+          if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir;
+          return String(av).localeCompare(String(bv)) * dir;
+        });
+      }
+
       function showAddRuleForm() {
         editingRuleId = null;
         document.getElementById('alert-rule-form').style.display = '';
@@ -58,7 +78,7 @@ async function loadAlertStats() {
           var res = await fetch('/api/v2/alerts/rules', { credentials: 'include' });
           if (!res.ok) throw new Error('HTTP ' + res.status);
           var data = await res.json();
-          var rules = data.rules || [];
+          var rules = sortRowsByState('alertRules', data.rules || []);
           var body = document.getElementById('rules-body');
           if (!rules.length) {
             body.innerHTML = '<tr><td colspan="7" class="muted">No rules configured.</td></tr>';
@@ -77,6 +97,7 @@ async function loadAlertStats() {
               '<td><button class="btn btn-sm" onclick="deleteAlertRule(' + r.id + ')">Delete</button></td>' +
               '</tr>';
           }).join('');
+          applySortHeaders('alerts-rules-table', 'alertRules', null, loadAlertRules);
         } catch (err) {
           document.getElementById('rules-body').innerHTML =
             '<tr><td colspan="7" class="muted">No data available.</td></tr>';
@@ -172,12 +193,21 @@ async function loadAlertStats() {
         var params = new URLSearchParams({ page: String(alertHistoryCurrentPage), limit: '50' });
         if (sev) params.set('severity', sev);
         if (type) params.set('rule_type', type);
+        if (!window.sortState || !window.sortState.alertHistory || !window.sortState.alertHistory.column) {
+          params.set('sort', 'fired_at');
+          params.set('order', 'desc');
+        }
+        var sortParams = getSortParams('alertHistory');
+        if (sortParams) {
+          var sortQuery = new URLSearchParams(sortParams.slice(1));
+          sortQuery.forEach(function (value, key) { params.set(key, value); });
+        }
 
         try {
           var res = await fetch('/api/v2/alerts/history?' + params.toString(), { credentials: 'include' });
           if (!res.ok) throw new Error('HTTP ' + res.status);
           var data = await res.json();
-          var rows = data.data || [];
+          var rows = sortRowsByState('alertHistory', data.data || []);
           var body = document.getElementById('alert-history-body');
           if (!rows.length) {
             body.innerHTML = '<tr><td colspan="7" class="muted">No data available.</td></tr>';
@@ -194,6 +224,7 @@ async function loadAlertStats() {
                 '</tr>';
             }).join('');
           }
+          applySortHeaders('alert-history-table', 'alertHistory', null, loadAlertHistory);
           renderAlertHistoryPaging(data.page || alertHistoryCurrentPage, data.limit || 50, data.total || 0);
         } catch (err) {
           document.getElementById('alert-history-body').innerHTML =

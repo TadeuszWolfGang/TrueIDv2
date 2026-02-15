@@ -7,8 +7,10 @@ function parseSearchToFilter(search) {
           out.ip = search;
         } else if (/^[0-9a-fA-F:\-]{11,}$/.test(search)) {
           out.mac = search;
-        } else {
+        } else if (/^[a-zA-Z0-9._@-]{2,}$/.test(search)) {
           out.user = search;
+        } else {
+          out.q = search;
         }
         return out;
       }
@@ -42,6 +44,7 @@ function parseSearchToFilter(search) {
         var body = document.getElementById('mappings-body');
         if (!items || items.length === 0) {
           body.innerHTML = '<tr><td colspan="10" class="muted">No mappings found.</td></tr>';
+          applySortHeaders('mappings-table', 'mappings', null, loadMappings);
           return;
         }
         body.innerHTML = items.map(function (item) {
@@ -76,6 +79,7 @@ function parseSearchToFilter(search) {
             '<td>' + escapeHtml(confidence) + '</td>' +
             '</tr>';
         }).join('');
+        applySortHeaders('mappings-table', 'mappings', null, loadMappings);
       }
 
       function renderMappingsPaging(page, perPage, total) {
@@ -90,19 +94,26 @@ function parseSearchToFilter(search) {
       async function loadMappings(page) {
         mappingsCurrentPage = page || 1;
         var status = document.getElementById('mappings-status');
-        var search = document.getElementById('mappings-search').value.trim();
+        var search = document.getElementById('mappings-search').value;
         var source = document.getElementById('mappings-source').value;
         var active = document.getElementById('mappings-active').value;
         var params = new URLSearchParams({
           scope: 'mappings',
           page: String(mappingsCurrentPage),
-          limit: String(mappingsPerPage),
-          sort: 'last_seen',
-          order: 'desc'
+          limit: String(mappingsPerPage)
         });
         if (search) params.set('q', search);
         if (source) params.set('source', source);
         if (active !== '') params.set('active', active);
+        if (!window.sortState || !window.sortState.mappings || !window.sortState.mappings.column) {
+          params.set('sort', 'last_seen');
+          params.set('order', 'desc');
+        }
+        var sortParams = getSortParams('mappings');
+        if (sortParams) {
+          var sortQuery = new URLSearchParams(sortParams.slice(1));
+          sortQuery.forEach(function (value, key) { params.set(key, value); });
+        }
 
         try {
           var res = await fetch('/api/v2/search?' + params.toString(), { credentials: 'include' });
@@ -121,7 +132,7 @@ function parseSearchToFilter(search) {
       }
 
       function exportMappings(format) {
-        var search = document.getElementById('mappings-search').value.trim();
+        var search = document.getElementById('mappings-search').value;
         var source = document.getElementById('mappings-source').value;
         var active = document.getElementById('mappings-active').value;
         var params = new URLSearchParams({ format: format });
@@ -129,6 +140,7 @@ function parseSearchToFilter(search) {
         if (parsed.ip) params.set('ip', parsed.ip);
         if (parsed.user) params.set('user', parsed.user);
         if (parsed.mac) params.set('mac', parsed.mac);
+        if (parsed.q) params.set('q', parsed.q);
         if (source) params.set('source', source);
         if (active !== '') params.set('active', active);
         window.location = '/api/v2/export/mappings?' + params.toString();
@@ -158,11 +170,9 @@ function parseSearchToFilter(search) {
         searchCurrentPage = page || 1;
         var params = new URLSearchParams({
           page: String(searchCurrentPage),
-          limit: String(searchPerPage),
-          sort: 'timestamp',
-          order: 'desc'
+          limit: String(searchPerPage)
         });
-        var q = document.getElementById('search-q').value.trim();
+        var q = document.getElementById('search-q').value;
         var ip = document.getElementById('search-ip').value.trim();
         var user = document.getElementById('search-user').value.trim();
         var mac = document.getElementById('search-mac').value.trim();
@@ -174,6 +184,15 @@ function parseSearchToFilter(search) {
         if (mac) params.set('mac', mac);
         if (source) params.set('source', source);
         if (scope) params.set('scope', scope);
+        if (!window.sortState || !window.sortState.search || !window.sortState.search.column) {
+          params.set('sort', 'timestamp');
+          params.set('order', 'desc');
+        }
+        var sortParams = getSortParams('search');
+        if (sortParams) {
+          var sortQuery = new URLSearchParams(sortParams.slice(1));
+          sortQuery.forEach(function (value, key) { params.set(key, value); });
+        }
 
         var mappingsSection = document.getElementById('search-mappings-section');
         var eventsSection = document.getElementById('search-events-section');
@@ -212,6 +231,7 @@ function parseSearchToFilter(search) {
                 '<td>' + escapeHtml(item.confidence_score != null ? item.confidence_score : '-') + '</td>' +
                 '</tr>';
             }).join('') : '<tr><td colspan="8" class="muted">No mappings found.</td></tr>';
+            applySortHeaders('search-mappings-table', 'search', null, doSearch);
           } else {
             mappingsSection.style.display = 'none';
           }
@@ -229,6 +249,7 @@ function parseSearchToFilter(search) {
                 '<td>' + escapeHtml(new Date(e.timestamp).toLocaleString()) + '</td>' +
                 '</tr>';
             }).join('') : '<tr><td colspan="5" class="muted">No events found.</td></tr>';
+            applySortHeaders('search-events-table', 'search', null, doSearch);
           } else {
             eventsSection.style.display = 'none';
           }

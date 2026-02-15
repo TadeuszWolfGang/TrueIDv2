@@ -1138,10 +1138,10 @@ impl Db {
              FROM audit_log WHERE 1=1",
         );
         if action.is_some() {
-            sql.push_str(" AND action = ?");
+            sql.push_str(" AND action LIKE '%' || ? || '%'");
         }
         if username.is_some() {
-            sql.push_str(" AND username = ?");
+            sql.push_str(" AND username LIKE '%' || ? || '%'");
         }
         if since.is_some() {
             sql.push_str(" AND timestamp >= ?");
@@ -1184,10 +1184,10 @@ impl Db {
     ) -> Result<i64> {
         let mut sql = String::from("SELECT COUNT(*) as c FROM audit_log WHERE 1=1");
         if action.is_some() {
-            sql.push_str(" AND action = ?");
+            sql.push_str(" AND action LIKE '%' || ? || '%'");
         }
         if username.is_some() {
-            sql.push_str(" AND username = ?");
+            sql.push_str(" AND username LIKE '%' || ? || '%'");
         }
         if since.is_some() {
             sql.push_str(" AND timestamp >= ?");

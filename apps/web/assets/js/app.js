@@ -307,6 +307,36 @@ var currentUser = null;
         });
       }
 
+      /**
+       * Toggles sidebar group expanded state.
+       * Parameters: name - logical group id.
+       * Returns: void.
+       */
+      function toggleGroup(name) {
+        var el = document.querySelector('[data-group="' + name + '"]');
+        if (el) el.classList.toggle('expanded');
+      }
+
+      /**
+       * Expands only the group that contains provided tab.
+       * Parameters: tabName - active tab key.
+       * Returns: void.
+       */
+      function expandGroupForTab(tabName) {
+        var map = {
+          mappings: 'core', search: 'core', conflicts: 'core', alerts: 'core',
+          analytics: 'analytics', map: 'analytics',
+          subnets: 'network', switches: 'network', fingerprints: 'network', dns: 'network',
+          firewall: 'integrations', siem: 'integrations', ldap: 'integrations', notifications: 'integrations', sycope: 'integrations',
+          audit: 'admin', status: 'admin'
+        };
+        var group = map[tabName];
+        if (group) {
+          var el = document.querySelector('[data-group="' + group + '"]');
+          if (el) el.classList.add('expanded');
+        }
+      }
+
       function switchTab(name) {
         activeTab = name;
         ['mappings', 'search', 'conflicts', 'alerts', 'analytics', 'map', 'subnets', 'switches', 'fingerprints', 'dns', 'status', 'firewall', 'siem', 'ldap', 'notifications', 'sycope', 'audit'].forEach(function (n) {
@@ -318,6 +348,7 @@ var currentUser = null;
         });
         var activeBtn = document.getElementById('tab-btn-' + name);
         if (activeBtn) activeBtn.classList.add('active');
+        expandGroupForTab(name);
 
         if (name === 'mappings') {
           if (!tabLoaded.mappings) {
@@ -446,6 +477,8 @@ var currentUser = null;
       window.TrueID.connectSSE = connectSSE;
       window.TrueID.doLogout = doLogout;
       window.TrueID.toggleMatrixRain = toggleMatrixRain;
+      window.TrueID.toggleGroup = toggleGroup;
+      window.TrueID.expandGroupForTab = expandGroupForTab;
       window.TrueID.getState = function () {
         return {
           currentUser: currentUser,
@@ -456,4 +489,8 @@ var currentUser = null;
         };
       };
 
+      document.querySelectorAll('#tabs .tab-group').forEach(function (node) {
+        node.classList.remove('expanded');
+      });
+      expandGroupForTab(activeTab);
       initAuth();

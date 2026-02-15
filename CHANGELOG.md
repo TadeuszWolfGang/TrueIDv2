@@ -19,6 +19,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - HA docs extended with OIDC SSO failover/runtime notes
 - Dashboard navigation refactored from top tabs to a fixed left sidebar with grouped sections and Matrix-styled active state
 - Status/Admin UI extended with Users table, Add User modal, and Reset Password actions wired to `/api/v2/admin/users*`
+- Dashboard UI/UX refresh: global Matrix background layering, collapsible sidebar groups with active-tab auto-expand, and semi-transparent content panels
+- Added global sortable table headers (`sort`/`order`) across Mappings/Search/Conflicts/Alerts/Audit/Subnets/Switches/DNS/Fingerprints views
+
+### Fixed
+- Audit filters switched to substring matching (`LIKE '%...%'`) for `action` and `username` in DB audit queries (minimal Rust fix)
 
 ## [0.6.0] — 2026-02-13
 

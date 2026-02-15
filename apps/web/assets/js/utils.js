@@ -102,6 +102,62 @@ function escapeHtml(v) {
         el.classList.add(ok ? 'flash-ok' : 'flash-err');
       }
 
+      /**
+       * Stores sort state per tab.
+       * Returns: void.
+       */
+      window.sortState = window.sortState || {};
+
+      /**
+       * Toggles sort state for a table tab.
+       * Parameters: tabName - logical tab key, column - selected sort key, reloadFn - tab reload callback.
+       * Returns: void.
+       */
+      function handleSort(tabName, column, reloadFn) {
+        var state = window.sortState[tabName] || {};
+        if (state.column === column) {
+          state.direction = state.direction === 'asc' ? 'desc' : 'asc';
+        } else {
+          state.column = column;
+          state.direction = 'asc';
+        }
+        window.sortState[tabName] = state;
+        reloadFn(1);
+      }
+
+      /**
+       * Binds sortable behavior and active arrow state to table headers.
+       * Parameters: tableId - table DOM id, tabName - logical tab key, _columnMap - reserved map, reloadFn - tab reload callback.
+       * Returns: void.
+       */
+      function applySortHeaders(tableId, tabName, _columnMap, reloadFn) {
+        var table = document.getElementById(tableId);
+        if (!table) return;
+        var ths = table.querySelectorAll('th');
+        var state = window.sortState[tabName] || {};
+        ths.forEach(function (th) {
+          var col = th.getAttribute('data-sort');
+          if (!col) return;
+          th.classList.add('sortable');
+          th.classList.remove('sort-asc', 'sort-desc');
+          if (state.column === col) {
+            th.classList.add(state.direction === 'desc' ? 'sort-desc' : 'sort-asc');
+          }
+          th.onclick = function () { handleSort(tabName, col, reloadFn); };
+        });
+      }
+
+      /**
+       * Builds query params for backend sorting.
+       * Parameters: tabName - logical tab key.
+       * Returns: query string fragment or empty string.
+       */
+      function getSortParams(tabName) {
+        var state = window.sortState[tabName];
+        if (!state || !state.column) return '';
+        return '&sort=' + encodeURIComponent(state.column) + '&order=' + state.direction;
+      }
+
 (function () {
   window.TrueID = window.TrueID || {};
   if (typeof window.badgeClass === 'function') window.TrueID.badgeClass = window.badgeClass;
@@ -111,6 +167,9 @@ function escapeHtml(v) {
   if (typeof window.flashElement === 'function') window.TrueID.flashElement = window.flashElement;
   if (typeof window.formatGroups === 'function') window.TrueID.formatGroups = window.formatGroups;
   if (typeof window.maskedDbUrl === 'function') window.TrueID.maskedDbUrl = window.maskedDbUrl;
+  if (typeof window.getSortParams === 'function') window.TrueID.getSortParams = window.getSortParams;
+  if (typeof window.handleSort === 'function') window.TrueID.handleSort = window.handleSort;
+  if (typeof window.applySortHeaders === 'function') window.TrueID.applySortHeaders = window.applySortHeaders;
   if (typeof window.renderPager === 'function') window.TrueID.renderPager = window.renderPager;
   if (typeof window.renderTagsBadges === 'function') window.TrueID.renderTagsBadges = window.renderTagsBadges;
   if (typeof window.statusDotClass === 'function') window.TrueID.statusDotClass = window.statusDotClass;
