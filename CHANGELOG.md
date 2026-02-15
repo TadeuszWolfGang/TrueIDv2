@@ -25,6 +25,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 ### Fixed
 - Audit filters switched to substring matching (`LIKE '%...%'`) for `action` and `username` in DB audit queries (minimal Rust fix)
 - Dashboard sidebar group toggles now work via global `toggleGroup`, and Matrix rain defaults to enabled when no preference exists (`trueid_matrix_rain=on/off`).
+- Dashboard Matrix rain visibility increased (`opacity` + softer fade), sidebar groups switched to `display`-based collapse, and group headers now use `data-toggle` with delegated click handling.
 
 ## [0.6.0] — 2026-02-13
 

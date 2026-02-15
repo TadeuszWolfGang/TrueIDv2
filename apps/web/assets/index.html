@@ -34,7 +34,7 @@
         --status-info-soft: color-mix(in srgb, var(--status-info) 14%, transparent);
         --status-accent: color-mix(in srgb, var(--status-info) 60%, var(--status-warn) 40%);
         --danger-glow: 0 0 8px color-mix(in srgb, var(--status-error) 40%, transparent);
-        --matrix-rain-fade: color-mix(in srgb, var(--bg-deep) 92%, transparent);
+        --matrix-rain-fade: rgba(2, 10, 6, 0.05);
         --toast-flash-glow: 0 0 15px color-mix(in srgb, var(--green-bright) 50%, transparent);
         --overlay-backdrop: color-mix(in srgb, var(--bg-deep) 65%, transparent);
         --overlay-backdrop-strong: color-mix(in srgb, var(--bg-deep) 68%, transparent);
@@ -192,11 +192,10 @@
       }
       .tab-group.expanded .tab-group-arrow { transform: rotate(90deg); }
       .tab-group-items {
-        max-height: 0;
-        overflow: hidden;
-        transition: max-height 0.25s ease;
+        display: none;
+        padding: 0;
       }
-      .tab-group.expanded .tab-group-items { max-height: 500px; }
+      .tab-group.expanded .tab-group-items { display: block; }
       .sidebar-divider {
         border-top: 1px solid var(--border-dim);
         margin: 10px 10px 8px;
@@ -513,14 +512,14 @@
     </style>
   </head>
   <body>
-    <canvas id="matrix-bg" style="position:fixed;inset:0;width:100%;height:100%;z-index:0;opacity:0.04;pointer-events:none;"></canvas>
+    <canvas id="matrix-bg" style="position:fixed;inset:0;width:100%;height:100%;z-index:0;opacity:0.15;pointer-events:none;"></canvas>
 
     <div id="app-shell">
       <aside id="sidebar">
         <div id="sidebar-logo">▸ TRUEID</div>
         <nav id="tabs">
-          <div class="tab-group" data-group="core">
-            <div class="tab-group-header" onclick="toggleGroup('core')">
+          <div class="tab-group expanded" data-group="core">
+            <div class="tab-group-header" data-toggle="core">
               <span class="tab-group-arrow">▸</span> CORE
             </div>
             <div class="tab-group-items" id="group-core">
@@ -532,7 +531,7 @@
           </div>
 
           <div class="tab-group" data-group="analytics">
-            <div class="tab-group-header" onclick="toggleGroup('analytics')">
+            <div class="tab-group-header" data-toggle="analytics">
               <span class="tab-group-arrow">▸</span> ANALYTICS
             </div>
             <div class="tab-group-items" id="group-analytics">
@@ -542,7 +541,7 @@
           </div>
 
           <div class="tab-group" data-group="network">
-            <div class="tab-group-header" onclick="toggleGroup('network')">
+            <div class="tab-group-header" data-toggle="network">
               <span class="tab-group-arrow">▸</span> NETWORK
             </div>
             <div class="tab-group-items" id="group-network">
@@ -554,7 +553,7 @@
           </div>
 
           <div class="tab-group" data-group="integrations">
-            <div class="tab-group-header" onclick="toggleGroup('integrations')">
+            <div class="tab-group-header" data-toggle="integrations">
               <span class="tab-group-arrow">▸</span> INTEGRATIONS
             </div>
             <div class="tab-group-items" id="group-integrations">
@@ -567,7 +566,7 @@
           </div>
 
           <div class="tab-group" data-group="admin">
-            <div class="tab-group-header" onclick="toggleGroup('admin')">
+            <div class="tab-group-header" data-toggle="admin">
               <span class="tab-group-arrow">▸</span> ADMIN
             </div>
             <div class="tab-group-items" id="group-admin">

@@ -320,6 +320,15 @@ var currentUser = null;
         if (el) el.classList.toggle('expanded');
       }
       window.toggleGroup = toggleGroup;
+      // Event delegation for sidebar group headers (more robust than inline onclick)
+      document.addEventListener('click', function (e) {
+        var header = e.target.closest('.tab-group-header[data-toggle]');
+        if (header) {
+          e.preventDefault();
+          e.stopPropagation();
+          toggleGroup(header.getAttribute('data-toggle'));
+        }
+      });
 
       /**
        * Expands only the group that contains provided tab.
@@ -336,6 +345,11 @@ var currentUser = null;
         };
         var group = map[tabName];
         if (group) {
+          document.querySelectorAll('#tabs .tab-group').forEach(function (node) {
+            if (node.getAttribute('data-group') !== group) {
+              node.classList.remove('expanded');
+            }
+          });
           var el = document.querySelector('[data-group="' + group + '"]');
           if (el) el.classList.add('expanded');
         }
