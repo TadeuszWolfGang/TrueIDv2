@@ -289,13 +289,36 @@ pub fn admin_routes(state: AppState) -> Router<AppState> {
             "/api/v1/users",
             get(routes_users::list_users).post(routes_users::create_user),
         )
+        // User management v2 aliases (frontend uses these)
+        .route(
+            "/api/v2/admin/users",
+            get(routes_users::list_users).post(routes_users::create_user),
+        )
         .route(
             "/api/v1/users/{id}",
             get(routes_users::get_user).delete(routes_users::delete_user),
         )
+        .route(
+            "/api/v2/admin/users/{id}",
+            get(routes_users::get_user).delete(routes_users::delete_user),
+        )
+        .route(
+            "/api/v2/admin/users/:id",
+            get(routes_users::get_user).delete(routes_users::delete_user),
+        )
         .route("/api/v1/users/{id}/role", put(routes_users::change_role))
+        .route("/api/v2/admin/users/{id}/role", put(routes_users::change_role))
+        .route("/api/v2/admin/users/:id/role", put(routes_users::change_role))
         .route(
             "/api/v1/users/{id}/reset-password",
+            post(routes_users::reset_password),
+        )
+        .route(
+            "/api/v2/admin/users/{id}/reset-password",
+            post(routes_users::reset_password),
+        )
+        .route(
+            "/api/v2/admin/users/:id/reset-password",
             post(routes_users::reset_password),
         )
         .route(
@@ -304,6 +327,14 @@ pub fn admin_routes(state: AppState) -> Router<AppState> {
         )
         .route(
             "/api/v1/users/{id}/totp",
+            delete(routes_users::disable_user_totp),
+        )
+        .route(
+            "/api/v2/admin/users/{id}/totp",
+            delete(routes_users::disable_user_totp),
+        )
+        .route(
+            "/api/v2/admin/users/:id/totp",
             delete(routes_users::disable_user_totp),
         )
         .route(
