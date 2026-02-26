@@ -1,10 +1,20 @@
-# Stage 1: Build
-FROM rust:slim-bookworm AS builder
+# syntax=docker/dockerfile:1.7
 
-RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
+ARG RUST_VERSION=1.79.0
+
+# NOTE: Keep builder on bullseye (glibc 2.31). Do not switch to bookworm/latest.
+FROM rust:${RUST_VERSION}-bullseye AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    pkg-config \
+    libssl-dev \
+    binutils \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
-# Cache dependencies
+
+# Dependency-resolution layer (cache-friendly with BuildKit mounts).
 COPY Cargo.toml Cargo.lock ./
 COPY crates/common/Cargo.toml crates/common/
 COPY crates/ingest/Cargo.toml crates/ingest/
@@ -17,44 +27,48 @@ COPY apps/engine/Cargo.toml apps/engine/
 COPY apps/cli/Cargo.toml apps/cli/
 COPY apps/web/Cargo.toml apps/web/
 COPY tests/Cargo.toml tests/
-# Create dummy src files for dependency caching
-RUN mkdir -p crates/common/src crates/ingest/src crates/adapter-radius/src \
-    crates/adapter-ad-logs/src crates/adapter-dhcp-logs/src crates/utils/src \
-    crates/agent/src apps/engine/src apps/cli/src apps/web/src tests/src && \
-    for d in crates/common crates/ingest crates/adapter-radius crates/adapter-ad-logs \
-    crates/adapter-dhcp-logs crates/utils crates/agent apps/engine apps/cli apps/web tests; do \
-        echo "" > "$d/src/lib.rs"; \
-    done && \
-    echo "fn main(){}" > apps/engine/src/main.rs && \
-    echo "fn main(){}" > apps/cli/src/main.rs && \
-    echo "fn main(){}" > apps/web/src/main.rs
-RUN cargo build --release --locked 2>/dev/null || true
-# Now copy real source and build
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/src/target,sharing=locked \
+    cargo fetch --locked
+
 COPY . .
-RUN touch crates/*/src/*.rs apps/*/src/*.rs && \
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
+    --mount=type=cache,target=/src/target,sharing=locked \
     cargo build --release --locked --bin trueid-engine --bin trueid-web --bin trueid
 
-# Stage 2: Runtime
-FROM debian:bookworm-slim
+# Hard gate: fail build if required GLIBC exceeds 2.31.
+RUN set -eux; \
+    max_glibc="$(strings /src/target/release/trueid-engine | grep -o 'GLIBC_[0-9.]\+' | sort -Vu | tail -n 1)"; \
+    echo "Detected max required glibc: ${max_glibc}"; \
+    test -n "${max_glibc}"; \
+    max_ver="${max_glibc#GLIBC_}"; \
+    dpkg --compare-versions "${max_ver}" le "2.31"
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates libssl3 sqlite3 curl && \
-    rm -rf /var/lib/apt/lists/* && \
-    groupadd -r trueid && useradd -r -g trueid -d /app trueid
+FROM debian:bullseye-slim AS runtime
+
+# Minimal runtime set. If ldd shows extra libs, add only missing ones.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libssl1.1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -r trueid \
+    && useradd -r -g trueid -d /app trueid
+
+WORKDIR /app
 
 COPY --from=builder /src/target/release/trueid-engine /usr/local/bin/trueid-engine
 COPY --from=builder /src/target/release/trueid        /usr/local/bin/trueid
-COPY --from=builder /src/target/release/trueid-web   /usr/local/bin/trueid-web
+COPY --from=builder /src/target/release/trueid-web    /usr/local/bin/trueid-web
 COPY --from=builder /src/apps/web/assets              /app/assets
 
 RUN mkdir -p /app/data /app/tls && chown -R trueid:trueid /app
 
-WORKDIR /app
 USER trueid
 
 ENV DATABASE_URL=sqlite:///app/data/net-identity.db?mode=rwc
-
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD curl -sf http://localhost:3000/health || exit 1
 
 EXPOSE 1813/udp 5514/udp 5516/udp 5518/udp 3000 8080

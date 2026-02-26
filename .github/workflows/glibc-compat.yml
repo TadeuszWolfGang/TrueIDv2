@@ -1,0 +1,54 @@
+name: glibc-compat
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  glibc-compat:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build builder image (linux/amd64)
+        run: |
+          docker buildx build --platform linux/amd64 --target builder --load -t trueid-builder:glibc231 .
+
+      - name: Verify max required GLIBC <= 2.31
+        run: |
+          docker run --rm --entrypoint /bin/sh trueid-builder:glibc231 -c '
+            set -eu
+            max_glibc="$(strings /src/target/release/trueid-engine | grep -o "GLIBC_[0-9.]\+" | sort -Vu | tail -n 1)"
+            echo "max_glibc=${max_glibc}"
+            [ -n "${max_glibc}" ]
+            max_ver="${max_glibc#GLIBC_}"
+            dpkg --compare-versions "${max_ver}" le "2.31"
+          '
+
+      - name: Build runtime image (linux/amd64)
+        run: |
+          docker buildx build --platform linux/amd64 --target runtime --load -t trueid-runtime:glibc231 .
+
+      - name: Runtime baseline info
+        run: |
+          docker run --rm --entrypoint /bin/sh trueid-runtime:glibc231 -c '
+            set -eu
+            ldd --version | head -n 1
+            cat /etc/os-release
+          '
+
+      - name: Runtime ldd inspection
+        run: |
+          docker run --rm --entrypoint /bin/sh trueid-runtime:glibc231 -c '
+            set -eu
+            ldd /usr/local/bin/trueid-engine
+          '
+
+      - name: Smoke test trueid-engine
+        run: |
+          docker run --rm trueid-runtime:glibc231 /usr/local/bin/trueid-engine --version
