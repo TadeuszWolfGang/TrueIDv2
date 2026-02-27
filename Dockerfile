@@ -62,14 +62,16 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     mkdir -p /out; \
     cp /src/target/release/trueid-engine /out/trueid-engine; \
     cp /src/target/release/trueid /out/trueid; \
-    cp /src/target/release/trueid-web /out/trueid-web
+    cp /src/target/release/trueid-web /out/trueid-web; \
+    if [ -f /src/data/oui.csv ]; then cp /src/data/oui.csv /out/oui.csv; else : > /out/oui.csv; fi
 
 FROM debian:bullseye-slim AS runtime
 
-# Minimal runtime set. If ldd shows extra libs, add only missing ones.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libssl1.1 \
+    sqlite3 \
+    curl \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd -r trueid \
     && useradd -r -g trueid -d /app trueid
@@ -80,11 +82,18 @@ COPY --from=builder /out/trueid-engine /usr/local/bin/trueid-engine
 COPY --from=builder /out/trueid        /usr/local/bin/trueid
 COPY --from=builder /out/trueid-web    /usr/local/bin/trueid-web
 COPY --from=builder /src/apps/web/assets              /app/assets
+COPY --from=builder /out/oui.csv                       /app/oui.csv
+COPY --from=builder /src/docker-entrypoint.sh         /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 RUN mkdir -p /app/data /app/tls && chown -R trueid:trueid /app
 
 USER trueid
 
 ENV DATABASE_URL=sqlite:///app/data/net-identity.db?mode=rwc
+ENV OUI_CSV_PATH=/app/oui.csv
 
 EXPOSE 1813/udp 5514/udp 5516/udp 5518/udp 3000 8080
+
+ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["trueid-engine"]

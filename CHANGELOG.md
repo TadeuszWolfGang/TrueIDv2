@@ -21,11 +21,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - Status/Admin UI extended with Users table, Add User modal, and Reset Password actions wired to `/api/v2/admin/users*`
 - Dashboard UI/UX refresh: global Matrix background layering, collapsible sidebar groups with active-tab auto-expand, and semi-transparent content panels
 - Added global sortable table headers (`sort`/`order`) across Mappings/Search/Conflicts/Alerts/Audit/Subnets/Switches/DNS/Fingerprints views
+- Docker runtime image now includes `sqlite3` and `curl`, ships a container entrypoint pre-flight, and sets default `ENTRYPOINT/CMD` for standalone engine/web runs
+- Docker compose services now rely on image-bundled OUI CSV path and no longer require external `/app/oui.csv` bind mount hacks
 
 ### Fixed
 - Audit filters switched to substring matching (`LIKE '%...%'`) for `action` and `username` in DB audit queries (minimal Rust fix)
 - Dashboard sidebar group toggles now work via global `toggleGroup`, and Matrix rain defaults to enabled when no preference exists (`trueid_matrix_rain=on/off`).
 - Dashboard Matrix rain visibility increased (`opacity` + softer fade), sidebar groups switched to `display`-based collapse, and group headers now use `data-toggle` with delegated click handling.
+- SQLite startup now auto-creates parent directories for file-backed `DATABASE_URL` paths, preventing `(code: 14) unable to open database file` on fresh mounts
+- OUI lookup logging switched from `info` to `trace` to avoid high-volume vendor lookup noise in production logs
 
 ## [0.6.0] — 2026-02-13
 

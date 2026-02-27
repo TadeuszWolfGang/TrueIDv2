@@ -963,3 +963,134 @@ fn source_priority(source: &SourceType) -> u8 {
         SourceType::Manual => 0,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sqlite_path_absolute_triple_slash() {
+        assert_eq!(
+            sqlite_path_from_url("sqlite:///app/data/net-identity.db?mode=rwc"),
+            Some(PathBuf::from("/app/data/net-identity.db"))
+        );
+    }
+
+    #[test]
+    fn sqlite_path_absolute_no_query() {
+        assert_eq!(
+            sqlite_path_from_url("sqlite:///data/test.db"),
+            Some(PathBuf::from("/data/test.db"))
+        );
+    }
+
+    #[test]
+    fn sqlite_path_relative_double_slash() {
+        assert_eq!(
+            sqlite_path_from_url("sqlite://net-identity.db?mode=rwc"),
+            Some(PathBuf::from("net-identity.db"))
+        );
+    }
+
+    #[test]
+    fn sqlite_path_relative_no_slashes() {
+        assert_eq!(
+            sqlite_path_from_url("sqlite:test.db"),
+            Some(PathBuf::from("test.db"))
+        );
+    }
+
+    #[test]
+    fn sqlite_path_memory_returns_none() {
+        assert_eq!(sqlite_path_from_url("sqlite::memory:"), None);
+    }
+
+    #[test]
+    fn sqlite_path_empty_returns_none() {
+        assert_eq!(sqlite_path_from_url("sqlite:"), None);
+    }
+
+    #[test]
+    fn sqlite_path_not_sqlite_returns_none() {
+        assert_eq!(sqlite_path_from_url("postgres://localhost/db"), None);
+    }
+
+    #[test]
+    fn ensure_parent_creates_nested_dirs() {
+        let base = std::env::temp_dir().join(format!("trueid-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let url = format!("sqlite:///{}/a/b/test.db?mode=rwc", base.display());
+
+        ensure_sqlite_parent_dir(&url).unwrap();
+        assert!(base.join("a/b").is_dir());
+
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn ensure_parent_existing_dir_is_ok() {
+        let base = std::env::temp_dir().join(format!("trueid-test2-{}", std::process::id()));
+        std::fs::create_dir_all(&base).unwrap();
+        let url = format!("sqlite:///{}/test.db", base.display());
+
+        ensure_sqlite_parent_dir(&url).unwrap();
+
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn ensure_parent_memory_noop() {
+        ensure_sqlite_parent_dir("sqlite::memory:").unwrap();
+    }
+
+    #[test]
+    fn ensure_parent_relative_no_parent_noop() {
+        ensure_sqlite_parent_dir("sqlite:test.db").unwrap();
+    }
+
+    #[tokio::test]
+    async fn init_db_creates_tables() {
+        let base = std::env::temp_dir().join(format!("trueid-initdb-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let db_path = base.join("init-test.db");
+        let url = format!("sqlite:///{}?mode=rwc", db_path.display());
+
+        let db = init_db(&url).await.expect("init_db should succeed");
+
+        assert!(db_path.exists(), "DB file should exist after init");
+
+        let tables: Vec<(String,)> = sqlx::query_as(
+            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name",
+        )
+        .fetch_all(db.pool())
+        .await
+        .unwrap();
+
+        let table_names: Vec<&str> = tables.iter().map(|t| t.0.as_str()).collect();
+        assert!(table_names.contains(&"mappings"), "mappings table must exist");
+        assert!(table_names.contains(&"events"), "events table must exist");
+        assert!(table_names.contains(&"users"), "users table must exist");
+        assert!(table_names.contains(&"sessions"), "sessions table must exist");
+        assert!(table_names.contains(&"config"), "config table must exist");
+
+        db.close().await;
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[tokio::test]
+    async fn init_db_creates_parent_dir_if_missing() {
+        let base = std::env::temp_dir().join(format!("trueid-nested-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let db_path = base.join("sub/dir/nested.db");
+        let url = format!("sqlite:///{}?mode=rwc", db_path.display());
+
+        let db = init_db(&url)
+            .await
+            .expect("init_db should create parent dirs");
+        assert!(db_path.exists());
+
+        db.close().await;
+        std::fs::remove_dir_all(&base).ok();
+    }
+}

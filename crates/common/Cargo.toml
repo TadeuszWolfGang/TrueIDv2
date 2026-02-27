@@ -16,3 +16,6 @@ serde_json = { workspace = true }
 sha2 = "0.10"
 sqlx = { workspace = true }
 tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

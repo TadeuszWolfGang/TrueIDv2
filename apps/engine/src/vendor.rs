@@ -3,7 +3,7 @@
 use anyhow::Result;
 use std::collections::HashMap;
 use std::path::Path;
-use tracing::info;
+use tracing::{info, trace};
 
 /// OUI-to-vendor lookup table (key: uppercase 6-char hex prefix).
 pub(crate) type VendorMap = HashMap<String, String>;
@@ -48,6 +48,6 @@ pub(crate) fn resolve_vendor(mac: &str, vendors: &VendorMap) -> Option<String> {
         return None;
     }
     let oui_key = &hex[..6];
-    info!(oui_key = %oui_key, mac = %mac, "Looking up OUI");
+    trace!(oui_key = %oui_key, mac = %mac, "Looking up OUI");
     vendors.get(oui_key).cloned()
 }

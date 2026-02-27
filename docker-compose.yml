@@ -14,7 +14,6 @@ services:
     volumes:
       - trueid-data:/app/data
       - ${TLS_CERT_DIR:-./tls}:/app/tls:ro
-      - ${OUI_CSV_PATH:-/dev/null}:/app/oui.csv:ro
     environment:
       DATABASE_URL: "sqlite:///app/data/net-identity.db?mode=rwc"
       RADIUS_BIND: "0.0.0.0:1813"
@@ -24,7 +23,6 @@ services:
       VPN_SYSLOG_BIND: "0.0.0.0:5518"
       ADMIN_HTTP_BIND: "0.0.0.0:8080"
       ENGINE_SERVICE_TOKEN: "${ENGINE_SERVICE_TOKEN}"
-      OUI_CSV_PATH: "/app/oui.csv"
       GEOIP_DB_PATH: "${GEOIP_DB_PATH:-}"
       # TLS (optional)
       TLS_CA_CERT: "${TLS_CA_CERT:-}"
