@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-ARG RUST_VERSION=1.79.0
+ARG RUST_VERSION=1.88.0
 
 # NOTE: Keep builder on bullseye (glibc 2.31). Do not switch to bookworm/latest.
 FROM rust:${RUST_VERSION}-bullseye AS builder
@@ -28,6 +28,20 @@ COPY apps/cli/Cargo.toml apps/cli/
 COPY apps/web/Cargo.toml apps/web/
 COPY tests/Cargo.toml tests/
 
+# Workspace path dependencies need minimal targets before `cargo fetch`.
+RUN set -eux; \
+    mkdir -p \
+      crates/common/src crates/ingest/src crates/adapter-radius/src \
+      crates/adapter-ad-logs/src crates/adapter-dhcp-logs/src crates/utils/src \
+      crates/agent/src apps/engine/src apps/cli/src apps/web/src tests/src; \
+    for d in crates/common crates/ingest crates/adapter-radius crates/adapter-ad-logs \
+             crates/adapter-dhcp-logs crates/utils crates/agent tests; do \
+      printf '%s\n' "pub fn _dummy() {}" > "$d/src/lib.rs"; \
+    done; \
+    printf '%s\n' "fn main() {}" > apps/engine/src/main.rs; \
+    printf '%s\n' "fn main() {}" > apps/cli/src/main.rs; \
+    printf '%s\n' "fn main() {}" > apps/web/src/main.rs
+
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,target=/src/target,sharing=locked \
@@ -38,15 +52,17 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,target=/src/target,sharing=locked \
-    cargo build --release --locked --bin trueid-engine --bin trueid-web --bin trueid
-
-# Hard gate: fail build if required GLIBC exceeds 2.31.
-RUN set -eux; \
+    set -eux; \
+    cargo build --release --locked --bin trueid-engine --bin trueid-web --bin trueid; \
     max_glibc="$(strings /src/target/release/trueid-engine | grep -o 'GLIBC_[0-9.]\+' | sort -Vu | tail -n 1)"; \
     echo "Detected max required glibc: ${max_glibc}"; \
     test -n "${max_glibc}"; \
     max_ver="${max_glibc#GLIBC_}"; \
-    dpkg --compare-versions "${max_ver}" le "2.31"
+    dpkg --compare-versions "${max_ver}" le "2.31"; \
+    mkdir -p /out; \
+    cp /src/target/release/trueid-engine /out/trueid-engine; \
+    cp /src/target/release/trueid /out/trueid; \
+    cp /src/target/release/trueid-web /out/trueid-web
 
 FROM debian:bullseye-slim AS runtime
 
@@ -60,9 +76,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-COPY --from=builder /src/target/release/trueid-engine /usr/local/bin/trueid-engine
-COPY --from=builder /src/target/release/trueid        /usr/local/bin/trueid
-COPY --from=builder /src/target/release/trueid-web    /usr/local/bin/trueid-web
+COPY --from=builder /out/trueid-engine /usr/local/bin/trueid-engine
+COPY --from=builder /out/trueid        /usr/local/bin/trueid
+COPY --from=builder /out/trueid-web    /usr/local/bin/trueid-web
 COPY --from=builder /src/apps/web/assets              /app/assets
 
 RUN mkdir -p /app/data /app/tls && chown -R trueid:trueid /app
