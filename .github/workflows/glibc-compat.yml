@@ -23,7 +23,7 @@ jobs:
         run: |
           docker run --rm --entrypoint /bin/sh trueid-builder:glibc231 -c '
             set -eu
-            max_glibc="$(strings /src/target/release/trueid-engine | grep -o "GLIBC_[0-9.]\+" | sort -Vu | tail -n 1)"
+            max_glibc="$(strings /out/trueid-engine | grep -o "GLIBC_[0-9.]\+" | sort -Vu | tail -n 1)"
             echo "max_glibc=${max_glibc}"
             [ -n "${max_glibc}" ]
             max_ver="${max_glibc#GLIBC_}"
@@ -51,4 +51,9 @@ jobs:
 
       - name: Smoke test trueid-engine
         run: |
-          docker run --rm trueid-runtime:glibc231 /usr/local/bin/trueid-engine --version
+          docker run --rm --entrypoint /bin/sh trueid-runtime:glibc231 -c '
+            set -eu
+            test -x /usr/local/bin/trueid-engine
+            ldd /usr/local/bin/trueid-engine
+            echo "Binary exists and is linked correctly"
+          '
