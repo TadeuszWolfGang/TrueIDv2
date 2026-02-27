@@ -8,6 +8,7 @@ use chrono::{DateTime, Utc};
 use sqlx::{Row, SqlitePool};
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use crate::model::{AgentInfo, DeviceMapping, IdentityEvent, SourceType, StoredEvent, SyncStatus};
 
@@ -868,6 +869,7 @@ async fn auto_encrypt_sensitive_config(pool: &SqlitePool, key: &[u8; 32]) -> Res
 /// Returns: initialized `Db` or an error.
 /// Reads `ARGON2_PEPPER` and `CONFIG_ENCRYPTION_KEY` env vars.
 pub async fn init_db(db_url: &str) -> Result<Db> {
+    ensure_sqlite_parent_dir(db_url)?;
     let pool = SqlitePool::connect(db_url).await?;
     sqlx::migrate!("./migrations").run(&pool).await?;
     let pepper = std::env::var("ARGON2_PEPPER")
@@ -882,6 +884,49 @@ pub async fn init_db(db_url: &str) -> Result<Db> {
     }
 
     Ok(Db::new(pool, pepper, encryption_key))
+}
+
+/// Extracts a local SQLite file path from a SQLite connection URL.
+///
+/// Parameters: `db_url` - SQLite URL, e.g. `sqlite:///app/data/net-identity.db?mode=rwc`.
+/// Returns: `Some(path)` for file-backed SQLite URLs, otherwise `None`.
+fn sqlite_path_from_url(db_url: &str) -> Option<PathBuf> {
+    let rest = db_url.strip_prefix("sqlite:")?;
+    let path_part = rest.split('?').next().unwrap_or(rest);
+    if path_part.is_empty() || path_part == ":memory:" {
+        return None;
+    }
+    if let Some(stripped) = path_part.strip_prefix("///") {
+        return Some(PathBuf::from(format!("/{stripped}")));
+    }
+    if let Some(stripped) = path_part.strip_prefix("//") {
+        return Some(PathBuf::from(stripped));
+    }
+    Some(PathBuf::from(path_part))
+}
+
+/// Creates the SQLite parent directory when the URL points to a file path.
+///
+/// Parameters: `db_url` - database URL used for initialization.
+/// Returns: `Ok(())` when no directory is needed or it exists/was created.
+fn ensure_sqlite_parent_dir(db_url: &str) -> Result<()> {
+    let Some(db_path) = sqlite_path_from_url(db_url) else {
+        return Ok(());
+    };
+    let Some(parent) = db_path.parent() else {
+        return Ok(());
+    };
+    if parent.as_os_str().is_empty() || parent == Path::new(".") {
+        return Ok(());
+    }
+    std::fs::create_dir_all(parent).with_context(|| {
+        format!(
+            "failed to create sqlite parent directory '{}' for DATABASE_URL '{}'",
+            parent.display(),
+            db_url
+        )
+    })?;
+    Ok(())
 }
 
 /// Converts `SourceType` to a stable string for persistence.
