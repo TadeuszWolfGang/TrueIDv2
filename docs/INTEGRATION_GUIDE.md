@@ -1,7 +1,6 @@
 # TrueID Integration Guide
 
-> **⚠ DRAFT — Not yet validated in production.**
-> This guide was generated based on source code analysis and vendor documentation. The configurations and procedures described here have **not been end-to-end tested** in a live environment. Treat all examples as a starting point — verify ports, paths, field names, and Event IDs against your actual infrastructure before deploying. If you find errors or missing steps, please open an issue or submit a PR.
+> **Note:** Configuration examples are based on source code analysis and vendor documentation. Always verify ports, paths, field names, and Event IDs against your actual infrastructure before deploying. If you find errors or missing steps, please [open an issue](../../issues) or submit a PR.
 
 Step-by-step configuration of upstream data sources — Active Directory, RADIUS and DHCP — to forward identity events to the TrueID engine.
 
