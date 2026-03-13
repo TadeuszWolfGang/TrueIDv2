@@ -12,4 +12,11 @@
 # Data directory
 data/
 
+# Backups
+backups/
+
+# OS files
 .DS_Store
+
+# Private repo metadata
+REPO_INFO.md

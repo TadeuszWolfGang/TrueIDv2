@@ -1,6 +1,10 @@
 # TrueID
 
-**Real-time identity correlation platform** written in Rust.
+[![CI](../../actions/workflows/glibc-compat.yml/badge.svg)](../../actions/workflows/glibc-compat.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/Rust-1.82%2B-orange.svg)](https://rustup.rs)
+
+**Real-time identity correlation platform**
 TrueID maps IP addresses to users and devices from multiple telemetry sources and exposes
 RBAC-protected APIs, dashboard workflows, and integration outputs for SOC operations.
 
@@ -272,3 +276,13 @@ scrape_configs:
 
 See [docs/INTEGRATION_GUIDE.md](docs/INTEGRATION_GUIDE.md) for source-specific integration steps
 (TrueID Agent, NXLog, FreeRADIUS, NPS, DHCP variants, VPN syslog inputs, and more).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
+
+For security vulnerabilities, see [SECURITY.md](SECURITY.md).
+
+## License
+
+TrueID is licensed under the [MIT License](LICENSE).
