@@ -1,0 +1,9 @@
+# Accepted baseline CVEs from Debian Bullseye runtime packages.
+# Keep this file reviewed and time-boxed.
+CVE-2022-3715
+CVE-2023-23914
+CVE-2022-42916
+CVE-2019-8457
+CVE-2021-33560
+CVE-2025-6965
+CVE-2022-4899

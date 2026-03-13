@@ -1,4 +1,4 @@
-.PHONY: setup run engine web check clean help secrets docker-build docker-up docker-down docker-logs docker-status docker-shell-engine docker-shell-web docker-backup test test-web test-engine lint test-integration smoke-test
+.PHONY: setup run engine web check clean help secrets docker-build docker-up docker-down docker-logs docker-status docker-shell-engine docker-shell-web docker-backup test test-web test-engine lint test-integration smoke-test security-pipeline
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -39,6 +39,9 @@ test-integration: ## Run integration tests (requires running instance)
 
 smoke-test: ## Run smoke test with curl (requires running instance)
 	@./scripts/smoke-test.sh $${TRUEID_TEST_URL:-http://127.0.0.1:3000}
+
+security-pipeline: ## Run 3-layer security pipeline locally (SAST + container + DAST)
+	@./scripts/security-pipeline.sh
 
 secrets: ## Generate all required secrets for .env
 	@echo "JWT_SECRET=$$(openssl rand -hex 32)"

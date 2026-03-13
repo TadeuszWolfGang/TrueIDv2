@@ -1,0 +1,195 @@
+name: security-scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 2 * * *"
+
+env:
+  COMPOSE_PROJECT_NAME: trueidv2
+  TRUEID_DEV_MODE: "false"
+  JWT_SECRET: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  ENGINE_SERVICE_TOKEN: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  CONFIG_ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  TRUEID_ADMIN_PASS: "integration12345"
+
+jobs:
+  sast:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install SAST dependencies
+        run: |
+          cargo install cargo-audit --locked
+          cargo install cargo-deny --locked
+
+      - name: Rust fmt check
+        continue-on-error: true
+        run: cargo fmt --all -- --check
+
+      - name: Rust clippy (security-focused lints)
+        continue-on-error: true
+        run: cargo clippy --workspace --all-targets -- -D clippy::correctness -D clippy::suspicious -D clippy::perf
+
+      - name: Cargo audit
+        continue-on-error: true
+        run: cargo audit
+
+      - name: Cargo deny advisories
+        continue-on-error: true
+        run: cargo deny check advisories
+
+  container-scan:
+    runs-on: ubuntu-latest
+    needs: sast
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install container scan dependencies
+        run: |
+          docker pull aquasec/trivy:0.57.1
+
+      - name: Build images
+        run: docker compose build
+
+      - name: Trivy scan engine image
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.57.1 image \
+            --severity HIGH,CRITICAL \
+            --ignorefile .trivyignore \
+            --exit-code 1 \
+            trueidv2-engine:latest
+
+      - name: Trivy scan web image
+        continue-on-error: true
+        run: |
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            aquasec/trivy:0.57.1 image \
+            --severity HIGH,CRITICAL \
+            --ignorefile .trivyignore \
+            --exit-code 1 \
+            trueidv2-web:latest
+
+  dast:
+    runs-on: ubuntu-latest
+    needs: container-scan
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install DAST dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nmap
+          python3 -m pip install --upgrade pip
+          python3 -m pip install schemathesis
+          docker pull ghcr.io/zaproxy/zaproxy:stable
+          docker pull projectdiscovery/nuclei:latest
+
+      - name: Start stack (prod-like)
+        run: docker compose up -d --build
+
+      - name: Wait for healthy services
+        run: |
+          for i in {1..20}; do
+            if docker compose ps | grep -q "engine.*healthy" && docker compose ps | grep -q "web.*healthy"; then
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "Services not healthy in time"
+          docker compose ps
+          docker compose logs --tail=200
+          exit 1
+
+      - name: Ensure engine admin port 8080 is not public
+        run: |
+          if curl -sS --max-time 1 http://127.0.0.1:8080/health >/dev/null 2>&1; then
+            echo "Port 8080 is public; expected internal only"
+            exit 1
+          fi
+
+      - name: Ensure TRUEID_DEV_MODE=false
+        run: |
+          [ "$(docker compose exec -T web printenv TRUEID_DEV_MODE)" = "false" ]
+
+      - name: Unauthenticated API checks (RBAC bypass guard)
+        run: |
+          [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/api/v1/mappings)" = "401" ]
+          [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/api/v1/users)" = "401" ]
+
+      - name: Brute-force/rate-limit login check
+        run: |
+          got_429=0
+          for i in $(seq 1 15); do
+            code="$(curl -s -o /dev/null -w "%{http_code}" \
+              -X POST http://localhost:3000/api/auth/login \
+              -H "Content-Type: application/json" \
+              -d '{"username":"admin","password":"wrong-password"}')"
+            if [ "$code" = "429" ]; then
+              got_429=1
+              break
+            fi
+          done
+          [ "$got_429" = "1" ]
+
+      - name: Run ZAP baseline
+        continue-on-error: true
+        run: |
+          mkdir -p security-reports
+          docker run --rm --network host \
+            -v "$PWD/security-reports:/zap/wrk/:rw" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py -I -t http://127.0.0.1:3000 -r zap-report.html -J zap-report.json -m 5
+
+      - name: Run Nuclei
+        run: |
+          docker run --rm --network host \
+            projectdiscovery/nuclei:latest \
+            -u http://127.0.0.1:3000 \
+            -severity low,medium,high,critical \
+            -o /tmp/nuclei-report.txt
+
+      - name: Open ports and service banner check
+        run: |
+          nmap -sV -sC -p 3000,8080 localhost | tee security-reports/nmap.txt
+
+      - name: Header and TLS baseline capture
+        run: |
+          curl -sSI http://localhost:3000 | tee security-reports/headers.txt
+
+      - name: API property-based fuzzing (Schemathesis)
+        continue-on-error: true
+        run: |
+          schemathesis run docs/openapi.yaml \
+            --url http://127.0.0.1:3000 \
+            --max-examples 25 \
+            --checks all \
+            --report-junit-path security-reports/schemathesis-junit.xml
+
+      - name: Upload security artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-reports
+          path: security-reports/
+
+      - name: Shutdown stack
+        if: always()
+        run: docker compose down -v
