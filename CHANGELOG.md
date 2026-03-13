@@ -10,6 +10,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - New unit tests: token-bucket burst/refill, scheduler cron daily match, OIDC authorization URL format
 - OIDC admin aliases: `GET/PUT /api/v2/admin/oidc/config`, `POST /api/v2/admin/oidc/test`
 - Shared pagination primitives in common crate: `PaginationParams`, `PaginatedResponse<T>`
+- Security automation: local `make security-pipeline` script and CI workflow with SAST/SCA, Trivy image scan, ZAP baseline, Nuclei, nmap, and TrueID-specific runtime checks.
 
 ### Changed
 - Report schedule routes now use consolidated DB helper methods from `trueid-common::db` (reduced inline SQL in web handlers)
@@ -23,6 +24,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - Added global sortable table headers (`sort`/`order`) across Mappings/Search/Conflicts/Alerts/Audit/Subnets/Switches/DNS/Fingerprints views
 - Docker runtime image now includes `sqlite3` and `curl`, ships a container entrypoint pre-flight, and sets default `ENTRYPOINT/CMD` for standalone engine/web runs
 - Docker compose services now rely on image-bundled OUI CSV path and no longer require external `/app/oui.csv` bind mount hacks
+- Security scanning policy hardened: advisory mode for baseline dependency/CVE checks, `.trivyignore` baseline file, and resilient local runner (venv + health waits + corrected Schemathesis flags).
 
 ### Fixed
 - Audit filters switched to substring matching (`LIKE '%...%'`) for `action` and `username` in DB audit queries (minimal Rust fix)
