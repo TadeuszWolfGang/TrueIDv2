@@ -208,12 +208,16 @@ impl Db {
         Ok(())
     }
 
-    /// Changes a user's password. Bumps token_version, clears force flag and
-    /// failed attempts.
+    /// Changes a user's password, invalidating all refresh sessions.
+    ///
+    /// Bumps token_version, clears force flag and failed attempts, then
+    /// revokes all active sessions so stolen refresh tokens cannot survive a
+    /// credential change.
     ///
     /// Parameters: `user_id`, `new_password` (plaintext).
     pub async fn change_password(&self, user_id: i64, new_password: &str) -> Result<()> {
         let pw_hash = hash_password(new_password, self.pepper())?;
+        let mut tx = self.pool().begin().await?;
         sqlx::query(
             "UPDATE users
              SET password_hash = ?, token_version = token_version + 1,
@@ -222,8 +226,17 @@ impl Db {
         )
         .bind(&pw_hash)
         .bind(user_id)
-        .execute(self.pool())
+        .execute(&mut *tx)
         .await?;
+        sqlx::query(
+            "UPDATE sessions
+             SET revoked_at = datetime('now')
+             WHERE user_id = ? AND revoked_at IS NULL",
+        )
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
         Ok(())
     }
 
