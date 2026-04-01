@@ -392,6 +392,44 @@ pub fn require_viewer(user: &AuthUser) -> Result<(), ApiError> {
     )
 }
 
+/// Blocks privileged routes for admin users until required TOTP is enabled.
+async fn enforce_admin_totp_for_privileged_routes(
+    state: &AppState,
+    auth: &AuthUser,
+) -> Result<(), ApiError> {
+    if auth.principal_type != "user" || auth.role != UserRole::Admin {
+        return Ok(());
+    }
+    if !state.config.read().await.totp_required_for_admins {
+        return Ok(());
+    }
+
+    let db = helpers::require_db(state, &auth.request_id)?;
+    let user = db
+        .get_user_by_id(auth.user_id)
+        .await
+        .ok()
+        .flatten()
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::UNAUTHORIZED,
+                error::AUTH_REQUIRED,
+                "User no longer exists",
+            )
+            .with_request_id(&auth.request_id)
+        })?;
+    if user.totp_enabled {
+        return Ok(());
+    }
+
+    Err(ApiError::new(
+        StatusCode::FORBIDDEN,
+        error::FORBIDDEN,
+        "Admin TOTP setup required before accessing privileged routes",
+    )
+    .with_request_id(&auth.request_id))
+}
+
 // ── Router-level role middleware layers ─────────────────────
 
 /// Middleware layer: requires any authenticated user (Viewer+).
@@ -417,6 +455,7 @@ pub async fn require_operator_layer(
     let (mut parts, body) = req.into_parts();
     let auth = AuthUser::from_request_parts(&mut parts, &state).await?;
     require_operator(&auth)?;
+    enforce_admin_totp_for_privileged_routes(&state, &auth).await?;
     Ok(next.run(Request::from_parts(parts, body)).await)
 }
 
@@ -429,6 +468,7 @@ pub async fn require_admin_layer(
     let (mut parts, body) = req.into_parts();
     let auth = AuthUser::from_request_parts(&mut parts, &state).await?;
     require_admin(&auth)?;
+    enforce_admin_totp_for_privileged_routes(&state, &auth).await?;
     Ok(next.run(Request::from_parts(parts, body)).await)
 }
 

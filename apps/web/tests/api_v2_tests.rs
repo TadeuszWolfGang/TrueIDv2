@@ -34,9 +34,7 @@ async fn build_test_app_with_static() -> (Router, Arc<trueid_common::db::Db>) {
     let (app, db) = build_test_app().await;
     let assets_dir = format!("{}/assets", env!("CARGO_MANIFEST_DIR"));
     (
-        app.fallback_service(
-            ServeDir::new(assets_dir).append_index_html_on_directories(true),
-        ),
+        app.fallback_service(ServeDir::new(assets_dir).append_index_html_on_directories(true)),
         db,
     )
 }
@@ -61,12 +59,16 @@ async fn build_test_app_with_engine_url(
 
     seed_test_data(&db).await;
     let runtime_config = trueid_common::app_config::AppConfig::load(db.as_ref()).await;
+    let http_client = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .expect("build test http client failed");
 
     let state = AppState {
         db: Some(db.clone()),
         config: Arc::new(tokio::sync::RwLock::new(runtime_config)),
         engine_url,
-        http_client: reqwest::Client::new(),
+        http_client,
         jwt_config: auth::JwtConfig::from_env(true),
         engine_service_token: None,
         login_limiter: Arc::new(rate_limit::RateLimiter::new(1000, 60)),
@@ -321,9 +323,16 @@ async fn login_and_get_cookie(app: &Router, user: &str, pass: &str) -> String {
         .await
         .expect("login request execution failed");
     assert_eq!(resp.status(), StatusCode::OK);
+    auth_cookie_from_headers(resp.headers())
+}
 
+/// Collects auth cookies from Set-Cookie headers.
+///
+/// Parameters: `headers` - response headers containing Set-Cookie values.
+/// Returns: combined Cookie header string with auth cookies.
+fn auth_cookie_from_headers(headers: &HeaderMap) -> String {
     let mut parts = Vec::new();
-    for value in &resp.headers().get_all("set-cookie") {
+    for value in &headers.get_all("set-cookie") {
         let raw = value.to_str().unwrap_or("");
         if raw.contains("trueid_access_token=")
             || raw.contains("trueid_refresh_token=")
@@ -437,6 +446,43 @@ async fn auth_post(app: &Router, cookie: &str, uri: &str, body: &Value) -> (Stat
         .to_bytes();
     let json_body: Value = serde_json::from_slice(&bytes).unwrap_or(json!(null));
     (status, json_body)
+}
+
+/// Executes authenticated POST with JSON body and returns raw response.
+///
+/// Parameters: `app` - test router, `cookie` - cookie header string, `uri` - path, `body` - JSON payload.
+/// Returns: `(status, headers, body_bytes)`.
+async fn auth_post_raw(
+    app: &Router,
+    cookie: &str,
+    uri: &str,
+    body: &Value,
+) -> (StatusCode, HeaderMap, Vec<u8>) {
+    let req = Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header("cookie", cookie)
+        .header("x-csrf-token", csrf_from_cookie(cookie))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_string(body).expect("serialize post body failed"),
+        ))
+        .expect("build auth_post_raw request failed");
+    let resp = app
+        .clone()
+        .oneshot(req)
+        .await
+        .expect("auth_post_raw execution failed");
+    let status = resp.status();
+    let headers = resp.headers().clone();
+    let bytes = resp
+        .into_body()
+        .collect()
+        .await
+        .expect("collect post raw body failed")
+        .to_bytes()
+        .to_vec();
+    (status, headers, bytes)
 }
 
 /// Executes authenticated PUT with JSON body and parses JSON response.
@@ -3524,6 +3570,92 @@ async fn test_password_history_reuse() {
 }
 
 #[tokio::test]
+async fn test_change_password_revokes_old_refresh_session() {
+    let (app, db) = build_test_app().await;
+    let admin_cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, created) = auth_post(
+        &app,
+        &admin_cookie,
+        "/api/v1/users",
+        &json!({
+            "username": "pw_rotate_user",
+            "password": "PasswordA123!",
+            "role": "Viewer"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let user_id = created["id"].as_i64().unwrap_or_default();
+
+    let old_cookie = login_and_get_cookie(&app, "pw_rotate_user", "PasswordA123!").await;
+    let (status, _headers, _) = auth_post_raw(
+        &app,
+        &old_cookie,
+        "/api/auth/change-password",
+        &json!({
+            "current_password": "PasswordA123!",
+            "new_password": "PasswordB123!"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, _) = auth_post(&app, &old_cookie, "/api/auth/refresh", &json!({})).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    let new_cookie = login_and_get_cookie(&app, "pw_rotate_user", "PasswordB123!").await;
+    let (status, me) = auth_get(&app, &new_cookie, "/api/auth/me").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(me["user"]["username"], json!("pw_rotate_user"));
+
+    let _ = auth_delete(&app, &admin_cookie, &format!("/api/v1/users/{user_id}")).await;
+    db.revoke_all_sessions(user_id)
+        .await
+        .expect("cleanup revoke sessions failed");
+}
+
+#[tokio::test]
+async fn test_admin_reset_password_revokes_old_refresh_session() {
+    let (app, _) = build_test_app().await;
+    let admin_cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, created) = auth_post(
+        &app,
+        &admin_cookie,
+        "/api/v1/users",
+        &json!({
+            "username": "reset_target",
+            "password": "PasswordA123!",
+            "role": "Viewer"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let user_id = created["id"].as_i64().unwrap_or_default();
+
+    let old_cookie = login_and_get_cookie(&app, "reset_target", "PasswordA123!").await;
+    let (status, _) = auth_post(
+        &app,
+        &admin_cookie,
+        &format!("/api/v2/admin/users/{user_id}/reset-password"),
+        &json!({
+            "new_password": "PasswordB123!"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, _) = auth_post(&app, &old_cookie, "/api/auth/refresh", &json!({})).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    let new_cookie = login_and_get_cookie(&app, "reset_target", "PasswordB123!").await;
+    let (status, me) = auth_get(&app, &new_cookie, "/api/auth/me").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(me["user"]["username"], json!("reset_target"));
+
+    let _ = auth_delete(&app, &admin_cookie, &format!("/api/v1/users/{user_id}")).await;
+}
+
+#[tokio::test]
 async fn test_session_absolute_timeout() {
     let (app, db) = build_test_app().await;
     let admin_cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
@@ -3556,6 +3688,68 @@ async fn test_session_absolute_timeout() {
     db.set_config("session_absolute_max_hours", &default_hours.to_string())
         .await
         .expect("restore session_absolute_max_hours failed");
+}
+
+#[tokio::test]
+async fn test_admin_totp_policy_blocks_privileged_routes_until_totp_enabled() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, mut policy) =
+        auth_get(&app, &cookie, "/api/v2/admin/security/password-policy").await;
+    assert_eq!(status, StatusCode::OK);
+    policy["totp_required_for_admins"] = json!(true);
+    let (status, _) = auth_put(
+        &app,
+        &cookie,
+        "/api/v2/admin/security/password-policy",
+        &policy,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/admin/security/sessions").await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("TOTP setup required"),
+        "expected admin TOTP policy error, got: {body}"
+    );
+
+    let (status, setup) = auth_post(&app, &cookie, "/api/auth/totp/setup", &json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    let secret = setup["secret"]
+        .as_str()
+        .expect("missing totp setup secret")
+        .to_string();
+    let totp = totp_rs::TOTP::new(
+        totp_rs::Algorithm::SHA1,
+        6,
+        1,
+        30,
+        totp_rs::Secret::Encoded(secret)
+            .to_bytes()
+            .expect("invalid secret encoding"),
+        Some("TrueID".to_string()),
+        "testadmin".to_string(),
+    )
+    .expect("failed to build totp");
+    let code = totp
+        .generate_current()
+        .expect("failed to generate current code");
+    let (status, _) = auth_post(
+        &app,
+        &cookie,
+        "/api/auth/totp/verify",
+        &json!({ "code": code }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, _) = auth_get(&app, &cookie, "/api/v2/admin/security/sessions").await;
+    assert_eq!(status, StatusCode::OK);
 }
 
 #[tokio::test]
@@ -3773,7 +3967,11 @@ async fn test_rate_limit_headers_present() {
         .header("x-api-key", key)
         .body(Body::empty())
         .expect("build API key request failed");
-    let resp = app.clone().oneshot(req).await.expect("execute request failed");
+    let resp = app
+        .clone()
+        .oneshot(req)
+        .await
+        .expect("execute request failed");
     assert_eq!(resp.status(), StatusCode::OK);
     assert!(resp.headers().contains_key("x-ratelimit-limit"));
     assert!(resp.headers().contains_key("x-ratelimit-remaining"));
@@ -3806,7 +4004,11 @@ async fn test_rate_limit_usage_tracking() {
             .header("x-api-key", key.clone())
             .body(Body::empty())
             .expect("build request failed");
-        let resp = app.clone().oneshot(req).await.expect("execute request failed");
+        let resp = app
+            .clone()
+            .oneshot(req)
+            .await
+            .expect("execute request failed");
         assert_eq!(resp.status(), StatusCode::OK);
     }
     let (status, usage) = auth_get(
@@ -3846,7 +4048,11 @@ async fn test_rate_limit_429_enforcement() {
             .header("x-api-key", key.clone())
             .body(Body::empty())
             .expect("build request failed");
-        let resp = app.clone().oneshot(req).await.expect("execute request failed");
+        let resp = app
+            .clone()
+            .oneshot(req)
+            .await
+            .expect("execute request failed");
         if resp.status() == StatusCode::TOO_MANY_REQUESTS {
             seen_429 = true;
             break;
@@ -4009,7 +4215,10 @@ async fn test_oidc_config_admin_crud() {
 
     let (status, after) = auth_get(&app, &cookie, "/api/v2/admin/oidc/config").await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(after["issuer_url"], json!("https://login.microsoftonline.com/test/v2.0"));
+    assert_eq!(
+        after["issuer_url"],
+        json!("https://login.microsoftonline.com/test/v2.0")
+    );
     assert_eq!(after["client_id"], json!("client-oidc-admin"));
     assert!(after.get("client_secret").is_none());
 }

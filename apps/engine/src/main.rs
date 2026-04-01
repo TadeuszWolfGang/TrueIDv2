@@ -70,6 +70,19 @@ const DEFAULT_TLS_KEY: &str = "./certs/server-key.pem";
 const DEFAULT_ADMIN_HTTP_ADDR: &str = "127.0.0.1:8080";
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
+/// Loads the RADIUS shared secret and rejects insecure defaults.
+fn load_radius_secret() -> Result<String> {
+    let secret = std::env::var("RADIUS_SECRET").unwrap_or_default();
+    let trimmed = secret.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("RADIUS_SECRET must be set and must not be empty");
+    }
+    if trimmed == "secret" {
+        anyhow::bail!("RADIUS_SECRET must not use the insecure default value 'secret'");
+    }
+    Ok(trimmed.to_string())
+}
+
 /// Shared context for the event processing loop.
 struct EventLoopCtx {
     db: Arc<Db>,
@@ -390,7 +403,7 @@ async fn main() -> Result<()> {
     let ad_syslog_addr = parse_socket_addr(&ad_syslog_bind_str, DEFAULT_AD_SYSLOG_ADDR)?;
     let dhcp_syslog_addr = parse_socket_addr(&dhcp_syslog_bind_str, DEFAULT_DHCP_SYSLOG_ADDR)?;
     let vpn_syslog_addr = parse_socket_addr(&vpn_syslog_bind_str, DEFAULT_VPN_SYSLOG_ADDR)?;
-    let radius_secret = env_or_default("RADIUS_SECRET", "secret");
+    let radius_secret = load_radius_secret()?;
     let admin_bind_str = env_or_default("ADMIN_HTTP_BIND", DEFAULT_ADMIN_HTTP_ADDR);
     let admin_addr = parse_socket_addr(&admin_bind_str, DEFAULT_ADMIN_HTTP_ADDR)?;
 
@@ -482,7 +495,7 @@ async fn main() -> Result<()> {
     let runtime_env = Arc::new(RuntimeEnv {
         database_url: db_url.clone(),
         radius_bind: radius_bind_str.clone(),
-        radius_secret_set: radius_secret != "secret",
+        radius_secret_set: !radius_secret.is_empty(),
         ad_syslog_bind: ad_syslog_bind_str.clone(),
         dhcp_syslog_bind: dhcp_syslog_bind_str.clone(),
         ad_tls_bind: ad_tls_bind_str.clone(),
@@ -802,4 +815,57 @@ async fn main() -> Result<()> {
     info!("Shutdown complete.");
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::load_radius_secret;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn test_load_radius_secret_rejects_missing_or_empty() {
+        let _guard = env_lock().lock().expect("env lock poisoned");
+        let original = std::env::var("RADIUS_SECRET").ok();
+        std::env::remove_var("RADIUS_SECRET");
+        assert!(load_radius_secret().is_err());
+        std::env::set_var("RADIUS_SECRET", "");
+        assert!(load_radius_secret().is_err());
+        if let Some(value) = original {
+            std::env::set_var("RADIUS_SECRET", value);
+        } else {
+            std::env::remove_var("RADIUS_SECRET");
+        }
+    }
+
+    #[test]
+    fn test_load_radius_secret_rejects_default_secret() {
+        let _guard = env_lock().lock().expect("env lock poisoned");
+        let original = std::env::var("RADIUS_SECRET").ok();
+        std::env::set_var("RADIUS_SECRET", "secret");
+        assert!(load_radius_secret().is_err());
+        if let Some(value) = original {
+            std::env::set_var("RADIUS_SECRET", value);
+        } else {
+            std::env::remove_var("RADIUS_SECRET");
+        }
+    }
+
+    #[test]
+    fn test_load_radius_secret_accepts_explicit_secret() {
+        let _guard = env_lock().lock().expect("env lock poisoned");
+        let original = std::env::var("RADIUS_SECRET").ok();
+        std::env::set_var("RADIUS_SECRET", "radius-shared-secret");
+        let secret = load_radius_secret().expect("expected explicit secret to be accepted");
+        assert_eq!(secret, "radius-shared-secret");
+        if let Some(value) = original {
+            std::env::set_var("RADIUS_SECRET", value);
+        } else {
+            std::env::remove_var("RADIUS_SECRET");
+        }
+    }
 }
