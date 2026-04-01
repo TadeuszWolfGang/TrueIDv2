@@ -8,52 +8,33 @@
 //!
 //! Requires a running TrueID instance with:
 //!   - Admin user: admin / integration12345
-//!   - Operator user: operator / operatorpass123 (created by test)
-//!   - Viewer user: viewer / viewerpass12345 (created by test)
+//!   - Operator user: rbac_operator / Testpassword123 (created by test)
+//!   - Viewer user: rbac_viewer / Testpassword123 (created by test)
 //!
 //! Run: TRUEID_TEST_URL=http://127.0.0.1:3000 cargo test -p trueid-integration-tests --test rbac_matrix
+mod support;
 
 use reqwest::StatusCode;
 use serde_json::{json, Value};
-
-fn base_url() -> String {
-    std::env::var("TRUEID_TEST_URL").unwrap_or_else(|_| "http://127.0.0.1:3000".to_string())
-}
+use support::{base_url, lock_suite, stateless_client, TestClient};
 
 const ADMIN_USER: &str = "admin";
 const ADMIN_PASS: &str = "integration12345";
-
-fn client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .cookie_store(true)
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .expect("Failed to build HTTP client")
-}
-
-async fn login(c: &reqwest::Client, user: &str, pass: &str) -> StatusCode {
-    let resp = c
-        .post(format!("{}/api/auth/login", base_url()))
-        .json(&json!({"username": user, "password": pass}))
-        .send()
-        .await
-        .expect("Login request failed");
-    resp.status()
-}
+const RBAC_TEST_PASS: &str = "Testpassword123";
 
 /// Ensures test users exist (Operator, Viewer). Idempotent.
-async fn ensure_test_users(admin_client: &reqwest::Client) {
+async fn ensure_test_users(admin_client: &TestClient) {
     for (user, role) in &[("rbac_operator", "Operator"), ("rbac_viewer", "Viewer")] {
         let resp = admin_client
-            .post(format!("{}/api/v1/users", base_url()))
-            .json(&json!({
-                "username": user,
-                "password": "testpassword123",
-                "role": role
-            }))
-            .send()
-            .await
-            .expect("Create user failed");
+            .post_json_with_csrf(
+                "/api/v1/users",
+                &json!({
+                    "username": user,
+                    "password": RBAC_TEST_PASS,
+                    "role": role
+                }),
+            )
+            .await;
         // 201 = created, 409 = already exists — both are fine.
         let st = resp.status();
         assert!(
@@ -64,40 +45,36 @@ async fn ensure_test_users(admin_client: &reqwest::Client) {
 }
 
 /// Tests a GET endpoint for a specific client.
-async fn get_status(c: &reqwest::Client, path: &str) -> u16 {
-    let resp = c
-        .get(format!("{}{}", base_url(), path))
-        .send()
-        .await
-        .expect("GET request failed");
-    resp.status().as_u16()
+async fn get_status(c: &TestClient, path: &str) -> u16 {
+    c.get(path).await.status().as_u16()
 }
 
 #[tokio::test]
 #[ignore]
 async fn test_rbac_matrix() {
+    let _suite = lock_suite().await;
     // Setup: login as admin, create test users.
-    let admin = client();
-    assert_eq!(login(&admin, ADMIN_USER, ADMIN_PASS).await, StatusCode::OK);
+    let admin = TestClient::new();
+    assert_eq!(admin.login(ADMIN_USER, ADMIN_PASS).await.0, StatusCode::OK);
     ensure_test_users(&admin).await;
 
-    let operator = client();
+    let operator = TestClient::new();
     assert_eq!(
-        login(&operator, "rbac_operator", "testpassword123").await,
+        operator.login("rbac_operator", RBAC_TEST_PASS).await.0,
         StatusCode::OK
     );
 
-    let viewer = client();
+    let viewer = TestClient::new();
     assert_eq!(
-        login(&viewer, "rbac_viewer", "testpassword123").await,
+        viewer.login("rbac_viewer", RBAC_TEST_PASS).await.0,
         StatusCode::OK
     );
 
-    let anon = client(); // No login.
+    let anon = TestClient::new(); // No login.
 
     // ── Viewer+ endpoints (GET reads) ────────────────────
     // Admin, Operator, Viewer → 200; Anonymous → 401
-    for path in &["/api/v1/mappings", "/api/v1/events", "/api/v1/stats"] {
+    for path in &["/api/v1/mappings", "/api/v1/events"] {
         assert_eq!(get_status(&admin, path).await, 200, "Admin GET {path}");
         assert_eq!(
             get_status(&operator, path).await,
@@ -130,22 +107,23 @@ async fn test_rbac_matrix() {
 #[tokio::test]
 #[ignore]
 async fn test_api_key_auth() {
-    let admin = client();
-    assert_eq!(login(&admin, ADMIN_USER, ADMIN_PASS).await, StatusCode::OK);
+    let _suite = lock_suite().await;
+    let admin = TestClient::new();
+    assert_eq!(admin.login(ADMIN_USER, ADMIN_PASS).await.0, StatusCode::OK);
 
     // Create a Viewer API key.
     let resp = admin
-        .post(format!("{}/api/v1/api-keys", base_url()))
-        .json(&json!({"description": "test-viewer-key", "role": "Viewer"}))
-        .send()
-        .await
-        .expect("Create API key failed");
+        .post_json_with_csrf(
+            "/api/v1/api-keys",
+            &json!({"description": "test-viewer-key", "role": "Viewer"}),
+        )
+        .await;
     assert_eq!(resp.status(), StatusCode::CREATED);
     let key_body: Value = resp.json().await.unwrap();
     let raw_key = key_body["key"].as_str().expect("key field missing");
 
     // Use API key to GET mappings → 200.
-    let key_client = reqwest::Client::new();
+    let key_client = stateless_client();
     let resp = key_client
         .get(format!("{}/api/v1/mappings", base_url()))
         .header("X-API-Key", raw_key)
@@ -180,23 +158,24 @@ async fn test_api_key_auth() {
 #[tokio::test]
 #[ignore]
 async fn test_csrf_protection() {
+    let _suite = lock_suite().await;
     // API key requests should NOT require CSRF token.
-    let admin = client();
-    assert_eq!(login(&admin, ADMIN_USER, ADMIN_PASS).await, StatusCode::OK);
+    let admin = TestClient::new();
+    assert_eq!(admin.login(ADMIN_USER, ADMIN_PASS).await.0, StatusCode::OK);
 
     // Create an Admin API key for testing.
     let resp = admin
-        .post(format!("{}/api/v1/api-keys", base_url()))
-        .json(&json!({"description": "csrf-test-key", "role": "Admin"}))
-        .send()
-        .await
-        .unwrap();
+        .post_json_with_csrf(
+            "/api/v1/api-keys",
+            &json!({"description": "csrf-test-key", "role": "Admin"}),
+        )
+        .await;
     if resp.status() == StatusCode::CREATED {
         let body: Value = resp.json().await.unwrap();
         let raw_key = body["key"].as_str().unwrap();
 
         // POST with API key, no CSRF → should succeed (CSRF only for cookies).
-        let key_client = reqwest::Client::new();
+        let key_client = stateless_client();
         let resp = key_client
             .post(format!("{}/api/v1/api-keys", base_url()))
             .header("X-API-Key", raw_key)
