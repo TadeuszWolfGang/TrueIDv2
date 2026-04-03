@@ -196,6 +196,14 @@ jobs:
         run: |
           [ "$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3000/metrics?token=${METRICS_TOKEN}")" = "200" ]
 
+      - name: Repo data-path validation
+        run: |
+          mkdir -p security-reports
+          TRUEID_VALIDATE_ADMIN_USER=admin \
+          TRUEID_VALIDATE_ADMIN_PASS="${TRUEID_ADMIN_PASS}" \
+          TRUEID_VALIDATE_PYTHON_BIN=python3 \
+          ./scripts/repo-e2e-validate.sh http://127.0.0.1:3000 | tee security-reports/repo-e2e.txt
+
       - name: Brute-force/rate-limit login check
         run: |
           got_429=0

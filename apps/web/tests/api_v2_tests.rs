@@ -596,6 +596,25 @@ fn ensure_test_encryption_key() {
     });
 }
 
+/// Creates a test user and disables forced password change.
+///
+/// Parameters: `db` - initialized test DB, `username` - login, `password` - plain password, `role` - RBAC role.
+/// Returns: none.
+async fn create_test_user(
+    db: &trueid_common::db::Db,
+    username: &str,
+    password: &str,
+    role: UserRole,
+) {
+    let user = db
+        .create_user(username, password, role)
+        .await
+        .expect("create test user failed");
+    db.set_force_password_change(user.id, false)
+        .await
+        .expect("set_force_password_change failed");
+}
+
 /// Seeds additional events for analytics top/source tests.
 ///
 /// Parameters: `db` - initialized in-memory DB handle.
@@ -1828,6 +1847,566 @@ async fn test_phase2_no_auth_rejected() {
             .expect("execute no-auth request failed");
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "uri={uri}");
     }
+}
+
+#[tokio::test]
+async fn test_phase4_no_auth_rejected() {
+    let (app, _) = build_test_app().await;
+    for uri in [
+        "/api/v2/timeline/ip/10.1.2.3",
+        "/api/v2/timeline/user/jkowalski",
+        "/api/v2/timeline/mac/AA:BB:CC:DD:EE:01",
+        "/api/v2/conflicts",
+        "/api/v2/conflicts/stats",
+        "/api/v2/alerts/history",
+        "/api/v2/alerts/stats",
+    ] {
+        let req = Request::builder()
+            .method("GET")
+            .uri(uri)
+            .body(Body::empty())
+            .expect("build no-auth phase4 request failed");
+        let resp = app
+            .clone()
+            .oneshot(req)
+            .await
+            .expect("execute no-auth phase4 request failed");
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "uri={uri}");
+    }
+}
+
+#[tokio::test]
+async fn test_conflicts_list_stats_and_resolve() {
+    let (app, db) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let unresolved_id = sqlx::query(
+        "INSERT INTO conflicts (conflict_type, severity, ip, mac, user_old, user_new, source, details, detected_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '-5 minutes'))",
+    )
+    .bind("duplicate_mac")
+    .bind("critical")
+    .bind("10.1.2.3")
+    .bind("AA:BB:CC:DD:EE:01")
+    .bind("jkowalski")
+    .bind("asmith")
+    .bind("Radius")
+    .bind("{\"context\":\"lab\"}")
+    .execute(db.pool())
+    .await
+    .expect("insert unresolved conflict failed")
+    .last_insert_rowid();
+
+    sqlx::query(
+        "INSERT INTO conflicts (conflict_type, severity, ip, mac, user_old, user_new, source, details, detected_at, resolved_at, resolved_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '-10 minutes'), datetime('now', '-1 minutes'), ?)",
+    )
+    .bind("user_flip")
+    .bind("warning")
+    .bind("10.1.2.4")
+    .bind("AA:BB:CC:DD:EE:02")
+    .bind("asmith")
+    .bind("mjones")
+    .bind("AdLog")
+    .bind("{\"context\":\"resolved\"}")
+    .bind("testadmin")
+    .execute(db.pool())
+    .await
+    .expect("insert resolved conflict failed");
+
+    let (status, list) = auth_get(
+        &app,
+        &cookie,
+        "/api/v2/conflicts?type=duplicate_mac&ip=10.1.2.3",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(list["total"], 1);
+    assert_eq!(list["data"][0]["conflict_type"], "duplicate_mac");
+    assert_eq!(list["data"][0]["severity"], "critical");
+    assert_eq!(list["data"][0]["resolved_at"], Value::Null);
+    let listed_id = list["data"][0]["id"]
+        .as_i64()
+        .expect("conflict list must include row id");
+    assert_eq!(listed_id, unresolved_id);
+
+    let (status, stats) = auth_get(&app, &cookie, "/api/v2/conflicts/stats").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(stats["total_unresolved"], 1);
+    assert_eq!(stats["by_type"]["duplicate_mac"], 1);
+    assert_eq!(stats["by_severity"]["critical"], 1);
+
+    let (status, resolved) = auth_post(
+        &app,
+        &cookie,
+        &format!("/api/v2/conflicts/{unresolved_id}/resolve"),
+        &json!({"note": "validated in API test"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "resolve body: {resolved}");
+    assert_eq!(resolved["id"], unresolved_id);
+    assert_eq!(resolved["resolved_by"], "testadmin");
+    let details = resolved["details"]
+        .as_str()
+        .expect("resolved details must be a string");
+    let details_json: Value =
+        serde_json::from_str(details).expect("resolved details must be valid JSON");
+    assert_eq!(details_json["resolution_note"], "validated in API test");
+
+    let (status, after) = auth_get(&app, &cookie, "/api/v2/conflicts/stats").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(after["total_unresolved"], 0);
+
+    let (status, resolved_list) = auth_get(
+        &app,
+        &cookie,
+        "/api/v2/conflicts?resolved=true&type=duplicate_mac&ip=10.1.2.3",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(resolved_list["total"], 1);
+    assert_eq!(resolved_list["data"][0]["id"], unresolved_id);
+    assert_eq!(resolved_list["data"][0]["resolved_by"], "testadmin");
+}
+
+#[tokio::test]
+async fn test_conflict_resolve_404_409_and_preserve_invalid_details() {
+    let (app, db) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, missing) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/conflicts/999999/resolve",
+        &json!({"note": "missing conflict"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(missing["code"], "NOT_FOUND");
+
+    let conflict_id = sqlx::query(
+        "INSERT INTO conflicts (conflict_type, severity, ip, mac, user_old, user_new, source, details)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind("user_flip")
+    .bind("warning")
+    .bind("10.9.9.9")
+    .bind("AA:BB:CC:DD:EE:99")
+    .bind("alice")
+    .bind("bob")
+    .bind("Radius")
+    .bind("not-json-details")
+    .execute(db.pool())
+    .await
+    .expect("insert invalid-details conflict failed")
+    .last_insert_rowid();
+
+    let (status, resolved) = auth_post(
+        &app,
+        &cookie,
+        &format!("/api/v2/conflicts/{conflict_id}/resolve"),
+        &json!({"note": "preserve invalid details"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "resolve body: {resolved}");
+    let details = resolved["details"]
+        .as_str()
+        .expect("resolved details must be a string");
+    let details_json: Value =
+        serde_json::from_str(details).expect("resolved details must remain valid JSON");
+    assert_eq!(details_json["previous_details_raw"], "not-json-details");
+    assert_eq!(details_json["resolution_note"], "preserve invalid details");
+
+    let (status, conflict) = auth_post(
+        &app,
+        &cookie,
+        &format!("/api/v2/conflicts/{conflict_id}/resolve"),
+        &json!({"note": "second resolve"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(conflict["code"], "CONFLICT");
+}
+
+#[tokio::test]
+async fn test_alerts_list_stats_and_history() {
+    let (app, db) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/alerts/rules",
+        &json!({
+            "name": "history-rule",
+            "rule_type": "user_change",
+            "severity": "critical",
+            "enabled": true,
+            "action_log": true,
+            "cooldown_seconds": 300
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let rule_id = created["id"].as_i64().expect("rule id missing");
+
+    sqlx::query(
+        "INSERT INTO alert_history (
+            rule_id, rule_name, rule_type, severity, ip, mac, user_name, source, details, webhook_status, webhook_response, fired_at
+         ) VALUES
+            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '-5 minutes')),
+            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '-2 minutes'))",
+    )
+    .bind(rule_id)
+    .bind("history-rule")
+    .bind("user_change")
+    .bind("critical")
+    .bind("10.1.2.3")
+    .bind("AA:BB:CC:DD:EE:01")
+    .bind("jkowalski")
+    .bind("Radius")
+    .bind("{\"kind\":\"critical\"}")
+    .bind("sent")
+    .bind("200 OK")
+    .bind(rule_id)
+    .bind("history-rule")
+    .bind("user_change")
+    .bind("warning")
+    .bind("10.1.2.4")
+    .bind("AA:BB:CC:DD:EE:02")
+    .bind("asmith")
+    .bind("AdLog")
+    .bind("{\"kind\":\"warning\"}")
+    .bind("failed")
+    .bind("500")
+    .execute(db.pool())
+    .await
+    .expect("insert alert history failed");
+
+    let (status, rules) = auth_get(&app, &cookie, "/api/v2/alerts/rules").await;
+    assert_eq!(status, StatusCode::OK);
+    let rule_rows = rules["rules"]
+        .as_array()
+        .expect("rules response must contain an array");
+    assert!(
+        rule_rows
+            .iter()
+            .any(|row| row["id"].as_i64() == Some(rule_id)),
+        "expected created rule in list: {rules}"
+    );
+
+    let (status, history) = auth_get(
+        &app,
+        &cookie,
+        "/api/v2/alerts/history?severity=critical&ip=10.1.2.3",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(history["total"], 1);
+    assert_eq!(history["data"][0]["rule_id"], rule_id);
+    assert_eq!(history["data"][0]["webhook_status"], "sent");
+
+    let (status, stats) = auth_get(&app, &cookie, "/api/v2/alerts/stats").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(stats["total_rules"], 1);
+    assert_eq!(stats["enabled_rules"], 1);
+    assert_eq!(stats["total_fired_24h"], 2);
+    assert_eq!(stats["by_severity_24h"]["critical"], 1);
+    assert_eq!(stats["by_severity_24h"]["warning"], 1);
+    assert_eq!(stats["by_type_24h"]["user_change"], 2);
+    assert!(
+        (stats["webhook_success_rate_24h"]
+            .as_f64()
+            .expect("webhook_success_rate_24h missing")
+            - 0.5)
+            .abs()
+            < f64::EPSILON
+    );
+}
+
+#[tokio::test]
+async fn test_alert_rule_update_delete_and_validation() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/alerts/rules",
+        &json!({
+            "name": "crud-alert-rule",
+            "rule_type": "new_mac",
+            "severity": "warning",
+            "action_log": true,
+            "cooldown_seconds": 120
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let rule_id = created["id"].as_i64().expect("rule id missing");
+
+    let (status, updated) = auth_put(
+        &app,
+        &cookie,
+        &format!("/api/v2/alerts/rules/{rule_id}"),
+        &json!({
+            "name": "crud-alert-rule-updated",
+            "severity": "critical",
+            "cooldown_seconds": 600,
+            "enabled": false
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "update body: {updated}");
+    assert_eq!(updated["name"], "crud-alert-rule-updated");
+    assert_eq!(updated["severity"], "critical");
+    assert_eq!(updated["cooldown_seconds"], 600);
+    assert_eq!(updated["enabled"], false);
+
+    let (status, invalid_rule_type) = auth_put(
+        &app,
+        &cookie,
+        &format!("/api/v2/alerts/rules/{rule_id}"),
+        &json!({"rule_type": "nonexistent"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(invalid_rule_type["code"], "INVALID_INPUT");
+
+    let (status, invalid_cooldown) = auth_put(
+        &app,
+        &cookie,
+        &format!("/api/v2/alerts/rules/{rule_id}"),
+        &json!({"cooldown_seconds": 90001}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(invalid_cooldown["code"], "INVALID_INPUT");
+
+    let (status, invalid_create_type) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/alerts/rules",
+        &json!({
+            "name": "invalid-type-rule",
+            "rule_type": "totally_invalid",
+            "severity": "warning",
+            "action_log": true,
+            "cooldown_seconds": 60
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(invalid_create_type["code"], "INVALID_INPUT");
+
+    let (status, invalid_create_cooldown) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/alerts/rules",
+        &json!({
+            "name": "invalid-cooldown-rule",
+            "rule_type": "new_subnet",
+            "severity": "warning",
+            "action_log": true,
+            "cooldown_seconds": -1
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(invalid_create_cooldown["code"], "INVALID_INPUT");
+
+    let (status, rules) = auth_get(&app, &cookie, "/api/v2/alerts/rules").await;
+    assert_eq!(status, StatusCode::OK);
+    let rule_rows = rules["rules"]
+        .as_array()
+        .expect("rules response must contain an array");
+    assert!(
+        rule_rows.iter().any(|row| {
+            row["id"].as_i64() == Some(rule_id)
+                && row["name"] == "crud-alert-rule-updated"
+                && row["severity"] == "critical"
+        }),
+        "expected updated rule in list: {rules}"
+    );
+
+    let (status, _) = auth_delete(&app, &cookie, &format!("/api/v2/alerts/rules/{rule_id}")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let (status, after_delete) = auth_get(&app, &cookie, "/api/v2/alerts/rules").await;
+    assert_eq!(status, StatusCode::OK);
+    let rows_after_delete = after_delete["rules"]
+        .as_array()
+        .expect("rules response must contain an array");
+    assert!(
+        rows_after_delete
+            .iter()
+            .all(|row| row["id"].as_i64() != Some(rule_id)),
+        "deleted rule should not be listed: {after_delete}"
+    );
+}
+
+#[tokio::test]
+async fn test_phase4_viewer_can_read_timeline_conflicts_and_alerts() {
+    let (app, db) = build_test_app().await;
+    create_test_user(
+        db.as_ref(),
+        "phase4_viewer",
+        "testpassword123",
+        UserRole::Viewer,
+    )
+    .await;
+
+    sqlx::query(
+        "INSERT INTO conflicts (conflict_type, severity, ip, mac, user_old, user_new, source, details)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind("duplicate_mac")
+    .bind("warning")
+    .bind("10.1.2.3")
+    .bind("AA:BB:CC:DD:EE:01")
+    .bind("jkowalski")
+    .bind("asmith")
+    .bind("Radius")
+    .bind("{\"context\":\"viewer-read\"}")
+    .execute(db.pool())
+    .await
+    .expect("insert viewer conflict seed failed");
+
+    let rule_id = sqlx::query(
+        "INSERT INTO alert_rules (name, enabled, rule_type, severity, action_log, cooldown_seconds)
+         VALUES (?, true, ?, ?, true, 300)",
+    )
+    .bind("viewer-read-rule")
+    .bind("new_subnet")
+    .bind("warning")
+    .execute(db.pool())
+    .await
+    .expect("insert viewer alert rule failed")
+    .last_insert_rowid();
+    sqlx::query(
+        "INSERT INTO alert_history (
+            rule_id, rule_name, rule_type, severity, ip, user_name, source, webhook_status, fired_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', '-1 minutes'))",
+    )
+    .bind(rule_id)
+    .bind("viewer-read-rule")
+    .bind("new_subnet")
+    .bind("warning")
+    .bind("10.1.2.3")
+    .bind("jkowalski")
+    .bind("Radius")
+    .bind("sent")
+    .execute(db.pool())
+    .await
+    .expect("insert viewer alert history failed");
+
+    let cookie = login_and_get_cookie(&app, "phase4_viewer", "testpassword123").await;
+
+    for uri in [
+        "/api/v2/timeline/ip/10.1.2.3",
+        "/api/v2/timeline/user/jkowalski",
+        "/api/v2/timeline/mac/AA:BB:CC:DD:EE:01",
+        "/api/v2/conflicts",
+        "/api/v2/conflicts/stats",
+        "/api/v2/alerts/history",
+        "/api/v2/alerts/stats",
+    ] {
+        let (status, _) = auth_get(&app, &cookie, uri).await;
+        assert_eq!(status, StatusCode::OK, "viewer read uri={uri}");
+    }
+}
+
+#[tokio::test]
+async fn test_phase4_rbac_mutation_guards_for_conflicts_and_alerts() {
+    let (app, db) = build_test_app().await;
+    create_test_user(
+        db.as_ref(),
+        "phase4_operator",
+        "testpassword123",
+        UserRole::Operator,
+    )
+    .await;
+    create_test_user(
+        db.as_ref(),
+        "phase4_viewer2",
+        "testpassword123",
+        UserRole::Viewer,
+    )
+    .await;
+
+    let conflict_id = sqlx::query(
+        "INSERT INTO conflicts (conflict_type, severity, ip, mac, user_old, user_new, source, details)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind("duplicate_mac")
+    .bind("critical")
+    .bind("10.1.2.3")
+    .bind("AA:BB:CC:DD:EE:01")
+    .bind("jkowalski")
+    .bind("asmith")
+    .bind("Radius")
+    .bind("{\"context\":\"rbac\"}")
+    .execute(db.pool())
+    .await
+    .expect("insert rbac conflict failed")
+    .last_insert_rowid();
+
+    let admin_cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let operator_cookie = login_and_get_cookie(&app, "phase4_operator", "testpassword123").await;
+    let viewer_cookie = login_and_get_cookie(&app, "phase4_viewer2", "testpassword123").await;
+
+    let (status, me) = auth_get(&app, &operator_cookie, "/api/auth/me").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(me["user"]["username"], "phase4_operator");
+    assert_eq!(me["user"]["role"], "Operator");
+
+    let (status, _) = auth_get(&app, &viewer_cookie, "/api/v2/alerts/rules").await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _) = auth_get(&app, &operator_cookie, "/api/v2/alerts/rules").await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let (status, _) = auth_post(
+        &app,
+        &viewer_cookie,
+        &format!("/api/v2/conflicts/{conflict_id}/resolve"),
+        &json!({"note": "viewer should not resolve"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let (status, body) = auth_post(
+        &app,
+        &operator_cookie,
+        &format!("/api/v2/conflicts/{conflict_id}/resolve"),
+        &json!({"note": "operator resolves"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "operator resolve body: {body}");
+
+    let rule_payload = json!({
+        "name": "rbac-alert-rule",
+        "rule_type": "new_mac",
+        "severity": "warning",
+        "action_log": true,
+        "cooldown_seconds": 120
+    });
+
+    let (status, _) = auth_post(&app, &viewer_cookie, "/api/v2/alerts/rules", &rule_payload).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let (status, _) = auth_post(
+        &app,
+        &operator_cookie,
+        "/api/v2/alerts/rules",
+        &rule_payload,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let (status, created) =
+        auth_post(&app, &admin_cookie, "/api/v2/alerts/rules", &rule_payload).await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(created["name"], "rbac-alert-rule");
 }
 
 #[tokio::test]

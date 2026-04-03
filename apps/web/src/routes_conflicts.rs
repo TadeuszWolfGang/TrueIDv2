@@ -14,7 +14,7 @@ use std::collections::HashMap;
 
 use crate::error::{self, ApiError};
 use crate::helpers;
-use crate::middleware::AuthUser;
+use crate::middleware::{self, AuthUser};
 use crate::AppState;
 use trueid_common::pagination::{PaginatedResponse, PaginationParams};
 
@@ -337,6 +337,7 @@ pub async fn resolve_conflict(
     State(state): State<AppState>,
     Json(body): Json<ResolveConflictRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
+    middleware::require_operator(&auth)?;
     let db = helpers::require_db(&state, &auth.request_id)?;
 
     let existing = sqlx::query("SELECT details, resolved_at FROM conflicts WHERE id = ?")
@@ -374,10 +375,13 @@ pub async fn resolve_conflict(
 
     let current_details: Option<String> = existing_row.try_get("details").ok();
     let updated_details = if let Some(note) = body.note.as_ref() {
-        let mut details_json = current_details
-            .as_deref()
-            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
-            .unwrap_or_else(|| json!({}));
+        let mut details_json = match current_details.as_deref() {
+            Some(raw) => match serde_json::from_str::<serde_json::Value>(raw) {
+                Ok(parsed) => parsed,
+                Err(_) => json!({ "previous_details_raw": raw }),
+            },
+            None => json!({}),
+        };
         if !details_json.is_object() {
             details_json = json!({ "previous_details": details_json });
         }

@@ -287,6 +287,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(routes::v1_routes(state.clone()))
         .merge(routes::v2_routes(state.clone()))
         .merge(routes::admin_routes(state.clone()))
+        .merge(routes::operator_routes(state.clone()))
         .layer(axum_mw::from_fn_with_state(
             state.clone(),
             auth_rate_limit_layer,
