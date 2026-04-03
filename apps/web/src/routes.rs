@@ -105,12 +105,18 @@ pub fn v2_routes(state: AppState) -> Router<AppState> {
             "/api/v2/timeline/user/{user}",
             get(routes_timeline::timeline_user),
         )
-        .route("/api/v2/timeline/user/:user", get(routes_timeline::timeline_user))
+        .route(
+            "/api/v2/timeline/user/:user",
+            get(routes_timeline::timeline_user),
+        )
         .route(
             "/api/v2/timeline/mac/{mac}",
             get(routes_timeline::timeline_mac),
         )
-        .route("/api/v2/timeline/mac/:mac", get(routes_timeline::timeline_mac))
+        .route(
+            "/api/v2/timeline/mac/:mac",
+            get(routes_timeline::timeline_mac),
+        )
         .route("/api/v2/conflicts", get(routes_conflicts::list_conflicts))
         .route(
             "/api/v2/conflicts/stats",
@@ -310,8 +316,14 @@ pub fn admin_routes(state: AppState) -> Router<AppState> {
             get(routes_users::get_user).delete(routes_users::delete_user),
         )
         .route("/api/v1/users/{id}/role", put(routes_users::change_role))
-        .route("/api/v2/admin/users/{id}/role", put(routes_users::change_role))
-        .route("/api/v2/admin/users/:id/role", put(routes_users::change_role))
+        .route(
+            "/api/v2/admin/users/{id}/role",
+            put(routes_users::change_role),
+        )
+        .route(
+            "/api/v2/admin/users/:id/role",
+            put(routes_users::change_role),
+        )
         .route(
             "/api/v1/users/{id}/reset-password",
             post(routes_users::reset_password),

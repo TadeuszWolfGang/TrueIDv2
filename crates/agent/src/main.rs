@@ -43,6 +43,9 @@ enum Commands {
     Install,
     /// Remove the Windows Service.
     Uninstall,
+    /// Run under Windows Service Control Manager.
+    #[command(hide = true)]
+    Service,
     /// Run interactively (debug / console mode).
     Run {
         /// Print parsed events to stdout instead of sending over TLS.
@@ -55,12 +58,16 @@ enum Commands {
 async fn main() -> Result<()> {
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt().with_env_filter(env_filter).init();
+    // rustls 0.23 requires an explicit process-wide crypto provider selection
+    // when auto-detection is not available from enabled crate features.
+    let _ = rustls::crypto::ring::default_provider().install_default();
 
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Install => service::install()?,
+        Commands::Install => service::install(&cli.config)?,
         Commands::Uninstall => service::uninstall()?,
+        Commands::Service => service::run(&cli.config)?,
         Commands::Run { dry_run } => run_agent(&cli.config, dry_run).await?,
     }
 
@@ -234,6 +241,25 @@ async fn run_dry(_cfg: config::AgentConfig, hostname: &str) -> Result<()> {
     info!("Dry-run complete. Press Ctrl+C to exit.");
     tokio::signal::ctrl_c().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cli_parses_hidden_service_subcommand_with_config_path() {
+        let cli = Cli::try_parse_from([
+            "net-identity-agent",
+            "--config",
+            "C:\\TrueID\\config.toml",
+            "service",
+        ])
+        .expect("service subcommand should parse");
+
+        assert_eq!(cli.config, PathBuf::from("C:\\TrueID\\config.toml"));
+        assert!(matches!(cli.command, Commands::Service));
+    }
 }
 
 use crate::transport::tls_sender;

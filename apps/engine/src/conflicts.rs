@@ -86,12 +86,11 @@ pub async fn detect_conflicts(
     }
 
     if let Some(event_mac) = event.mac.clone() {
-        let rows =
-            sqlx::query("SELECT ip FROM mappings WHERE mac = ? AND ip != ? AND is_active = true")
-                .bind(&event_mac)
-                .bind(&event_ip)
-                .fetch_all(pool)
-                .await?;
+        let rows = sqlx::query("SELECT ip FROM mappings WHERE mac = ? AND ip != ?")
+            .bind(&event_mac)
+            .bind(&event_ip)
+            .fetch_all(pool)
+            .await?;
 
         if !rows.is_empty() {
             let mut other_ips = Vec::with_capacity(rows.len());
@@ -131,7 +130,7 @@ pub async fn detect_conflicts(
                 let critical_details = json!({
                     "mac": event_mac,
                     "new_ip": event_ip,
-                    "other_active_ips": other_ips,
+                    "other_ips": other_ips,
                     "source": event_source,
                 })
                 .to_string();
@@ -170,13 +169,19 @@ async fn insert_conflict_if_not_recent(
     let recent = sqlx::query(
         "SELECT id FROM conflicts
          WHERE conflict_type = ?
-           AND ip = ?
+           AND COALESCE(ip, '') = COALESCE(?, '')
+           AND COALESCE(mac, '') = COALESCE(?, '')
+           AND COALESCE(user_old, '') = COALESCE(?, '')
+           AND COALESCE(user_new, '') = COALESCE(?, '')
            AND resolved_at IS NULL
            AND detected_at > datetime('now', '-5 minutes')
          LIMIT 1",
     )
     .bind(&new_conflict.conflict_type)
     .bind(new_conflict.ip.clone())
+    .bind(new_conflict.mac.clone())
+    .bind(new_conflict.user_old.clone())
+    .bind(new_conflict.user_new.clone())
     .fetch_optional(pool)
     .await?;
 
@@ -227,4 +232,109 @@ async fn insert_conflict_if_not_recent(
         resolved_at: row.try_get("resolved_at").ok(),
         resolved_by: row.try_get("resolved_by").ok(),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::IpAddr;
+    use trueid_common::db::init_db;
+    use trueid_common::model::SourceType;
+
+    fn test_event(ip: &str, user: &str, mac: &str) -> IdentityEvent {
+        IdentityEvent {
+            source: SourceType::AdLog,
+            ip: ip.parse::<IpAddr>().expect("ip parse failed"),
+            user: user.to_string(),
+            timestamp: Utc::now(),
+            raw_data: format!("event for {ip}"),
+            mac: Some(mac.to_string()),
+            confidence_score: 90,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_conflict_dedup_keeps_distinct_user_transitions() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+
+        let first = insert_conflict_if_not_recent(
+            db.pool(),
+            NewConflict {
+                conflict_type: "ip_user_change".to_string(),
+                severity: "warning".to_string(),
+                ip: Some("10.0.0.10".to_string()),
+                mac: None,
+                user_old: Some("alice".to_string()),
+                user_new: Some("bob".to_string()),
+                source: "AdLog".to_string(),
+                details: None,
+            },
+        )
+        .await
+        .expect("insert first conflict failed");
+        let second = insert_conflict_if_not_recent(
+            db.pool(),
+            NewConflict {
+                conflict_type: "ip_user_change".to_string(),
+                severity: "warning".to_string(),
+                ip: Some("10.0.0.10".to_string()),
+                mac: None,
+                user_old: Some("bob".to_string()),
+                user_new: Some("charlie".to_string()),
+                source: "AdLog".to_string(),
+                details: None,
+            },
+        )
+        .await
+        .expect("insert second conflict failed");
+        let duplicate = insert_conflict_if_not_recent(
+            db.pool(),
+            NewConflict {
+                conflict_type: "ip_user_change".to_string(),
+                severity: "warning".to_string(),
+                ip: Some("10.0.0.10".to_string()),
+                mac: None,
+                user_old: Some("bob".to_string()),
+                user_new: Some("charlie".to_string()),
+                source: "AdLog".to_string(),
+                details: None,
+            },
+        )
+        .await
+        .expect("insert duplicate conflict failed");
+
+        assert!(first.is_some(), "first conflict should be inserted");
+        assert!(
+            second.is_some(),
+            "distinct user transition should not be deduplicated"
+        );
+        assert!(
+            duplicate.is_none(),
+            "identical conflict should still deduplicate"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_duplicate_mac_detects_inactive_mapping() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+        db.upsert_mapping(test_event("10.0.0.1", "alice", "AA:BB:CC:DD:EE:01"), None)
+            .await
+            .expect("seed mapping failed");
+        sqlx::query("UPDATE mappings SET is_active = false WHERE ip = '10.0.0.1'")
+            .execute(db.pool())
+            .await
+            .expect("deactivate mapping failed");
+
+        let conflicts = detect_conflicts(
+            db.pool(),
+            &test_event("10.0.0.2", "bob", "AA:BB:CC:DD:EE:01"),
+        )
+        .await
+        .expect("conflict detection failed");
+
+        assert!(
+            conflicts.iter().any(|c| c.conflict_type == "duplicate_mac"),
+            "expected duplicate_mac conflict for inactive prior mapping"
+        );
+    }
 }

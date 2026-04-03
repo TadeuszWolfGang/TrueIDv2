@@ -5,7 +5,7 @@
 //!
 //! Requires a running TrueID instance. Set TRUEID_TEST_URL env var
 //! (default: http://127.0.0.1:3000). Bootstrap admin must be created
-//! with TRUEID_ADMIN_USER=admin TRUEID_ADMIN_PASS=integration12345.
+//! with TRUEID_ADMIN_USER=admin and TRUEID_TEST_ADMIN_PASS set locally.
 //!
 //! Run: TRUEID_TEST_URL=http://127.0.0.1:3000 cargo test -p trueid-integration-tests
 mod support;
@@ -14,7 +14,11 @@ use serde_json::Value;
 use support::{lock_suite, TestClient};
 
 const ADMIN_USER: &str = "admin";
-const ADMIN_PASS: &str = "integration12345";
+
+fn admin_pass() -> String {
+    std::env::var("TRUEID_TEST_ADMIN_PASS")
+        .expect("TRUEID_TEST_ADMIN_PASS must be set for ignored integration tests")
+}
 
 // ── Tests ──────────────────────────────────────────────────
 
@@ -32,7 +36,8 @@ async fn test_health() {
 async fn test_login_success() {
     let _suite = lock_suite().await;
     let c = TestClient::new();
-    let (status, body) = c.login(ADMIN_USER, ADMIN_PASS).await;
+    let admin_pass = admin_pass();
+    let (status, body) = c.login(ADMIN_USER, &admin_pass).await;
     assert_eq!(status, 200, "Login should succeed: {body}");
     assert!(body["user"]["username"].is_string());
     assert_eq!(body["user"]["role"], "Admin");
@@ -70,7 +75,8 @@ async fn test_me_without_auth() {
 async fn test_me_after_login() {
     let _suite = lock_suite().await;
     let c = TestClient::new();
-    let (status, _) = c.login(ADMIN_USER, ADMIN_PASS).await;
+    let admin_pass = admin_pass();
+    let (status, _) = c.login(ADMIN_USER, &admin_pass).await;
     assert_eq!(status, 200);
 
     let resp = c.get("/api/auth/me").await;
@@ -84,7 +90,8 @@ async fn test_me_after_login() {
 async fn test_logout() {
     let _suite = lock_suite().await;
     let c = TestClient::new();
-    let (status, _) = c.login(ADMIN_USER, ADMIN_PASS).await;
+    let admin_pass = admin_pass();
+    let (status, _) = c.login(ADMIN_USER, &admin_pass).await;
     assert_eq!(status, 200);
 
     // Logout.
@@ -101,7 +108,8 @@ async fn test_logout() {
 async fn test_token_refresh() {
     let _suite = lock_suite().await;
     let c = TestClient::new();
-    let (status, _) = c.login(ADMIN_USER, ADMIN_PASS).await;
+    let admin_pass = admin_pass();
+    let (status, _) = c.login(ADMIN_USER, &admin_pass).await;
     assert_eq!(status, 200);
 
     // Refresh.
@@ -118,11 +126,12 @@ async fn test_token_refresh() {
 async fn test_session_listing() {
     let _suite = lock_suite().await;
     let c1 = TestClient::new();
-    let (s1, _) = c1.login(ADMIN_USER, ADMIN_PASS).await;
+    let admin_pass = admin_pass();
+    let (s1, _) = c1.login(ADMIN_USER, &admin_pass).await;
     assert_eq!(s1, 200);
 
     let c2 = TestClient::new();
-    let (s2, _) = c2.login(ADMIN_USER, ADMIN_PASS).await;
+    let (s2, _) = c2.login(ADMIN_USER, &admin_pass).await;
     assert_eq!(s2, 200);
 
     let resp = c1.get("/api/auth/sessions").await;
@@ -137,11 +146,12 @@ async fn test_session_listing() {
 async fn test_logout_all() {
     let _suite = lock_suite().await;
     let c1 = TestClient::new();
-    let (s1, _) = c1.login(ADMIN_USER, ADMIN_PASS).await;
+    let admin_pass = admin_pass();
+    let (s1, _) = c1.login(ADMIN_USER, &admin_pass).await;
     assert_eq!(s1, 200);
 
     let c2 = TestClient::new();
-    let (s2, _) = c2.login(ADMIN_USER, ADMIN_PASS).await;
+    let (s2, _) = c2.login(ADMIN_USER, &admin_pass).await;
     assert_eq!(s2, 200);
 
     // Logout all from c1.
@@ -167,7 +177,8 @@ async fn test_protected_endpoint_without_auth() {
 async fn test_admin_endpoint_with_auth() {
     let _suite = lock_suite().await;
     let c = TestClient::new();
-    let (status, _) = c.login(ADMIN_USER, ADMIN_PASS).await;
+    let admin_pass = admin_pass();
+    let (status, _) = c.login(ADMIN_USER, &admin_pass).await;
     assert_eq!(status, 200);
 
     let resp = c.get("/api/v1/users").await;
@@ -179,7 +190,8 @@ async fn test_admin_endpoint_with_auth() {
 async fn test_audit_logs_admin() {
     let _suite = lock_suite().await;
     let c = TestClient::new();
-    let (status, _) = c.login(ADMIN_USER, ADMIN_PASS).await;
+    let admin_pass = admin_pass();
+    let (status, _) = c.login(ADMIN_USER, &admin_pass).await;
     assert_eq!(status, 200);
 
     let resp = c.get("/api/v1/audit-logs").await;

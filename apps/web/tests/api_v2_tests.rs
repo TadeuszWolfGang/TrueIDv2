@@ -551,10 +551,7 @@ async fn auth_delete(app: &Router, cookie: &str, uri: &str) -> (StatusCode, Valu
 fn ensure_test_encryption_key() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
-        std::env::set_var(
-            "CONFIG_ENCRYPTION_KEY",
-            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-        );
+        std::env::set_var("CONFIG_ENCRYPTION_KEY", "ab".repeat(32));
     });
 }
 
@@ -848,6 +845,55 @@ async fn test_export_mappings_with_filter() {
     assert_eq!(status, StatusCode::OK);
     let arr: Value = serde_json::from_slice(&body).expect("json parse failed");
     assert_eq!(arr.as_array().map(|a| a.len()).unwrap_or(0), 2);
+}
+
+#[tokio::test]
+async fn test_export_mappings_json_truncated_at_max_rows() {
+    let (app, db) = build_test_app().await;
+    sqlx::query(
+        "WITH digits(d) AS (
+            VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9)
+         ),
+         nums(n) AS (
+            SELECT
+                d0.d
+                + 10 * d1.d
+                + 100 * d2.d
+                + 1000 * d3.d
+                + 10000 * d4.d
+            FROM digits d0
+            CROSS JOIN digits d1
+            CROSS JOIN digits d2
+            CROSS JOIN digits d3
+            CROSS JOIN digits d4
+         )
+         INSERT INTO mappings (ip, user, source, last_seen, confidence, is_active)
+         SELECT
+            printf('172.%d.%d.%d', (n / 65536) % 256, (n / 256) % 256, n % 256),
+            printf('bulk-%05d', n),
+            'Manual',
+            datetime('now'),
+            50,
+            1
+         FROM nums",
+    )
+    .execute(db.pool())
+    .await
+    .expect("bulk insert mappings failed");
+
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, headers, body) =
+        auth_get_raw(&app, &cookie, "/api/v2/export/mappings?format=json").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers
+            .get("x-trueid-truncated")
+            .and_then(|v| v.to_str().ok()),
+        Some("true")
+    );
+
+    let arr: Value = serde_json::from_slice(&body).expect("json parse failed");
+    assert_eq!(arr.as_array().map(|a| a.len()).unwrap_or(0), 100_000);
 }
 
 #[tokio::test]

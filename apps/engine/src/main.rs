@@ -387,6 +387,9 @@ async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::fmt().with_env_filter(env_filter).init();
+    // rustls 0.23 requires an explicit process-wide crypto provider selection
+    // when auto-detection is not available from enabled crate features.
+    let _ = rustls::crypto::ring::default_provider().install_default();
 
     let db_url = match std::env::var("DATABASE_URL") {
         Ok(v) => v,

@@ -321,7 +321,9 @@ mod tests {
         };
         let url = provider.authorization_url("state123", "nonce456");
         assert!(url.contains("client_id=client-123"));
-        assert!(url.contains("redirect_uri=https%3A%2F%2Ftrueid.example.com%2Fapi%2Fauth%2Foidc%2Fcallback"));
+        assert!(url.contains(
+            "redirect_uri=https%3A%2F%2Ftrueid.example.com%2Fapi%2Fauth%2Foidc%2Fcallback"
+        ));
         assert!(url.contains("state=state123"));
         assert!(url.contains("nonce=nonce456"));
     }

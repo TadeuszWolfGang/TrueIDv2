@@ -17,6 +17,8 @@ backups/
 
 # OS files
 .DS_Store
+__pycache__/
+*.pyc
 
 # Private repo metadata
 REPO_INFO.md

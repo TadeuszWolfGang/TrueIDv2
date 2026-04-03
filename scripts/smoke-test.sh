@@ -5,11 +5,13 @@
 #   ./scripts/smoke-test.sh [base_url]
 #
 # Default base_url: http://127.0.0.1:3000
-# Expects bootstrap admin: admin / integration12345
+# Requires TRUEID_SMOKE_ADMIN_PASS to be set for the bootstrap admin.
 
 set -euo pipefail
 
 BASE="${1:-http://127.0.0.1:3000}"
+ADMIN_USER="${TRUEID_SMOKE_ADMIN_USER:-admin}"
+ADMIN_PASS="${TRUEID_SMOKE_ADMIN_PASS:?Set TRUEID_SMOKE_ADMIN_PASS before running smoke-test.sh}"
 PASS=0
 FAIL=0
 
@@ -42,7 +44,7 @@ check "Health check" "200" "$STATUS"
 STATUS=$(curl -s -o /dev/null -w "%{http_code}" -c "$COOKIES" \
     -X POST "$BASE/api/auth/login" \
     -H "Content-Type: application/json" \
-    -d '{"username":"admin","password":"integration12345"}')
+    -d "{\"username\":\"${ADMIN_USER}\",\"password\":\"${ADMIN_PASS}\"}")
 check "Login as admin" "200" "$STATUS"
 
 # 3. /me with cookies
@@ -69,7 +71,7 @@ check "Anonymous GET /api/v1/mappings" "401" "$STATUS"
 STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
     -X POST "$BASE/api/auth/login" \
     -H "Content-Type: application/json" \
-    -d '{"username":"admin","password":"wrongpassword"}')
+    -d "{\"username\":\"${ADMIN_USER}\",\"password\":\"wrongpassword\"}")
 check "Login with wrong password" "401" "$STATUS"
 
 # Extract CSRF token from cookie jar for mutating requests

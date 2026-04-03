@@ -114,6 +114,51 @@ def fetch_trueid_mappings(trueid: TrueIdApi) -> list:
         return []
 
 
+def select_lookup_user(mapping: dict) -> str:
+    """
+    Pick the best user value for Sycope lookup enrichment.
+
+    Prefer the first non-empty interactive identity from current_users.
+    Ignore anonymous and machine-account entries when a better option exists.
+    """
+    raw_users = mapping.get("current_users", [])
+    if isinstance(raw_users, list):
+        candidates = raw_users.copy()
+    elif raw_users:
+        candidates = [raw_users]
+    else:
+        candidates = []
+
+    fallback_user = mapping.get("user")
+    if fallback_user:
+        candidates.append(fallback_user)
+
+    normalized = []
+    seen = set()
+
+    for candidate in candidates:
+        user = str(candidate or "").strip()
+        if not user:
+            continue
+        if user in seen:
+            continue
+        seen.add(user)
+        normalized.append(user)
+
+    for user in normalized:
+        if user.upper() == "ANONYMOUS":
+            continue
+        if user.endswith("$"):
+            continue
+        return user
+
+    for user in normalized:
+        if user.upper() != "ANONYMOUS":
+            return user
+
+    return normalized[0] if normalized else ""
+
+
 def merge_lookup_data(saved_lookup: dict, trueid_mappings: list, cfg: dict) -> tuple:
     """
     Merge TrueID data with existing Sycope lookup content.
@@ -151,12 +196,10 @@ def merge_lookup_data(saved_lookup: dict, trueid_mappings: list, cfg: dict) -> t
 
         # Skip IPv6 for now (Sycope Lookup may not handle it).
         if ":" in ip:
-            logger.debug(f"Skipping IPv6 address: {ip}")
+            logger.warning(f"Skipping IPv6 address for Sycope lookup sync: {ip}")
             continue
 
-        # Extract user from current_users list.
-        users = m.get("current_users", [])
-        user = users[0] if users else m.get("user", "")
+        user = select_lookup_user(m)
 
         # Format last_seen as ISO string or epoch ms.
         last_seen = m.get("last_seen", "")

@@ -2,11 +2,13 @@
 
 use anyhow::Result;
 use chrono::Utc;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE, HOST};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{Row, SqlitePool};
+use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
+use tokio::net::lookup_host;
 use tokio::time::{timeout, Duration};
 use tracing::warn;
 use trueid_common::db::Db;
@@ -62,6 +64,13 @@ struct AlertHistoryInsert {
     details: String,
     webhook_status: String,
     webhook_response: Option<String>,
+}
+
+/// Resolved webhook endpoint with DNS pinning metadata.
+struct ResolvedWebhookTarget {
+    host: String,
+    addrs: Vec<SocketAddr>,
+    requires_dns_pinning: bool,
 }
 
 /// Loads enabled alert rules from the database.
@@ -309,15 +318,20 @@ pub async fn fire_alert(
 /// Parameters: `pool` - SQLite pool, `firing` - alert candidate.
 /// Returns: `true` when alert should be suppressed.
 async fn is_on_cooldown(pool: &SqlitePool, firing: &AlertFiring) -> bool {
-    let ip_key = firing.ip.as_deref().unwrap_or("").to_string();
     let count = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM alert_history
          WHERE rule_id = ?
            AND COALESCE(ip, '') = ?
+           AND COALESCE(mac, '') = ?
+           AND COALESCE(user_name, '') = ?
+           AND COALESCE(source, '') = ?
            AND fired_at > datetime('now', '-' || ? || ' seconds')",
     )
     .bind(firing.rule_id)
-    .bind(ip_key)
+    .bind(firing.ip.as_deref().unwrap_or(""))
+    .bind(firing.mac.as_deref().unwrap_or(""))
+    .bind(firing.user_name.as_deref().unwrap_or(""))
+    .bind(&firing.source)
     .bind(firing.cooldown_seconds.clamp(0, 86_400))
     .fetch_one(pool)
     .await;
@@ -340,6 +354,13 @@ async fn send_webhook(
     url: &str,
     firing: &AlertFiring,
 ) -> (String, Option<String>) {
+    let resolved_target = match resolve_webhook_target(url).await {
+        Ok(target) => target,
+        Err(err) => {
+            warn!(url = %url, error = %err, "Alert webhook destination rejected");
+            return ("failed".to_string(), Some(truncate_to_500(err)));
+        }
+    };
     let details_json = serde_json::from_str::<Value>(&firing.details)
         .unwrap_or_else(|_| json!({ "raw": firing.details }));
     let payload = json!({
@@ -362,7 +383,32 @@ async fn send_webhook(
         }
     }
 
-    let request = client.post(url).headers(headers).json(&payload);
+    let pinned_client = if resolved_target.requires_dns_pinning {
+        match reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .resolve_to_addrs(&resolved_target.host, &resolved_target.addrs)
+            .build()
+        {
+            Ok(pinned) => Some(pinned),
+            Err(err) => {
+                warn!(url = %url, error = %err, "Alert webhook pinned client build failed");
+                return (
+                    "failed".to_string(),
+                    Some(truncate_to_500(format!(
+                        "webhook client initialization failed: {err}"
+                    ))),
+                );
+            }
+        }
+    } else {
+        None
+    };
+    let request = pinned_client
+        .as_ref()
+        .unwrap_or(client)
+        .post(url)
+        .headers(headers)
+        .json(&payload);
     let response = timeout(Duration::from_secs(5), request.send()).await;
 
     match response {
@@ -409,12 +455,89 @@ fn build_extra_headers(raw: Option<&str>) -> Option<Vec<(HeaderName, HeaderValue
         let Ok(name) = HeaderName::from_str(k) else {
             continue;
         };
+        if name == HOST {
+            continue;
+        }
         let Ok(val) = HeaderValue::from_str(vs) else {
             continue;
         };
         headers.push((name, val));
     }
     Some(headers)
+}
+
+/// Resolves a webhook URL and rejects loopback/private/link-local destinations.
+async fn resolve_webhook_target(url: &str) -> std::result::Result<ResolvedWebhookTarget, String> {
+    let parsed = reqwest::Url::parse(url).map_err(|e| format!("invalid webhook URL: {e}"))?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(format!(
+            "unsupported webhook URL scheme: {}",
+            parsed.scheme()
+        ));
+    }
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "webhook URL is missing host".to_string())?
+        .to_string();
+    let port = parsed
+        .port_or_known_default()
+        .ok_or_else(|| "webhook URL is missing port".to_string())?;
+
+    let requires_dns_pinning = host.parse::<IpAddr>().is_err();
+    let addrs = if requires_dns_pinning {
+        lookup_host((host.as_str(), port))
+            .await
+            .map_err(|e| format!("webhook host resolution failed: {e}"))?
+            .collect::<Vec<_>>()
+    } else {
+        vec![SocketAddr::new(
+            host.parse::<IpAddr>()
+                .map_err(|e| format!("invalid webhook host IP: {e}"))?,
+            port,
+        )]
+    };
+
+    if addrs.is_empty() {
+        return Err(format!(
+            "webhook host resolution returned no addresses for {host}"
+        ));
+    }
+    validate_webhook_addresses(&host, &addrs)?;
+
+    Ok(ResolvedWebhookTarget {
+        host,
+        addrs,
+        requires_dns_pinning,
+    })
+}
+
+/// Validates that all resolved webhook targets are public routable addresses.
+fn validate_webhook_addresses(host: &str, addrs: &[SocketAddr]) -> std::result::Result<(), String> {
+    if let Some(blocked) = addrs
+        .iter()
+        .find(|addr| is_forbidden_webhook_ip(addr.ip()))
+        .map(|addr| addr.ip())
+    {
+        return Err(format!(
+            "blocked webhook destination: {host} resolved to disallowed address {blocked}"
+        ));
+    }
+    Ok(())
+}
+
+/// Returns `true` for local-only addresses that should never receive webhook traffic.
+fn is_forbidden_webhook_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_private() || v4.is_loopback() || v4.is_link_local() || v4.is_unspecified()
+        }
+        IpAddr::V6(v6) => {
+            let seg0 = v6.segments()[0];
+            let is_ula = (seg0 & 0xfe00) == 0xfc00;
+            let is_link_local = (seg0 & 0xffc0) == 0xfe80;
+            is_ula || is_link_local || v6.is_loopback() || v6.is_unspecified()
+        }
+    }
 }
 
 /// Inserts one alert history row.
@@ -463,4 +586,98 @@ fn truncate_response(text: String) -> Option<String> {
 /// Returns: truncated text.
 fn truncate_to_500(text: String) -> String {
     text.chars().take(500).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use trueid_common::db::init_db;
+
+    fn sample_firing() -> AlertFiring {
+        AlertFiring {
+            rule_id: 1,
+            rule_name: "test-rule".to_string(),
+            rule_type: "new_mac".to_string(),
+            severity: "warning".to_string(),
+            ip: None,
+            mac: Some("AA:BB:CC:DD:EE:FF".to_string()),
+            user_name: Some("alice".to_string()),
+            source: "AdLog".to_string(),
+            details: "{\"ok\":true}".to_string(),
+            webhook_url: Some("https://example.com/hook".to_string()),
+            webhook_headers: None,
+            action_log: true,
+            cooldown_seconds: 300,
+        }
+    }
+
+    #[test]
+    fn test_build_extra_headers_drops_host_header() {
+        let headers = build_extra_headers(Some(r#"{"Host":"internal.local","X-Test":"ok"}"#))
+            .expect("headers should parse");
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers[0].0, HeaderName::from_static("x-test"));
+        assert_eq!(headers[0].1, HeaderValue::from_static("ok"));
+    }
+
+    #[tokio::test]
+    async fn test_send_webhook_blocks_loopback_destination() {
+        let client = reqwest::Client::builder()
+            .build()
+            .expect("build client failed");
+        let firing = sample_firing();
+        let (status, response) =
+            send_webhook(&client, "http://127.0.0.1:18080/hook", &firing).await;
+
+        assert_eq!(status, "failed");
+        assert!(
+            response
+                .unwrap_or_default()
+                .contains("blocked webhook destination"),
+            "expected loopback block response"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cooldown_key_uses_user_mac_and_source() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+        sqlx::query(
+            "INSERT INTO alert_rules (id, name, enabled, rule_type, severity, action_log, cooldown_seconds)
+             VALUES (1, 'test-rule', 1, 'new_mac', 'warning', 1, 300)",
+        )
+        .execute(db.pool())
+        .await
+        .expect("insert alert rule failed");
+        sqlx::query(
+            "INSERT INTO alert_history (
+                rule_id, rule_name, rule_type, severity, ip, mac, user_name, source, details, webhook_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(1_i64)
+        .bind("test-rule")
+        .bind("new_mac")
+        .bind("warning")
+        .bind("")
+        .bind("AA:BB:CC:DD:EE:FF")
+        .bind("alice")
+        .bind("AdLog")
+        .bind("{}")
+        .bind("sent")
+        .execute(db.pool())
+        .await
+        .expect("insert alert history failed");
+
+        let mut firing = sample_firing();
+        firing.user_name = Some("bob".to_string());
+        assert!(
+            !is_on_cooldown(db.pool(), &firing).await,
+            "different user should not share cooldown bucket"
+        );
+
+        firing.user_name = Some("alice".to_string());
+        assert!(
+            is_on_cooldown(db.pool(), &firing).await,
+            "same rule/user/mac/source should stay on cooldown"
+        );
+    }
 }

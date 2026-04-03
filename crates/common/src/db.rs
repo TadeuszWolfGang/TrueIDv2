@@ -738,7 +738,9 @@ impl Db {
                 .try_get("schedule_cron")
                 .unwrap_or_else(|_| "0 8 * * 1".to_string()),
             enabled: row.try_get("enabled").unwrap_or(true),
-            channel_ids: row.try_get("channel_ids").unwrap_or_else(|_| "[]".to_string()),
+            channel_ids: row
+                .try_get("channel_ids")
+                .unwrap_or_else(|_| "[]".to_string()),
             include_sections: row
                 .try_get("include_sections")
                 .unwrap_or_else(|_| "[\"summary\",\"conflicts\",\"alerts\"]".to_string()),
@@ -1060,18 +1062,23 @@ mod tests {
 
         assert!(db_path.exists(), "DB file should exist after init");
 
-        let tables: Vec<(String,)> = sqlx::query_as(
-            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name",
-        )
-        .fetch_all(db.pool())
-        .await
-        .unwrap();
+        let tables: Vec<(String,)> =
+            sqlx::query_as("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+                .fetch_all(db.pool())
+                .await
+                .unwrap();
 
         let table_names: Vec<&str> = tables.iter().map(|t| t.0.as_str()).collect();
-        assert!(table_names.contains(&"mappings"), "mappings table must exist");
+        assert!(
+            table_names.contains(&"mappings"),
+            "mappings table must exist"
+        );
         assert!(table_names.contains(&"events"), "events table must exist");
         assert!(table_names.contains(&"users"), "users table must exist");
-        assert!(table_names.contains(&"sessions"), "sessions table must exist");
+        assert!(
+            table_names.contains(&"sessions"),
+            "sessions table must exist"
+        );
         assert!(table_names.contains(&"config"), "config table must exist");
 
         db.close().await;

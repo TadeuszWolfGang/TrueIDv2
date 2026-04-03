@@ -12,10 +12,17 @@ use std::io::BufReader;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::io::AsyncReadExt;
+use std::time::Duration;
+use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 use tracing::{info, warn};
+
+const MAX_FRAME_SIZE: usize = 65_536;
+#[cfg(test)]
+const FRAME_READ_TIMEOUT: Duration = Duration::from_millis(50);
+#[cfg(not(test))]
+const FRAME_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Callback that receives a decrypted syslog payload string and the peer address.
 pub type MessageHandler = Arc<dyn Fn(&str, SocketAddr) + Send + Sync>;
@@ -92,29 +99,60 @@ pub async fn run_tls_listener(
 /// Parameters: `stream` - accepted TLS stream, `peer` - remote address,
 /// `handler` - message callback, `label` - listener name.
 /// Returns: `Ok(())` on client disconnect or an error.
-async fn handle_tls_client(
-    mut stream: tokio_rustls::server::TlsStream<tokio::net::TcpStream>,
+async fn handle_tls_client<S>(
+    mut stream: S,
     peer: SocketAddr,
     handler: MessageHandler,
     label: &str,
-) -> Result<()> {
+) -> Result<()>
+where
+    S: AsyncRead + Unpin,
+{
     let mut buf = Vec::with_capacity(8192);
     let mut tmp = [0u8; 4096];
 
     loop {
-        let n = stream.read(&mut tmp).await?;
+        let n = if buf.is_empty() {
+            stream.read(&mut tmp).await?
+        } else {
+            match tokio::time::timeout(FRAME_READ_TIMEOUT, stream.read(&mut tmp)).await {
+                Ok(Ok(read)) => read,
+                Ok(Err(err)) => return Err(err.into()),
+                Err(_) => anyhow::bail!(
+                    "TLS frame read timeout after {}s",
+                    FRAME_READ_TIMEOUT.as_secs_f64()
+                ),
+            }
+        };
         if n == 0 {
             info!(%peer, label, "TLS client disconnected");
             return Ok(());
         }
         buf.extend_from_slice(&tmp[..n]);
+        if let Some(declared_len) = parse_declared_frame_len(&buf) {
+            if declared_len > MAX_FRAME_SIZE {
+                anyhow::bail!(
+                    "TLS frame declared size {declared_len} exceeds max {MAX_FRAME_SIZE}"
+                );
+            }
+        }
 
         // Parse all complete octet-counted frames in the buffer.
         while let Some((msg, consumed)) = parse_octet_frame(&buf) {
             handler(&msg, peer);
             buf.drain(..consumed);
         }
+        if buf.len() > MAX_FRAME_SIZE {
+            anyhow::bail!("TLS frame buffer exceeded max {MAX_FRAME_SIZE} bytes");
+        }
     }
+}
+
+/// Parses only the declared frame length from an RFC 5425 buffer prefix.
+fn parse_declared_frame_len(buf: &[u8]) -> Option<usize> {
+    let space_pos = buf.iter().position(|&b| b == b' ')?;
+    let len_str = std::str::from_utf8(&buf[..space_pos]).ok()?;
+    len_str.parse().ok()
 }
 
 /// Parses an RFC 5425 octet-counted frame from a byte buffer.
@@ -156,4 +194,67 @@ fn load_private_key(path: &Path) -> Result<PrivateKeyDer<'static>> {
     rustls_pemfile::private_key(&mut reader)
         .with_context(|| format!("parsing key: {}", path.display()))?
         .with_context(|| format!("no key found in: {}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{duplex, AsyncWriteExt};
+
+    fn test_peer() -> SocketAddr {
+        "127.0.0.1:5514".parse().expect("peer parse failed")
+    }
+
+    #[tokio::test]
+    async fn test_handle_tls_client_rejects_oversized_declared_frame() {
+        let (mut client, server) = duplex(256);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let handler_calls = calls.clone();
+        let handler: MessageHandler = Arc::new(move |_, _| {
+            handler_calls.fetch_add(1, Ordering::Relaxed);
+        });
+
+        let task =
+            tokio::spawn(
+                async move { handle_tls_client(server, test_peer(), handler, "test").await },
+            );
+        client
+            .write_all(format!("{} ", MAX_FRAME_SIZE + 1).as_bytes())
+            .await
+            .expect("write oversized prefix failed");
+
+        let err = task
+            .await
+            .expect("join failed")
+            .expect_err("oversized frame should fail");
+        assert!(
+            err.to_string().contains("exceeds max"),
+            "unexpected error: {err}"
+        );
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn test_handle_tls_client_times_out_on_incomplete_frame() {
+        let (mut client, server) = duplex(256);
+        let handler: MessageHandler = Arc::new(|_, _| {});
+        let task =
+            tokio::spawn(
+                async move { handle_tls_client(server, test_peer(), handler, "test").await },
+            );
+        client
+            .write_all(b"10 hello")
+            .await
+            .expect("write partial frame failed");
+
+        let err = task
+            .await
+            .expect("join failed")
+            .expect_err("incomplete frame should time out");
+        assert!(
+            err.to_string().contains("timeout"),
+            "unexpected error: {err}"
+        );
+    }
 }
