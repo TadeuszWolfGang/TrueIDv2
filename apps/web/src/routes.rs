@@ -84,10 +84,10 @@ pub fn v1_routes(state: AppState) -> Router<AppState> {
         ))
 }
 
-/// Builds grouped v2 routes (viewer + operator subsets).
+/// Builds grouped v2 routes (viewer subset).
 ///
 /// Parameters: `state` - shared application state.
-/// Returns: grouped v2 router.
+/// Returns: grouped viewer-protected v2 router.
 pub fn v2_routes(state: AppState) -> Router<AppState> {
     let viewer_routes = Router::new()
         .route("/api/v2/search", get(routes_search::search))
@@ -247,7 +247,15 @@ pub fn v2_routes(state: AppState) -> Router<AppState> {
             state.clone(),
             middleware::require_viewer_layer,
         ));
-    let operator_routes = Router::new()
+    Router::new().merge(viewer_routes)
+}
+
+/// Builds grouped operator routes that must stay distinct from admin-only routes.
+///
+/// Parameters: `state` - shared application state.
+/// Returns: grouped operator-protected router.
+pub fn operator_routes(state: AppState) -> Router<AppState> {
+    Router::new()
         .route("/api/v1/mappings", post(routes_proxy::proxy_post_mapping))
         .route(
             "/api/v1/mappings/{ip}",
@@ -261,6 +269,10 @@ pub fn v2_routes(state: AppState) -> Router<AppState> {
             "/api/v2/conflicts/{id}/resolve",
             post(routes_conflicts::resolve_conflict),
         )
+        .route(
+            "/api/v2/conflicts/:id/resolve",
+            post(routes_conflicts::resolve_conflict),
+        )
         .route("/api/v2/tags", post(routes_tags::create_tag))
         .route("/api/v2/tags/{id}", delete(routes_tags::delete_tag))
         .route("/api/v2/tags/:id", delete(routes_tags::delete_tag))
@@ -271,8 +283,7 @@ pub fn v2_routes(state: AppState) -> Router<AppState> {
         .layer(axum_mw::from_fn_with_state(
             state,
             middleware::require_operator_layer,
-        ));
-    Router::new().merge(viewer_routes).merge(operator_routes)
+        ))
 }
 
 /// Builds grouped admin routes (v1 admin + v2 mutable/admin actions).
@@ -401,6 +412,10 @@ pub fn admin_routes(state: AppState) -> Router<AppState> {
         )
         .route(
             "/api/v2/alerts/rules/{id}",
+            put(routes_alerts::update_rule).delete(routes_alerts::delete_rule),
+        )
+        .route(
+            "/api/v2/alerts/rules/:id",
             put(routes_alerts::update_rule).delete(routes_alerts::delete_rule),
         )
         .route("/api/v2/subnets", post(routes_subnets::create_subnet))

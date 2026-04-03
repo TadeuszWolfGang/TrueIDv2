@@ -243,7 +243,7 @@ fn validate_rule_values(
         )
         .with_request_id(request_id));
     }
-    if let Some(url) = webhook {
+    if let Some(url) = webhook.map(str::trim).filter(|url| !url.is_empty()) {
         if !url.starts_with("http://") && !url.starts_with("https://") {
             return Err(ApiError::new(
                 StatusCode::BAD_REQUEST,
