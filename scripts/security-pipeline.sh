@@ -60,6 +60,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
+gen_hex_secret() {
+    openssl rand -hex 32
+}
+
+gen_password() {
+    python3 - <<'PY'
+import secrets
+alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#%^&*_-+="
+print("".join(secrets.choice(alphabet) for _ in range(24)))
+PY
+}
+
 info "Dependency setup"
 require_cmd docker
 require_cmd cargo
@@ -68,6 +80,7 @@ docker pull ghcr.io/zaproxy/zaproxy:stable >/dev/null
 docker pull aquasec/trivy:0.57.1 >/dev/null
 docker pull projectdiscovery/nuclei:latest >/dev/null
 docker pull instrumentisto/nmap:latest >/dev/null
+docker pull ghcr.io/gitleaks/gitleaks:v8.30.0 >/dev/null
 python3 -m venv "$VENV_DIR"
 "${VENV_DIR}/bin/python" -m pip install --upgrade pip >/dev/null
 "${VENV_DIR}/bin/python" -m pip install schemathesis >/dev/null
@@ -77,19 +90,26 @@ green "Security tooling images pulled"
 info "SAST + SCA"
 cargo install cargo-audit --locked >/dev/null
 cargo install cargo-deny --locked >/dev/null
-run_advisory_check "cargo fmt check" cargo fmt --all -- --check
-run_advisory_check "cargo clippy (security-focused lints)" \
+run_and_check "gitleaks secret scan" \
+  docker run --rm -v "${ROOT_DIR}:/repo" ghcr.io/gitleaks/gitleaks:v8.30.0 detect \
+  --source /repo \
+  --report-format sarif \
+  --report-path /repo/security-reports/gitleaks.sarif \
+  --redact \
+  --exit-code 1
+run_and_check "cargo fmt check" cargo fmt --all -- --check
+run_and_check "cargo clippy (security-focused lints)" \
   cargo clippy --workspace --all-targets -- -D clippy::correctness -D clippy::suspicious -D clippy::perf
-run_advisory_check "cargo audit" cargo audit
-run_advisory_check "cargo deny advisories" cargo deny check advisories
+run_and_check "cargo audit" cargo audit
+run_and_check "cargo deny advisories" cargo deny check advisories
 
 info "Start application (prod-like)"
 export TRUEID_DEV_MODE=false
-export JWT_SECRET="${JWT_SECRET:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}"
-export ENGINE_SERVICE_TOKEN="${ENGINE_SERVICE_TOKEN:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}"
-export CONFIG_ENCRYPTION_KEY="${CONFIG_ENCRYPTION_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}"
-export RADIUS_SECRET="${RADIUS_SECRET:-ci-radius-shared-secret}"
-export TRUEID_ADMIN_PASS="${TRUEID_ADMIN_PASS:-integration12345}"
+export JWT_SECRET="${JWT_SECRET:-$(gen_hex_secret)}"
+export ENGINE_SERVICE_TOKEN="${ENGINE_SERVICE_TOKEN:-$(gen_hex_secret)}"
+export CONFIG_ENCRYPTION_KEY="${CONFIG_ENCRYPTION_KEY:-$(gen_hex_secret)}"
+export RADIUS_SECRET="${RADIUS_SECRET:-$(gen_hex_secret)}"
+export TRUEID_ADMIN_PASS="${TRUEID_ADMIN_PASS:-$(gen_password)}"
 docker compose up -d --build
 
 ready=0
@@ -109,10 +129,10 @@ else
 fi
 
 info "Container scan (Trivy)"
-run_advisory_check "trivy engine image (HIGH/CRITICAL)" \
+run_and_check "trivy engine image (HIGH/CRITICAL)" \
   docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.57.1 \
   image --severity HIGH,CRITICAL --ignorefile .trivyignore --exit-code 1 trueidv2-engine:latest
-run_advisory_check "trivy web image (HIGH/CRITICAL)" \
+run_and_check "trivy web image (HIGH/CRITICAL)" \
   docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.57.1 \
   image --severity HIGH,CRITICAL --ignorefile .trivyignore --exit-code 1 trueidv2-web:latest
 
@@ -121,6 +141,12 @@ if curl -sS --max-time 1 http://127.0.0.1:8080/health >/dev/null 2>&1; then
     red "engine admin port 8080 must not be published"
 else
     green "engine admin port 8080 is not publicly published"
+fi
+
+if docker compose port engine 8080 >/dev/null 2>&1; then
+    red "engine admin port 8080 is published by Docker Compose"
+else
+    green "engine admin port 8080 is not published by Docker Compose"
 fi
 
 if [ "$(docker compose exec -T web printenv TRUEID_DEV_MODE)" = "false" ]; then
@@ -155,14 +181,25 @@ run_advisory_check "ZAP baseline scan" \
   docker run --rm --network host -v "${REPORT_DIR}:/zap/wrk/:rw" ghcr.io/zaproxy/zaproxy:stable \
   zap-baseline.py -I -t http://127.0.0.1:3000 -r zap-report.html -J zap-report.json -m 5
 
-run_and_check "Nuclei scan (low+ severities)" \
-  docker run --rm --network host projectdiscovery/nuclei:latest \
-  -u http://127.0.0.1:3000 -severity low,medium,high,critical \
-  -o /tmp/nuclei-report.txt
+rm -f "${REPORT_DIR}/nuclei-report.jsonl"
+if docker run --rm --network host -v "${REPORT_DIR}:/reports:rw" projectdiscovery/nuclei:latest \
+  -u http://127.0.0.1:3000 \
+  -severity high,critical \
+  -jsonl \
+  -silent \
+  -o /reports/nuclei-report.jsonl; then
+    if [ -s "${REPORT_DIR}/nuclei-report.jsonl" ]; then
+        red "Nuclei reported HIGH/CRITICAL findings"
+    else
+        green "Nuclei reported no HIGH/CRITICAL findings"
+    fi
+else
+    red "Nuclei scan execution failed"
+fi
 
-run_and_check "open ports probe (3000,8080)" \
+run_and_check "open ports probe (3000)" \
   docker run --rm --network host instrumentisto/nmap:latest \
-  -sV -sC -p 3000,8080 localhost
+  -sV -sC -p 3000 127.0.0.1
 
 curl -sSI http://localhost:3000 > "${REPORT_DIR}/headers.txt"
 green "saved HTTP headers report to security-reports/headers.txt"

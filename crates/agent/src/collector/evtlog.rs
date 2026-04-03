@@ -11,7 +11,6 @@ mod imp {
     use tokio::sync::mpsc;
     use tracing::{info, warn};
     use windows::core::PCWSTR;
-    use windows::Win32::Foundation::{BOOLEAN, HANDLE, WIN32_ERROR};
     use windows::Win32::System::EventLog::*;
 
     /// Starts a real-time subscription on the given channel with an XPath query.
@@ -24,7 +23,7 @@ mod imp {
         channel: &str,
         query: &str,
         tx: mpsc::UnboundedSender<String>,
-    ) -> Result<EvtHandle> {
+    ) -> Result<EVT_HANDLE> {
         let channel_wide: Vec<u16> = channel.encode_utf16().chain(std::iter::once(0)).collect();
         let query_wide: Vec<u16> = query.encode_utf16().chain(std::iter::once(0)).collect();
 
@@ -51,15 +50,15 @@ mod imp {
 
     /// System callback invoked by Windows for each matching event.
     unsafe extern "system" fn subscription_callback(
-        action: u32,
+        action: EVT_SUBSCRIBE_NOTIFY_ACTION,
         context: *const core::ffi::c_void,
-        event: isize,
+        event: EVT_HANDLE,
     ) -> u32 {
-        if action != EvtSubscribeActionDeliver.0 as u32 {
+        if action != EvtSubscribeActionDeliver {
             return 0;
         }
         let tx = &*(context as *const mpsc::UnboundedSender<String>);
-        match render_event_xml(EVT_HANDLE(event)) {
+        match render_event_xml(event) {
             Ok(xml) => {
                 let _ = tx.send(xml);
             }
@@ -92,7 +91,7 @@ mod imp {
         };
 
         let mut buffer = vec![0u16; (buf_size as usize) / 2 + 1];
-        let ok = unsafe {
+        unsafe {
             EvtRender(
                 None,
                 event,
@@ -102,10 +101,8 @@ mod imp {
                 &mut buf_size,
                 &mut prop_count,
             )
-        };
-        if !ok.as_bool() {
-            return Err(anyhow!("EvtRender failed"));
         }
+        .map_err(|e| anyhow!("EvtRender failed: {}", e))?;
 
         let xml = OsString::from_wide(&buffer)
             .to_string_lossy()

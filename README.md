@@ -30,6 +30,18 @@ make web
 # Dashboard: http://127.0.0.1:3000
 ```
 
+## Documentation
+
+- [Integration Guide](docs/INTEGRATION_GUIDE.md)
+- [Deployment Guide](docs/DEPLOYMENT.md)
+- [HA Notes](docs/HA.md)
+- [Lab Validation Report (2026-04-03)](docs/LAB_TEST_REPORT_2026-04-03.md)
+- [Sycope Example Integration](integrations/sycope/README.md)
+
+The Sycope connector should be treated as a reference/example integration. CSV Lookup
+enrichment was validated end-to-end; the optional Custom Index path depends on
+Sycope appliance version and API compatibility.
+
 ## Commands
 
 | Command | Description |

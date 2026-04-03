@@ -7,7 +7,7 @@
 //! gets the correct HTTP status for protected endpoints.
 //!
 //! Requires a running TrueID instance with:
-//!   - Admin user: admin / integration12345
+//!   - Admin user: admin / $TRUEID_TEST_ADMIN_PASS
 //!   - Operator user: rbac_operator / Testpassword123 (created by test)
 //!   - Viewer user: rbac_viewer / Testpassword123 (created by test)
 //!
@@ -19,8 +19,12 @@ use serde_json::{json, Value};
 use support::{base_url, lock_suite, stateless_client, TestClient};
 
 const ADMIN_USER: &str = "admin";
-const ADMIN_PASS: &str = "integration12345";
 const RBAC_TEST_PASS: &str = "Testpassword123";
+
+fn admin_pass() -> String {
+    std::env::var("TRUEID_TEST_ADMIN_PASS")
+        .expect("TRUEID_TEST_ADMIN_PASS must be set for ignored integration tests")
+}
 
 /// Ensures test users exist (Operator, Viewer). Idempotent.
 async fn ensure_test_users(admin_client: &TestClient) {
@@ -55,7 +59,8 @@ async fn test_rbac_matrix() {
     let _suite = lock_suite().await;
     // Setup: login as admin, create test users.
     let admin = TestClient::new();
-    assert_eq!(admin.login(ADMIN_USER, ADMIN_PASS).await.0, StatusCode::OK);
+    let admin_pass = admin_pass();
+    assert_eq!(admin.login(ADMIN_USER, &admin_pass).await.0, StatusCode::OK);
     ensure_test_users(&admin).await;
 
     let operator = TestClient::new();
@@ -109,7 +114,8 @@ async fn test_rbac_matrix() {
 async fn test_api_key_auth() {
     let _suite = lock_suite().await;
     let admin = TestClient::new();
-    assert_eq!(admin.login(ADMIN_USER, ADMIN_PASS).await.0, StatusCode::OK);
+    let admin_pass = admin_pass();
+    assert_eq!(admin.login(ADMIN_USER, &admin_pass).await.0, StatusCode::OK);
 
     // Create a Viewer API key.
     let resp = admin
@@ -161,7 +167,8 @@ async fn test_csrf_protection() {
     let _suite = lock_suite().await;
     // API key requests should NOT require CSRF token.
     let admin = TestClient::new();
-    assert_eq!(admin.login(ADMIN_USER, ADMIN_PASS).await.0, StatusCode::OK);
+    let admin_pass = admin_pass();
+    assert_eq!(admin.login(ADMIN_USER, &admin_pass).await.0, StatusCode::OK);
 
     // Create an Admin API key for testing.
     let resp = admin

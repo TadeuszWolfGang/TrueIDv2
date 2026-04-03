@@ -37,7 +37,7 @@ class TrueIdApi:
             session: HTTP session for connection reuse.
             host: TrueID web service base URL.
             api_base: API path prefix.
-            api_key: Optional Bearer token for authentication.
+            api_key: Optional TrueID API key sent via the X-API-Key header.
         """
         self.host = host.rstrip("/")
         self.session = session
@@ -45,7 +45,7 @@ class TrueIdApi:
         self.api_key = api_key
 
         if api_key:
-            self.session.headers.update({"Authorization": f"Bearer {api_key}"})
+            self.session.headers.update({"X-API-Key": api_key})
 
         logger.debug(f"TrueIdApi initialized: host={self.host}, api_base={self.api_base}")
 
@@ -63,7 +63,8 @@ class TrueIdApi:
         response = self.session.get(url, timeout=30)
         response.raise_for_status()
 
-        data = response.json()
+        payload = response.json()
+        data = payload.get("data", payload) if isinstance(payload, dict) else payload
         logger.info(f"TrueID: Retrieved {len(data)} active mappings")
         if data:
             logger.debug(f"Sample mapping: {data[0]}")
@@ -87,7 +88,8 @@ class TrueIdApi:
         response = self.session.get(url, params=params, timeout=30)
         response.raise_for_status()
 
-        data = response.json()
+        payload = response.json()
+        data = payload.get("data", payload) if isinstance(payload, dict) else payload
         logger.info(f"TrueID: Retrieved {len(data)} events since {since_timestamp}")
 
         return data

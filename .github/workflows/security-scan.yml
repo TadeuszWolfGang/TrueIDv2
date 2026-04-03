@@ -11,11 +11,6 @@ on:
 env:
   COMPOSE_PROJECT_NAME: trueidv2
   TRUEID_DEV_MODE: "false"
-  JWT_SECRET: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-  ENGINE_SERVICE_TOKEN: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-  CONFIG_ENCRYPTION_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-  RADIUS_SECRET: "ci-radius-shared-secret"
-  TRUEID_ADMIN_PASS: "integration12345"
 
 jobs:
   sast:
@@ -31,22 +26,38 @@ jobs:
         run: |
           cargo install cargo-audit --locked
           cargo install cargo-deny --locked
+          docker pull ghcr.io/gitleaks/gitleaks:v8.30.0
+
+      - name: Secret scan (Gitleaks)
+        run: |
+          mkdir -p security-reports
+          docker run --rm \
+            -v "$PWD:/repo" \
+            ghcr.io/gitleaks/gitleaks:v8.30.0 detect \
+            --source /repo \
+            --report-format sarif \
+            --report-path /repo/security-reports/gitleaks.sarif \
+            --redact \
+            --exit-code 1
 
       - name: Rust fmt check
-        continue-on-error: true
         run: cargo fmt --all -- --check
 
       - name: Rust clippy (security-focused lints)
-        continue-on-error: true
         run: cargo clippy --workspace --all-targets -- -D clippy::correctness -D clippy::suspicious -D clippy::perf
 
       - name: Cargo audit
-        continue-on-error: true
         run: cargo audit
 
       - name: Cargo deny advisories
-        continue-on-error: true
         run: cargo deny check advisories
+
+      - name: Upload SAST artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-reports-sast
+          path: security-reports/
 
   container-scan:
     runs-on: ubuntu-latest
@@ -66,7 +77,6 @@ jobs:
         run: docker compose build
 
       - name: Trivy scan engine image
-        continue-on-error: true
         run: |
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
@@ -77,7 +87,6 @@ jobs:
             trueidv2-engine:latest
 
       - name: Trivy scan web image
-        continue-on-error: true
         run: |
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
@@ -103,6 +112,46 @@ jobs:
           docker pull ghcr.io/zaproxy/zaproxy:stable
           docker pull projectdiscovery/nuclei:latest
 
+      - name: Generate ephemeral runtime secrets
+        env:
+          JWT_SECRET_INPUT: ${{ secrets.JWT_SECRET }}
+          ENGINE_SERVICE_TOKEN_INPUT: ${{ secrets.ENGINE_SERVICE_TOKEN }}
+          CONFIG_ENCRYPTION_KEY_INPUT: ${{ secrets.CONFIG_ENCRYPTION_KEY }}
+          RADIUS_SECRET_INPUT: ${{ secrets.RADIUS_SECRET }}
+          TRUEID_ADMIN_PASS_INPUT: ${{ secrets.TRUEID_ADMIN_PASS }}
+        run: |
+          gen_hex_secret() {
+            openssl rand -hex 32
+          }
+
+          gen_password() {
+            python3 - <<'PY'
+import secrets
+alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#%^&*_-+="
+print("".join(secrets.choice(alphabet) for _ in range(24)))
+PY
+          }
+
+          jwt_secret="${JWT_SECRET_INPUT:-}"
+          engine_service_token="${ENGINE_SERVICE_TOKEN_INPUT:-}"
+          config_encryption_key="${CONFIG_ENCRYPTION_KEY_INPUT:-}"
+          radius_secret="${RADIUS_SECRET_INPUT:-}"
+          trueid_admin_pass="${TRUEID_ADMIN_PASS_INPUT:-}"
+
+          [ -n "$jwt_secret" ] || jwt_secret="$(gen_hex_secret)"
+          [ -n "$engine_service_token" ] || engine_service_token="$(gen_hex_secret)"
+          [ -n "$config_encryption_key" ] || config_encryption_key="$(gen_hex_secret)"
+          [ -n "$radius_secret" ] || radius_secret="$(gen_hex_secret)"
+          [ -n "$trueid_admin_pass" ] || trueid_admin_pass="$(gen_password)"
+
+          {
+            echo "JWT_SECRET=$jwt_secret"
+            echo "ENGINE_SERVICE_TOKEN=$engine_service_token"
+            echo "CONFIG_ENCRYPTION_KEY=$config_encryption_key"
+            echo "RADIUS_SECRET=$radius_secret"
+            echo "TRUEID_ADMIN_PASS=$trueid_admin_pass"
+          } >> "$GITHUB_ENV"
+
       - name: Start stack (prod-like)
         run: docker compose up -d --build
 
@@ -123,6 +172,13 @@ jobs:
         run: |
           if curl -sS --max-time 1 http://127.0.0.1:8080/health >/dev/null 2>&1; then
             echo "Port 8080 is public; expected internal only"
+            exit 1
+          fi
+
+      - name: Ensure engine admin port 8080 is not published by Compose
+        run: |
+          if docker compose port engine 8080 >/dev/null 2>&1; then
+            echo "Compose publishes engine port 8080; expected internal only"
             exit 1
           fi
 
@@ -161,15 +217,25 @@ jobs:
 
       - name: Run Nuclei
         run: |
+          mkdir -p security-reports
+          rm -f security-reports/nuclei-report.jsonl
           docker run --rm --network host \
+            -v "$PWD/security-reports:/reports:rw" \
             projectdiscovery/nuclei:latest \
             -u http://127.0.0.1:3000 \
-            -severity low,medium,high,critical \
-            -o /tmp/nuclei-report.txt
+            -severity high,critical \
+            -jsonl \
+            -silent \
+            -o /reports/nuclei-report.jsonl
+          if [ -s security-reports/nuclei-report.jsonl ]; then
+            echo "Nuclei reported HIGH/CRITICAL findings"
+            cat security-reports/nuclei-report.jsonl
+            exit 1
+          fi
 
       - name: Open ports and service banner check
         run: |
-          nmap -sV -sC -p 3000,8080 localhost | tee security-reports/nmap.txt
+          nmap -sV -sC -p 3000 127.0.0.1 | tee security-reports/nmap.txt
 
       - name: Header and TLS baseline capture
         run: |

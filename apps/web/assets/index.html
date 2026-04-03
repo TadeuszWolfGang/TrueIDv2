@@ -1507,6 +1507,10 @@
     <!-- ═══ TAB: Sycope ═══ -->
     <div id="tab-sycope" style="display:none;">
       <h1>TrueID :: Sycope Integration</h1>
+      <p class="section-desc">
+        Reference/example integration. CSV Lookup enrichment is the primary validated path.
+        Custom Index injection depends on Sycope appliance support.
+      </p>
       <div class="panel">
 
         <!-- Master switch -->
@@ -1538,7 +1542,7 @@
         <div class="setting-row">
           <div class="setting-label">
             <span class="setting-title">Username</span>
-            <span class="setting-desc">Sycope API user (needs Lookup + Index inject rights)</span>
+            <span class="setting-desc">Sycope API user (Lookup rights required; Index inject only for Pattern B)</span>
           </div>
           <input type="text" id="sycope-login" class="setting-input" placeholder="trueid_sync"
             autocomplete="username"
@@ -1573,7 +1577,8 @@
         <h2 class="section-title">Pattern A — Lookup Enrichment</h2>
         <p class="section-desc">
           Active IP-to-identity mappings pushed to a Sycope CSV Lookup.
-          Use in NQL: <code>src stream="netflow" | lookup "TrueID_Enrichment" on clientIp</code>
+          Use in NQL:
+          <code>src stream="netflow" | set clientUser=lookup("TrueID_Enrichment", "user", {"ip": clientIp}, default="")</code>
         </p>
 
         <div class="setting-row">
@@ -1600,7 +1605,7 @@
         <!-- Pattern B: Event Index -->
         <h2 class="section-title">Pattern B — Event History</h2>
         <p class="section-desc">
-          Auth/mapping change events injected into a Sycope Custom Index for forensic analysis.
+          Optional. Auth and mapping change events injected into a Sycope Custom Index when the appliance version/API supports it.
         </p>
 
         <div class="setting-row">

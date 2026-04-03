@@ -1,0 +1,92 @@
+name: windows-agent-smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows-agent-smoke:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run net-identity-agent tests on Windows
+        run: cargo test -p net-identity-agent
+
+      - name: Build release agent binary
+        run: cargo build --release -p net-identity-agent
+
+      - name: Create dry-run config
+        shell: pwsh
+        run: |
+          @'
+          [target]
+          server = "127.0.0.1"
+          ad_port = 5615
+          dhcp_port = 5617
+
+          [tls]
+          ca_cert = "C:\\TrueID\\certs\\ca.pem"
+          client_cert = "C:\\TrueID\\certs\\agent.pem"
+          client_key = "C:\\TrueID\\certs\\agent-key.pem"
+
+          [agent]
+          mode = "ad"
+          buffer_size = 1000
+
+          [connection]
+          reconnect_interval_secs = 5
+          keepalive_secs = 30
+          '@ | Set-Content -Path "$env:RUNNER_TEMP\\agent-config.toml" -Encoding ASCII
+
+      - name: Smoke run release binary in dry-run mode
+        shell: pwsh
+        run: |
+          $stdout = "$env:RUNNER_TEMP\\agent-stdout.log"
+          $stderr = "$env:RUNNER_TEMP\\agent-stderr.log"
+          $process = Start-Process `
+            -FilePath ".\\target\\release\\net-identity-agent.exe" `
+            -ArgumentList @("--config", "$env:RUNNER_TEMP\\agent-config.toml", "run", "--dry-run") `
+            -RedirectStandardOutput $stdout `
+            -RedirectStandardError $stderr `
+            -PassThru
+
+          Start-Sleep -Seconds 3
+
+          if (-not $process.HasExited) {
+            Stop-Process -Id $process.Id -Force
+          }
+
+          $output = @()
+          if (Test-Path $stdout) { $output += Get-Content $stdout }
+          if (Test-Path $stderr) { $output += Get-Content $stderr }
+          $joined = $output -join "`n"
+
+          if ($joined -notmatch "Sample AD syslog") {
+            throw "Dry-run output missing 'Sample AD syslog'. Output:`n$joined"
+          }
+
+          if ($joined -notmatch "Dry-run complete") {
+            throw "Dry-run output missing completion marker. Output:`n$joined"
+          }
+
+      - name: Verify PowerShell helper syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            "$PWD\\scripts\\windows\\verify_trueid_agent.ps1",
+            [ref]$tokens,
+            [ref]$errors
+          )
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_ }
+            throw "PowerShell helper contains parse errors."
+          }

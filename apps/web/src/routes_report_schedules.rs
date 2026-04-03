@@ -191,14 +191,14 @@ pub(crate) async fn create_schedule(
         )
         .await
         .map_err(|e| {
-        warn!(error = %e, "Failed to create report schedule");
-        ApiError::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error::INTERNAL_ERROR,
-            "Failed to create report schedule",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+            warn!(error = %e, "Failed to create report schedule");
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error::INTERNAL_ERROR,
+                "Failed to create report schedule",
+            )
+            .with_request_id(&auth.request_id)
+        })?;
     helpers::audit(
         db,
         &auth,
@@ -208,23 +208,26 @@ pub(crate) async fn create_schedule(
     )
     .await;
 
-    let row = db.get_report_schedule(id).await.map_err(|e| {
-        warn!(error = %e, schedule_id = id, "Failed to load created report schedule");
-        ApiError::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error::INTERNAL_ERROR,
-            "Failed to create report schedule",
-        )
-        .with_request_id(&auth.request_id)
-    })?
-    .ok_or_else(|| {
-        ApiError::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error::INTERNAL_ERROR,
-            "Failed to load created report schedule",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+    let row = db
+        .get_report_schedule(id)
+        .await
+        .map_err(|e| {
+            warn!(error = %e, schedule_id = id, "Failed to load created report schedule");
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error::INTERNAL_ERROR,
+                "Failed to create report schedule",
+            )
+            .with_request_id(&auth.request_id)
+        })?
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error::INTERNAL_ERROR,
+                "Failed to load created report schedule",
+            )
+            .with_request_id(&auth.request_id)
+        })?;
     Ok((StatusCode::CREATED, Json(map_schedule_row(&row))))
 }
 
@@ -280,14 +283,14 @@ pub(crate) async fn update_schedule(
         )
         .await
         .map_err(|e| {
-        warn!(error = %e, schedule_id = id, "Failed to update report schedule");
-        ApiError::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error::INTERNAL_ERROR,
-            "Failed to update report schedule",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+            warn!(error = %e, schedule_id = id, "Failed to update report schedule");
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error::INTERNAL_ERROR,
+                "Failed to update report schedule",
+            )
+            .with_request_id(&auth.request_id)
+        })?;
     if !updated {
         return Err(ApiError::new(
             StatusCode::NOT_FOUND,
@@ -306,23 +309,26 @@ pub(crate) async fn update_schedule(
     )
     .await;
 
-    let row = db.get_report_schedule(id).await.map_err(|e| {
-        warn!(error = %e, schedule_id = id, "Failed to load updated report schedule");
-        ApiError::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error::INTERNAL_ERROR,
-            "Failed to update report schedule",
-        )
-        .with_request_id(&auth.request_id)
-    })?
-    .ok_or_else(|| {
-        ApiError::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            error::INTERNAL_ERROR,
-            "Failed to load updated report schedule",
-        )
-        .with_request_id(&auth.request_id)
-    })?;
+    let row = db
+        .get_report_schedule(id)
+        .await
+        .map_err(|e| {
+            warn!(error = %e, schedule_id = id, "Failed to load updated report schedule");
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error::INTERNAL_ERROR,
+                "Failed to update report schedule",
+            )
+            .with_request_id(&auth.request_id)
+        })?
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error::INTERNAL_ERROR,
+                "Failed to load updated report schedule",
+            )
+            .with_request_id(&auth.request_id)
+        })?;
     Ok(Json(map_schedule_row(&row)))
 }
 
@@ -337,14 +343,14 @@ pub(crate) async fn delete_schedule(
 ) -> Result<impl IntoResponse, ApiError> {
     let db = helpers::require_db(&state, &auth.request_id)?;
     let deleted = db.delete_report_schedule(id).await.map_err(|e| {
-            warn!(error = %e, schedule_id = id, "Failed to delete report schedule");
-            ApiError::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                error::INTERNAL_ERROR,
-                "Failed to delete report schedule",
-            )
-            .with_request_id(&auth.request_id)
-        })?;
+        warn!(error = %e, schedule_id = id, "Failed to delete report schedule");
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error::INTERNAL_ERROR,
+            "Failed to delete report schedule",
+        )
+        .with_request_id(&auth.request_id)
+    })?;
     if !deleted {
         return Err(ApiError::new(
             StatusCode::NOT_FOUND,
@@ -375,7 +381,10 @@ pub(crate) async fn send_now(
 ) -> Result<axum::response::Response, ApiError> {
     let db = helpers::require_db(&state, &auth.request_id)?;
 
-    let channel_ids_raw = db.get_report_schedule_channel_ids(id).await.map_err(|e| {
+    let channel_ids_raw = db
+        .get_report_schedule_channel_ids(id)
+        .await
+        .map_err(|e| {
             warn!(error = %e, schedule_id = id, "Failed to load schedule before send-now");
             ApiError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,

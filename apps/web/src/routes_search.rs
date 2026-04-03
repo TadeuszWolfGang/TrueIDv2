@@ -26,6 +26,7 @@ use trueid_common::pagination::PaginationParams;
 const DEFAULT_PAGE: u32 = 1;
 const DEFAULT_LIMIT: u32 = 50;
 const MAX_LIMIT: u32 = 200;
+const EXPORT_MAPPINGS_MAX_ROWS: i64 = 100_000;
 const EXPORT_EVENTS_MAX_ROWS: i64 = 100_000;
 
 /// Raw bind parameter for dynamic SQL queries.
@@ -621,15 +622,39 @@ pub async fn export_mappings(
     } else {
         format!("WHERE {}", conditions.join(" AND "))
     };
+    let count_sql = format!(
+        "SELECT COUNT(*) as c
+         FROM mappings m
+         LEFT JOIN subnets s ON m.subnet_id = s.id
+         LEFT JOIN dns_cache d ON m.ip = d.ip
+         {where_clause}"
+    );
+    let total: i64 = apply_binds(sqlx::query(&count_sql), &binds)
+        .fetch_one(db.pool())
+        .await
+        .map_err(|e| {
+            warn!(error = %e, "Export mappings count query failed");
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                error::INTERNAL_ERROR,
+                "Failed to count mappings for export",
+            )
+            .with_request_id(&auth.request_id)
+        })?
+        .try_get("c")
+        .unwrap_or(0);
+    let truncated = total > EXPORT_MAPPINGS_MAX_ROWS;
     let sql = format!(
         "{MAPPING_SELECT}
          FROM mappings m
          LEFT JOIN subnets s ON m.subnet_id = s.id
          LEFT JOIN dns_cache d ON m.ip = d.ip
-         {where_clause} ORDER BY m.last_seen DESC"
+         {where_clause} ORDER BY m.last_seen DESC LIMIT ?"
     );
+    let mut export_binds = binds;
+    export_binds.push(BindParam::I64(EXPORT_MAPPINGS_MAX_ROWS));
 
-    let rows = apply_binds(sqlx::query(&sql), &binds)
+    let rows = apply_binds(sqlx::query(&sql), &export_binds)
         .fetch_all(db.pool())
         .await
         .map_err(|e| {
@@ -674,7 +699,7 @@ pub async fn export_mappings(
             "application/json",
             &format!("trueid-mappings-{date}.json"),
             body,
-            false,
+            truncated,
             &auth.request_id,
         );
     }
@@ -711,7 +736,7 @@ pub async fn export_mappings(
         "text/csv",
         &format!("trueid-mappings-{date}.csv"),
         csv,
-        false,
+        truncated,
         &auth.request_id,
     )
 }

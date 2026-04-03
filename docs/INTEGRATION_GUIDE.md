@@ -368,6 +368,16 @@ Get-Service TrueIDAgent
 
 The service name is **TrueIDAgent**, display name **TrueID Identity Agent**. It starts automatically on boot.
 
+A correct service registration resolves to:
+
+```text
+C:\TrueID\net-identity-agent.exe --config C:\TrueID\config.toml service
+```
+
+The SCM entry point is a lightweight wrapper. It starts a child `run` process with the
+same config and keeps the Windows Service state in sync. Seeing two
+`net-identity-agent.exe` processes on the host is expected in service mode.
+
 **Manage the service:**
 
 ```powershell
@@ -384,6 +394,30 @@ Get-Service TrueIDAgent | Format-List *
 Stop-Service TrueIDAgent
 .\net-identity-agent.exe -c C:\TrueID\config.toml uninstall
 ```
+
+**Recommended post-install verification:**
+
+```powershell
+Get-CimInstance Win32_Service -Filter "Name='TrueIDAgent'" |
+  Select-Object Name, State, StartMode, PathName
+
+Get-NetTCPConnection -State Established |
+  Where-Object { $_.RemotePort -eq 5615 -or $_.RemotePort -eq 5617 } |
+  Select-Object LocalAddress, LocalPort, RemoteAddress, RemotePort, OwningProcess
+```
+
+For repeatable verification on Windows hosts, use the repository helper:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\verify_trueid_agent.ps1
+
+# Optional restart smoke:
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\verify_trueid_agent.ps1 -RestartService
+```
+
+Validated lab example:
+
+![Validated Windows service state and TLS session](images/lab-2026-04-03/windows-agent-service-evidence.png)
 
 ### 3.12 Enable Audit Policies (Same as NXLog)
 
@@ -423,7 +457,7 @@ Agent health is visible on the TrueID dashboard — the engine stores heartbeat 
 | `EvtSubscribe failed` | Agent not running as Administrator / SYSTEM | Run as admin or install as service (runs as SYSTEM) |
 | Events parsed but `IpAddress` is empty | Local/service logons (LogonType 5) have no IP | Expected behavior — TrueID ignores events without valid IP |
 | `events_dropped > 0` in heartbeat | Buffer overflow — TrueID was unreachable longer than buffer allows | Increase `buffer_size` in `config.toml` |
-| Service won't start | `config.toml` path wrong in service registration | Uninstall and re-install with correct `-c` path |
+| Service installs but SCM cannot start it | Old build missing service-mode support or wrong `config.toml` path | Rebuild to a revision where `install` registers `--config <path> service`, then uninstall and re-install |
 | No heartbeats on dashboard | Firewall blocking port 5615/5617 | Open TCP ports on firewall between agent and engine |
 
 **Enable debug logging** on the agent:
@@ -1125,7 +1159,22 @@ echo "DHCPACK on 10.0.1.42 to 00:1a:2b:3c:4d:5e (laptop-test)" | \
     nc -u TRUEID_SERVER_IP 5516
 ```
 
+**TrueID Agent service (from the Windows source host):**
+
+```powershell
+Get-CimInstance Win32_Service -Filter "Name='TrueIDAgent'" |
+  Select-Object Name, State, StartMode, PathName
+
+Get-NetTCPConnection -State Established |
+  Where-Object { $_.RemotePort -eq 5615 -or $_.RemotePort -eq 5617 } |
+  Select-Object LocalAddress, LocalPort, RemoteAddress, RemotePort, OwningProcess
+```
+
 After each test, check the TrueID dashboard at `http://TRUEID_SERVER_IP:3000` — you should see a new mapping row.
+
+Validated TrueID example:
+
+![Validated mapping in TrueID for jan.test](images/lab-2026-04-03/trueid-jan-test.png)
 
 ### 10.2 Checking Adapter Status
 
