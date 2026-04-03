@@ -6,6 +6,12 @@ Synchronizes identity data from TrueID to Sycope for NetFlow enrichment.
 > lab Sycope appliance. CSV Lookup enrichment was confirmed end-to-end. Custom Index
 > injection is optional and appliance-version dependent.
 
+The supported default is **lookup-first mode**:
+
+- Pattern A is the primary validated path.
+- Pattern B is optional and is auto-disabled for a given run when the Sycope appliance
+  does not expose Custom Index management or the configured index is missing.
+
 ## Architecture
 
 ```
@@ -53,6 +59,9 @@ python3 install.py
 python3 trueid_sync.py
 ```
 
+If `install.py` reports that Custom Index setup is unsupported, keep
+`enable_event_index=false` and continue with lookup-only mode.
+
 ## Configuration
 
 Edit `config.json`:
@@ -66,6 +75,18 @@ Edit `config.json`:
 | `lookup_name` | CSV Lookup name in Sycope | `TrueID_Enrichment` |
 | `enable_event_index` | Enable Pattern B | `false` |
 | `index_name` | Custom Index name | `trueid_events` |
+
+## Runtime Behavior
+
+At startup, `trueid_sync.py` performs a lightweight preflight:
+
+1. Verify that the configured CSV lookup is reachable.
+2. If Pattern B is enabled, verify that the appliance exposes Custom Index metadata.
+3. If the target Custom Index is missing or the API is unavailable, Pattern B is disabled
+   for that run and Pattern A continues normally.
+
+This is intentional. The connector should never block lookup enrichment just because
+optional event injection is unsupported on a specific Sycope build.
 
 ## Scheduling
 

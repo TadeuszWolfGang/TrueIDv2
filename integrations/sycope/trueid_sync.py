@@ -284,6 +284,74 @@ def sync_lookup(sycope: SycopeApi, trueid_data: list, cfg: dict) -> None:
     )
 
 
+def prepare_runtime_config(sycope: SycopeApi, cfg: dict) -> dict:
+    """
+    Probe Sycope capabilities and downgrade optional features when needed.
+
+    Pattern A (lookup sync) remains the primary path. Pattern B is disabled for
+    the current run when the appliance does not expose custom index management
+    or the configured index is missing.
+
+    Parameters:
+        sycope: Authenticated SycopeApi instance.
+        cfg: Loaded connector configuration.
+
+    Returns:
+        A shallow copy of config adjusted for the current runtime.
+
+    Raises:
+        SycopeError: When lookup API access fails.
+    """
+    runtime_cfg = dict(cfg)
+    lookup_name = runtime_cfg["lookup_name"]
+
+    logger.debug(f"Preflight: checking lookup access for {lookup_name}")
+    lookup_id, _ = sycope.get_lookup(lookup_name, lookup_type="csvFile")
+    if lookup_id == "0":
+        logging.warning(
+            f'Lookup "{lookup_name}" not found in Sycope. '
+            f"Pattern A will stay idle until the lookup is created manually."
+        )
+    else:
+        logging.info(f'Pattern A preflight successful: lookup "{lookup_name}" is accessible')
+
+    if not runtime_cfg.get("enable_event_index", False):
+        logger.debug("Pattern B disabled in config; skipping custom index preflight")
+        return runtime_cfg
+
+    index_name = runtime_cfg.get("index_name", "trueid_events")
+    logger.debug(f"Preflight: checking Pattern B custom index availability for {index_name}")
+
+    try:
+        indexes = sycope.get_user_indicies()
+    except SycopeError as exc:
+        logging.warning(
+            "Pattern B disabled for this run: custom index API is unavailable "
+            f"or the account lacks rights ({exc})."
+        )
+        runtime_cfg["enable_event_index"] = False
+        return runtime_cfg
+
+    matching = [
+        item
+        for item in indexes
+        if item.get("config", {}).get("name") == index_name
+    ]
+    if not matching:
+        logging.warning(
+            f'Pattern B disabled for this run: custom index "{index_name}" was not found. '
+            "Use install.py only on appliances that support custom indexes; "
+            "otherwise keep enable_event_index=false."
+        )
+        runtime_cfg["enable_event_index"] = False
+        return runtime_cfg
+
+    logging.info(
+        f'Pattern B preflight successful: custom index "{index_name}" is available'
+    )
+    return runtime_cfg
+
+
 def read_last_timestamp() -> int:
     """
     Read last processed event timestamp from tracking file.
@@ -459,17 +527,19 @@ def main() -> None:
     sycope, sycope_session = setup_sycope_connection(cfg)
 
     try:
+        runtime_cfg = prepare_runtime_config(sycope, cfg)
+
         # === Pattern A: Lookup Enrichment ===
         trueid_data = fetch_trueid_mappings(trueid)
 
         if trueid_data:
-            sync_lookup(sycope, trueid_data, cfg)
+            sync_lookup(sycope, trueid_data, runtime_cfg)
         else:
             logging.warning("No TrueID data available. Skipping lookup sync.")
 
         # === Pattern B: Event History (optional) ===
-        if cfg.get("enable_event_index", False):
-            sync_events(sycope, trueid, cfg)
+        if runtime_cfg.get("enable_event_index", False):
+            sync_events(sycope, trueid, runtime_cfg)
 
     except SycopeError as e:
         logging.error(f"Sycope API error: {e}")
@@ -481,7 +551,7 @@ def main() -> None:
     logger.debug("Script complete")
 
     # Sleep before exit so Docker restart: always doesn't create a tight loop.
-    sleep_secs = cfg.get("sync_interval_seconds", 300)
+    sleep_secs = runtime_cfg.get("sync_interval_seconds", 300)
     logging.info(f"Sleeping {sleep_secs}s before next run...")
     time.sleep(sleep_secs)
 
