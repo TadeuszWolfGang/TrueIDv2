@@ -17,6 +17,7 @@ use tower_http::services::ServeDir;
 use trueid_common::db::init_db;
 use trueid_common::model::{IdentityEvent, SourceType, UserRole};
 use trueid_web::{auth, build_router, rate_limit, AppState};
+use urlencoding::encode;
 
 /// Builds an isolated in-memory test app and seeds deterministic data.
 ///
@@ -797,6 +798,210 @@ async fn test_search_pagination_edge_cases() {
     )
     .await;
     assert_eq!(limit_high["limit"].as_u64().unwrap_or(0), 200);
+}
+
+#[tokio::test]
+async fn test_timeline_ip_cursor_pagination() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, first) = auth_get(&app, &cookie, "/api/v2/timeline/ip/10.1.2.3?limit=3").await;
+    assert_eq!(status, StatusCode::OK);
+
+    let first_events = first["events"]["data"]
+        .as_array()
+        .expect("first page events must be an array");
+    assert_eq!(first_events.len(), 3);
+    let next_cursor = first["events"]["next_cursor"]
+        .as_str()
+        .expect("first page must expose next_cursor");
+    let first_ids: Vec<i64> = first_events
+        .iter()
+        .map(|row| row["id"].as_i64().expect("event id missing"))
+        .collect();
+
+    let uri = format!(
+        "/api/v2/timeline/ip/10.1.2.3?limit=3&cursor={}",
+        encode(next_cursor)
+    );
+    let (status, second) = auth_get(&app, &cookie, &uri).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let second_events = second["events"]["data"]
+        .as_array()
+        .expect("second page events must be an array");
+    assert_eq!(second_events.len(), 3);
+    let second_ids: Vec<i64> = second_events
+        .iter()
+        .map(|row| row["id"].as_i64().expect("event id missing"))
+        .collect();
+    assert!(first_ids.iter().all(|id| !second_ids.contains(id)));
+}
+
+#[tokio::test]
+async fn test_timeline_user_cursor_pagination() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, first) = auth_get(&app, &cookie, "/api/v2/timeline/user/jkowalski?limit=2").await;
+    assert_eq!(status, StatusCode::OK);
+
+    let first_events = first["events"]["data"]
+        .as_array()
+        .expect("first page events must be an array");
+    assert_eq!(first_events.len(), 2);
+    let next_cursor = first["events"]["next_cursor"]
+        .as_str()
+        .expect("first page must expose next_cursor");
+    let first_ids: Vec<i64> = first_events
+        .iter()
+        .map(|row| row["id"].as_i64().expect("event id missing"))
+        .collect();
+
+    let uri = format!(
+        "/api/v2/timeline/user/jkowalski?limit=2&cursor={}",
+        encode(next_cursor)
+    );
+    let (status, second) = auth_get(&app, &cookie, &uri).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let second_events = second["events"]["data"]
+        .as_array()
+        .expect("second page events must be an array");
+    assert_eq!(second_events.len(), 2);
+    let second_ids: Vec<i64> = second_events
+        .iter()
+        .map(|row| row["id"].as_i64().expect("event id missing"))
+        .collect();
+    assert!(first_ids.iter().all(|id| !second_ids.contains(id)));
+}
+
+#[tokio::test]
+async fn test_timeline_mac_cursor_pagination() {
+    let (app, db) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let mac = "02:42:ac:11:00:55";
+
+    for idx in 0..3 {
+        let event = IdentityEvent {
+            source: SourceType::Radius,
+            ip: format!("172.16.0.{}", idx + 10)
+                .parse::<IpAddr>()
+                .expect("ip parse failed"),
+            user: format!("macuser{idx}"),
+            timestamp: Utc::now() - Duration::minutes(idx as i64),
+            raw_data: format!("mac timeline event #{idx}"),
+            mac: Some(mac.to_string()),
+            confidence_score: 92,
+        };
+        db.upsert_mapping(event, Some("TestVendor"))
+            .await
+            .expect("upsert mac timeline seed failed");
+    }
+
+    let (status, first) = auth_get(
+        &app,
+        &cookie,
+        &format!("/api/v2/timeline/mac/{mac}?limit=2"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let first_rows = first["current_mappings"]
+        .as_array()
+        .expect("first page rows must be an array");
+    assert_eq!(first_rows.len(), 2);
+    let next_cursor = first["current_mappings_next_cursor"]
+        .as_str()
+        .expect("first page must expose current_mappings_next_cursor");
+    let first_pairs: Vec<(String, String)> = first_rows
+        .iter()
+        .map(|row| {
+            (
+                row["ip"].as_str().expect("ip missing").to_string(),
+                row["user"].as_str().expect("user missing").to_string(),
+            )
+        })
+        .collect();
+
+    let uri = format!(
+        "/api/v2/timeline/mac/{mac}?limit=2&cursor={}",
+        encode(next_cursor)
+    );
+    let (status, second) = auth_get(&app, &cookie, &uri).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let second_rows = second["current_mappings"]
+        .as_array()
+        .expect("second page rows must be an array");
+    assert!(!second_rows.is_empty());
+    let second_pairs: Vec<(String, String)> = second_rows
+        .iter()
+        .map(|row| {
+            (
+                row["ip"].as_str().expect("ip missing").to_string(),
+                row["user"].as_str().expect("user missing").to_string(),
+            )
+        })
+        .collect();
+    assert!(first_pairs.iter().all(|pair| !second_pairs.contains(pair)));
+}
+
+#[tokio::test]
+async fn test_timeline_ip_deprecated_page_fallback() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, first) =
+        auth_get(&app, &cookie, "/api/v2/timeline/ip/10.1.2.3?limit=3&page=1").await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, second) =
+        auth_get(&app, &cookie, "/api/v2/timeline/ip/10.1.2.3?limit=3&page=2").await;
+    assert_eq!(status, StatusCode::OK);
+
+    let first_ids: Vec<i64> = first["events"]["data"]
+        .as_array()
+        .expect("first page events must be an array")
+        .iter()
+        .map(|row| row["id"].as_i64().expect("event id missing"))
+        .collect();
+    let second_ids: Vec<i64> = second["events"]["data"]
+        .as_array()
+        .expect("second page events must be an array")
+        .iter()
+        .map(|row| row["id"].as_i64().expect("event id missing"))
+        .collect();
+
+    assert_eq!(second["events"]["page"], 2);
+    assert!(first_ids.iter().all(|id| !second_ids.contains(id)));
+}
+
+#[tokio::test]
+async fn test_timeline_rejects_invalid_cursor() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, body) =
+        auth_get(&app, &cookie, "/api/v2/timeline/ip/10.1.2.3?cursor=broken").await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], "INVALID_INPUT");
+}
+
+#[tokio::test]
+async fn test_timeline_rejects_excessive_deprecated_offset() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, body) = auth_get(
+        &app,
+        &cookie,
+        "/api/v2/timeline/ip/10.1.2.3?page=500&limit=500",
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], "INVALID_INPUT");
 }
 
 #[tokio::test]

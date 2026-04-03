@@ -62,6 +62,40 @@ Sycope appliance version and API compatibility.
 | `make docker-backup` | Backup SQLite DB from container |
 | `make help` | Show all available targets |
 
+## Validation
+
+Repo-level API validation against a running `trueid-web`:
+
+```bash
+TRUEID_VALIDATE_ADMIN_PASS='your-admin-password' ./scripts/repo-e2e-validate.sh
+```
+
+Full Docker Compose validation:
+
+```bash
+./scripts/compose-e2e-validate.sh
+```
+
+Lab validation for the Windows Agent → TrueID → Sycope path:
+
+```bash
+TRUEID_LAB_EXPECTED_IP=10.50.0.100 \
+TRUEID_LAB_EXPECTED_USER=jan.test \
+TRUEID_LAB_TRUEID_API_KEY=tid_xxx \
+TRUEID_LAB_DC_HOST=dc01 \
+TRUEID_LAB_SYCOPE_CONFIG=integrations/sycope/config.json \
+./scripts/lab-validate-trueid-sycope.sh
+```
+
+To verify that Sycope search results, not just the lookup table, contain the enriched user:
+
+```bash
+TRUEID_LAB_SYCOPE_VALIDATE_QUERY=true \
+TRUEID_LAB_SYCOPE_QUERY_LOGIN=admin \
+TRUEID_LAB_SYCOPE_QUERY_PASS='your-sycope-password' \
+./scripts/lab-validate-trueid-sycope.sh
+```
+
 ## Architecture
 
 ```
