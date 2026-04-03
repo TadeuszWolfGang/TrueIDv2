@@ -1477,7 +1477,16 @@ paths:
       tags: [timeline]
       summary: IP timeline
       security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
-      parameters: [ { $ref: '#/components/parameters/Ip' } ]
+      parameters:
+        - { $ref: '#/components/parameters/Ip' }
+        - { $ref: '#/components/parameters/TimelineFrom' }
+        - { $ref: '#/components/parameters/TimelineTo' }
+        - { $ref: '#/components/parameters/TimelineCursor' }
+        - { $ref: '#/components/parameters/TimelineLimit' }
+        - in: query
+          name: page
+          deprecated: true
+          schema: { type: integer, minimum: 1, default: 1 }
       responses:
         '200':
           description: IP timeline
@@ -1501,6 +1510,14 @@ paths:
           name: user
           required: true
           schema: { type: string }
+        - { $ref: '#/components/parameters/TimelineFrom' }
+        - { $ref: '#/components/parameters/TimelineTo' }
+        - { $ref: '#/components/parameters/TimelineCursor' }
+        - { $ref: '#/components/parameters/TimelineLimit' }
+        - in: query
+          name: page
+          deprecated: true
+          schema: { type: integer, minimum: 1, default: 1 }
       responses:
         '200':
           description: User timeline
@@ -1519,7 +1536,14 @@ paths:
       tags: [timeline]
       summary: MAC timeline
       security: [ { cookieAuth: [] }, { apiKeyAuth: [] } ]
-      parameters: [ { $ref: '#/components/parameters/Mac' } ]
+      parameters:
+        - { $ref: '#/components/parameters/Mac' }
+        - { $ref: '#/components/parameters/TimelineCursor' }
+        - { $ref: '#/components/parameters/TimelineLimit' }
+        - in: query
+          name: page
+          deprecated: true
+          schema: { type: integer, minimum: 1, default: 1 }
       responses:
         '200':
           description: MAC timeline
@@ -2303,6 +2327,23 @@ components:
       name: mac
       required: true
       schema: { type: string }
+    TimelineFrom:
+      in: query
+      name: from
+      schema: { type: string, format: date-time }
+    TimelineTo:
+      in: query
+      name: to
+      schema: { type: string, format: date-time }
+    TimelineCursor:
+      in: query
+      name: cursor
+      description: Opaque cursor returned by the previous timeline page.
+      schema: { type: string }
+    TimelineLimit:
+      in: query
+      name: limit
+      schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
     Source:
       in: query
       name: source

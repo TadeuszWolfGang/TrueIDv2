@@ -2,7 +2,11 @@
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use hickory_resolver::{Resolver, TokioResolver};
+use once_cell::sync::OnceCell;
 use sqlx::{Row, SqlitePool};
+use std::iter::repeat_n;
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::JoinSet;
@@ -11,6 +15,7 @@ use trueid_common::db::Db;
 
 const MAX_IPS_PER_CYCLE: i64 = 50;
 const MAX_CONCURRENCY: usize = 10;
+static DNS_RESOLVER: OnceCell<TokioResolver> = OnceCell::new();
 
 /// DNS cache entry loaded from DB for decision making.
 struct DnsCacheEntry {
@@ -156,19 +161,32 @@ async fn resolve_cycle(pool: &SqlitePool, ttl_secs: i64) -> Result<CycleStats> {
 /// Parameters: `pool` - SQLite pool, `ips` - IP list for lookup.
 /// Returns: existing cache entries for provided IPs.
 async fn load_cache_entries(pool: &SqlitePool, ips: &[String]) -> Result<Vec<DnsCacheEntry>> {
-    let mut out = Vec::new();
+    if ips.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let placeholders = repeat_n("?", ips.len()).collect::<Vec<_>>().join(", ");
+    let sql = format!(
+        "SELECT ip, hostname, expires_at
+         FROM dns_cache
+         WHERE ip IN ({placeholders})"
+    );
+
+    let mut query = sqlx::query(&sql);
     for ip in ips {
-        let row = sqlx::query("SELECT ip, hostname, expires_at FROM dns_cache WHERE ip = ?")
-            .bind(ip)
-            .fetch_optional(pool)
-            .await?;
-        if let Some(row) = row {
-            out.push(DnsCacheEntry {
-                ip: row.try_get("ip")?,
-                hostname: row.try_get("hostname").ok(),
-                expires_at: row.try_get("expires_at").ok(),
-            });
-        }
+        query = query.bind(ip);
+    }
+
+    let rows = query.fetch_all(pool).await?;
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push(DnsCacheEntry {
+            ip: row.try_get("ip")?,
+            hostname: row.try_get::<Option<String>, _>("hostname").unwrap_or(None),
+            expires_at: row
+                .try_get::<Option<DateTime<Utc>>, _>("expires_at")
+                .unwrap_or(None),
+        });
     }
     Ok(out)
 }
@@ -178,7 +196,7 @@ async fn load_cache_entries(pool: &SqlitePool, ips: &[String]) -> Result<Vec<Dns
 /// Parameters: `ip_str` - IP address string.
 /// Returns: normalized resolve result.
 async fn resolve_one(ip_str: &str) -> ResolveResult {
-    let _addr: std::net::IpAddr = match ip_str.parse() {
+    let addr: IpAddr = match ip_str.parse() {
         Ok(a) => a,
         Err(_) => {
             return ResolveResult {
@@ -189,7 +207,7 @@ async fn resolve_one(ip_str: &str) -> ResolveResult {
         }
     };
 
-    match tokio::time::timeout(Duration::from_secs(3), reverse_lookup(ip_str)).await {
+    match tokio::time::timeout(Duration::from_secs(3), reverse_lookup(addr)).await {
         Ok(Ok(hostname)) => ResolveResult {
             ip: ip_str.to_string(),
             hostname: Some(hostname),
@@ -208,45 +226,69 @@ async fn resolve_one(ip_str: &str) -> ResolveResult {
     }
 }
 
-/// Performs reverse lookup using system resolver command.
+/// Builds or returns the shared Hickory resolver with system DNS configuration.
 ///
-/// Parameters: `ip_str` - IP address string.
-/// Returns: resolved hostname or error message.
-async fn reverse_lookup(ip_str: &str) -> std::result::Result<String, String> {
-    let output = tokio::process::Command::new("nslookup")
-        .arg(ip_str)
-        .output()
-        .await
-        .map_err(|e| format!("nslookup failed: {e}"))?;
-
-    if !output.status.success() {
-        return Err(format!("nslookup exit status: {}", output.status));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    parse_nslookup_hostname(&stdout).ok_or_else(|| "PTR record not found".to_string())
+/// Returns: shared resolver or initialization error.
+fn dns_resolver() -> std::result::Result<&'static TokioResolver, String> {
+    DNS_RESOLVER.get_or_try_init(|| {
+        Resolver::builder_tokio()
+            .map_err(|e| format!("failed to load system DNS config: {e}"))
+            .map(|builder| builder.build())
+    })
 }
 
-/// Extracts hostname from nslookup output.
+/// Performs reverse lookup using the in-process Hickory resolver.
 ///
-/// Parameters: `stdout` - raw command output.
-/// Returns: parsed hostname without trailing dot.
-fn parse_nslookup_hostname(stdout: &str) -> Option<String> {
-    for line in stdout.lines() {
-        if let Some((_, rhs)) = line.split_once("name =") {
-            let host = rhs.trim().trim_end_matches('.').to_string();
-            if !host.is_empty() {
-                return Some(host);
-            }
-        }
-        if line.starts_with("Name:") {
-            let host = line.trim_start_matches("Name:").trim().to_string();
-            if !host.is_empty() {
-                return Some(host.trim_end_matches('.').to_string());
-            }
-        }
+/// Parameters: `addr` - IP address.
+/// Returns: normalized hostname or error message.
+async fn reverse_lookup(addr: IpAddr) -> std::result::Result<String, String> {
+    let resolver = dns_resolver()?;
+    let lookup = resolver
+        .reverse_lookup(addr)
+        .await
+        .map_err(|e| format!("reverse lookup failed: {e}"))?;
+
+    lookup
+        .iter()
+        .find_map(|name| normalize_ptr_hostname(&name.to_utf8()))
+        .ok_or_else(|| "PTR record not found".to_string())
+}
+
+/// Normalizes and validates PTR hostname before storing it in cache.
+///
+/// Parameters: `raw` - hostname returned by DNS library.
+/// Returns: normalized hostname without trailing dot.
+fn normalize_ptr_hostname(raw: &str) -> Option<String> {
+    let hostname = raw.trim().trim_end_matches('.').to_ascii_lowercase();
+    if hostname.is_empty() || hostname.len() > 253 {
+        return None;
     }
-    None
+
+    let all_labels_valid = hostname.split('.').all(is_valid_hostname_label);
+    if !all_labels_valid {
+        return None;
+    }
+
+    Some(hostname)
+}
+
+/// Checks whether one DNS label is structurally safe to expose in API/UI.
+///
+/// Parameters: `label` - one hostname label.
+/// Returns: `true` when label length and characters are acceptable.
+fn is_valid_hostname_label(label: &str) -> bool {
+    if label.is_empty() || label.len() > 63 {
+        return false;
+    }
+
+    let bytes = label.as_bytes();
+    if bytes.first() == Some(&b'-') || bytes.last() == Some(&b'-') {
+        return false;
+    }
+
+    label
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 /// Resolves a batch of IPs with bounded parallelism.
@@ -296,66 +338,232 @@ async fn upsert_dns_result(
     let now = Utc::now();
     let expires = now + chrono::Duration::seconds(ttl_secs.max(1));
 
-    let existing_hostname: Option<String> =
-        sqlx::query_scalar("SELECT hostname FROM dns_cache WHERE ip = ?")
+    let existing_row =
+        sqlx::query("SELECT hostname, previous_hostname FROM dns_cache WHERE ip = ?")
             .bind(&result.ip)
             .fetch_optional(pool)
-            .await?
-            .flatten();
+            .await?;
+    let existing_hostname = existing_row
+        .as_ref()
+        .and_then(|row| row.try_get::<Option<String>, _>("hostname").ok().flatten());
+    let existing_previous_hostname = existing_row.as_ref().and_then(|row| {
+        row.try_get::<Option<String>, _>("previous_hostname")
+            .ok()
+            .flatten()
+    });
 
     let changed = match (&existing_hostname, &result.hostname) {
         (Some(old), Some(new)) if old != new => true,
-        (Some(_), None) => false,
+        (Some(_), None) => true,
         (None, Some(_)) => false,
         _ => false,
     };
 
-    if changed {
-        sqlx::query(
-            "INSERT INTO dns_cache (ip, hostname, previous_hostname, resolved_at, expires_at, last_error, resolve_count)
-             VALUES (?, ?, ?, ?, ?, ?, 1)
-             ON CONFLICT(ip) DO UPDATE SET
-                hostname = excluded.hostname,
-                previous_hostname = dns_cache.hostname,
-                resolved_at = excluded.resolved_at,
-                expires_at = excluded.expires_at,
-                last_error = excluded.last_error,
-                resolve_count = dns_cache.resolve_count + 1",
-        )
-        .bind(&result.ip)
-        .bind(&result.hostname)
-        .bind(existing_hostname.clone())
-        .bind(now)
-        .bind(expires)
-        .bind(&result.error)
-        .execute(pool)
-        .await?;
+    let next_previous_hostname = if changed {
+        existing_hostname.clone()
+    } else {
+        match (&existing_hostname, &result.hostname) {
+            (None, Some(_)) => None,
+            _ => existing_previous_hostname,
+        }
+    };
 
+    sqlx::query(
+        "INSERT INTO dns_cache (ip, hostname, previous_hostname, resolved_at, expires_at, last_error, resolve_count)
+         VALUES (?, ?, ?, ?, ?, ?, 1)
+         ON CONFLICT(ip) DO UPDATE SET
+            hostname = excluded.hostname,
+            previous_hostname = excluded.previous_hostname,
+            resolved_at = excluded.resolved_at,
+            expires_at = excluded.expires_at,
+            last_error = excluded.last_error,
+            resolve_count = dns_cache.resolve_count + 1",
+    )
+    .bind(&result.ip)
+    .bind(&result.hostname)
+    .bind(next_previous_hostname)
+    .bind(now)
+    .bind(expires)
+    .bind(&result.error)
+    .execute(pool)
+    .await?;
+
+    if changed {
         info!(
             ip = %result.ip,
             old_hostname = ?existing_hostname,
             new_hostname = ?result.hostname,
             "DNS PTR change detected"
         );
-    } else {
-        sqlx::query(
-            "INSERT INTO dns_cache (ip, hostname, resolved_at, expires_at, last_error, resolve_count)
-             VALUES (?, ?, ?, ?, ?, 1)
-             ON CONFLICT(ip) DO UPDATE SET
-                hostname = excluded.hostname,
-                resolved_at = excluded.resolved_at,
-                expires_at = excluded.expires_at,
-                last_error = excluded.last_error,
-                resolve_count = dns_cache.resolve_count + 1",
-        )
-        .bind(&result.ip)
-        .bind(&result.hostname)
-        .bind(now)
-        .bind(expires)
-        .bind(&result.error)
-        .execute(pool)
-        .await?;
     }
 
     Ok(changed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_ptr_hostname_accepts_fqdn_and_lowercases_it() {
+        assert_eq!(
+            normalize_ptr_hostname("Host-01.Example.LOCAL."),
+            Some("host-01.example.local".to_string())
+        );
+    }
+
+    #[test]
+    fn normalize_ptr_hostname_rejects_invalid_labels() {
+        assert_eq!(normalize_ptr_hostname("bad host.local"), None);
+        assert_eq!(normalize_ptr_hostname("-edge.local"), None);
+        assert_eq!(normalize_ptr_hostname(""), None);
+    }
+
+    #[tokio::test]
+    async fn resolve_one_rejects_invalid_ip() {
+        let result = resolve_one("not-an-ip").await;
+        assert_eq!(result.ip, "not-an-ip");
+        assert_eq!(result.hostname, None);
+        assert_eq!(result.error.as_deref(), Some("invalid IP"));
+    }
+
+    #[tokio::test]
+    async fn upsert_dns_result_tracks_hostname_change() {
+        let db = trueid_common::db::init_db("sqlite::memory:")
+            .await
+            .expect("init db failed");
+        let first = ResolveResult {
+            ip: "10.0.0.10".to_string(),
+            hostname: Some("host-a.example.local".to_string()),
+            error: None,
+        };
+        let second = ResolveResult {
+            ip: "10.0.0.10".to_string(),
+            hostname: Some("host-b.example.local".to_string()),
+            error: None,
+        };
+
+        assert!(!upsert_dns_result(db.pool(), &first, 300)
+            .await
+            .expect("first upsert failed"));
+        assert!(upsert_dns_result(db.pool(), &second, 300)
+            .await
+            .expect("second upsert failed"));
+
+        let row = sqlx::query(
+            "SELECT hostname, previous_hostname, resolve_count FROM dns_cache WHERE ip = ?",
+        )
+        .bind("10.0.0.10")
+        .fetch_one(db.pool())
+        .await
+        .expect("select failed");
+
+        let hostname: Option<String> = row.try_get("hostname").expect("hostname missing");
+        let previous: Option<String> = row
+            .try_get("previous_hostname")
+            .expect("previous hostname missing");
+        let resolve_count: i64 = row.try_get("resolve_count").expect("resolve_count missing");
+
+        assert_eq!(hostname.as_deref(), Some("host-b.example.local"));
+        assert_eq!(previous.as_deref(), Some("host-a.example.local"));
+        assert_eq!(resolve_count, 2);
+    }
+
+    #[tokio::test]
+    async fn upsert_dns_result_tracks_hostname_loss_and_recovery() {
+        let db = trueid_common::db::init_db("sqlite::memory:")
+            .await
+            .expect("init db failed");
+        let first = ResolveResult {
+            ip: "10.0.0.11".to_string(),
+            hostname: Some("host-a.example.local".to_string()),
+            error: None,
+        };
+        let lost = ResolveResult {
+            ip: "10.0.0.11".to_string(),
+            hostname: None,
+            error: Some("PTR record not found".to_string()),
+        };
+        let recovered = ResolveResult {
+            ip: "10.0.0.11".to_string(),
+            hostname: Some("host-b.example.local".to_string()),
+            error: None,
+        };
+
+        assert!(!upsert_dns_result(db.pool(), &first, 300)
+            .await
+            .expect("first upsert failed"));
+        assert!(upsert_dns_result(db.pool(), &lost, 300)
+            .await
+            .expect("loss upsert failed"));
+        assert!(!upsert_dns_result(db.pool(), &recovered, 300)
+            .await
+            .expect("recovery upsert failed"));
+
+        let row = sqlx::query(
+            "SELECT hostname, previous_hostname, resolve_count FROM dns_cache WHERE ip = ?",
+        )
+        .bind("10.0.0.11")
+        .fetch_one(db.pool())
+        .await
+        .expect("select failed");
+
+        let hostname: Option<String> = row.try_get("hostname").expect("hostname missing");
+        let previous: Option<String> = row
+            .try_get("previous_hostname")
+            .expect("previous hostname missing");
+        let resolve_count: i64 = row.try_get("resolve_count").expect("resolve_count missing");
+
+        assert_eq!(hostname.as_deref(), Some("host-b.example.local"));
+        assert_eq!(previous, None);
+        assert_eq!(resolve_count, 3);
+    }
+
+    #[tokio::test]
+    async fn resolve_cycle_ignores_fresh_cache_entries() {
+        let db = trueid_common::db::init_db("sqlite::memory:")
+            .await
+            .expect("init db failed");
+        let event = trueid_common::model::IdentityEvent {
+            source: trueid_common::model::SourceType::Radius,
+            ip: "10.0.0.12".parse().expect("ip parse failed"),
+            user: "dns-cache-user".to_string(),
+            timestamp: Utc::now(),
+            raw_data: "dns cache warm entry".to_string(),
+            mac: Some("AA:BB:CC:DD:EE:42".to_string()),
+            confidence_score: 90,
+        };
+        db.upsert_mapping(event, Some("TestVendor"))
+            .await
+            .expect("upsert mapping failed");
+        sqlx::query(
+            "INSERT INTO dns_cache (ip, hostname, resolved_at, expires_at, resolve_count)
+             VALUES (?, ?, datetime('now'), datetime('now', '+1 hour'), 1)",
+        )
+        .bind("10.0.0.12")
+        .bind("cached.example.local")
+        .execute(db.pool())
+        .await
+        .expect("insert dns cache failed");
+
+        let stats = resolve_cycle(db.pool(), 300)
+            .await
+            .expect("resolve cycle failed");
+
+        assert_eq!(stats.resolved, 0);
+        assert_eq!(stats.failed, 0);
+        assert_eq!(stats.skipped, 0);
+        assert_eq!(stats.changed, 0);
+
+        let row = sqlx::query("SELECT hostname, resolve_count FROM dns_cache WHERE ip = ?")
+            .bind("10.0.0.12")
+            .fetch_one(db.pool())
+            .await
+            .expect("select dns cache failed");
+        let hostname: Option<String> = row.try_get("hostname").expect("hostname missing");
+        let resolve_count: i64 = row.try_get("resolve_count").expect("resolve_count missing");
+
+        assert_eq!(hostname.as_deref(), Some("cached.example.local"));
+        assert_eq!(resolve_count, 1);
+    }
 }
