@@ -193,6 +193,25 @@ fn parse_subnet_filter(raw: Option<String>) -> Option<Vec<i64>> {
     }
 }
 
+/// Escapes XML attribute values for PAN-OS payloads.
+///
+/// Parameters: `value` - raw attribute value.
+/// Returns: XML-safe attribute value.
+fn escape_xml_attr(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&apos;"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
 /// Validates firewall create/update payload fields.
 ///
 /// Parameters: `firewall_type` - selected type, `username` - optional username, `password_present` - whether password/token is provided, `port` - optional port, `interval` - optional push interval, `request_id` - request correlation id.
@@ -444,7 +463,9 @@ fn panos_payload(entries: &[PushEntry]) -> String {
     for entry in entries {
         xml.push_str(&format!(
             "<entry name=\"{}\" ip=\"{}\" timeout=\"{}\"/>",
-            entry.user, entry.ip, entry.timeout_secs
+            escape_xml_attr(&entry.user),
+            escape_xml_attr(&entry.ip),
+            entry.timeout_secs
         ));
     }
     xml.push_str("</login></payload></uid-message>");
@@ -522,6 +543,24 @@ async fn push_fortigate(
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
     Ok(pushed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_panos_payload_escapes_xml_attributes() {
+        let payload = panos_payload(&[PushEntry {
+            ip: "10.0.0.5\"/><foo".into(),
+            user: "bad\"/><entry name=\"inject".into(),
+            timeout_secs: 90,
+        }]);
+
+        assert!(payload.contains("name=\"bad&quot;/&gt;&lt;entry name=&quot;inject\""));
+        assert!(payload.contains("ip=\"10.0.0.5&quot;/&gt;&lt;foo\""));
+        assert!(!payload.contains("<entry name=\"inject\""));
+    }
 }
 
 /// Tests target authentication/connectivity without pushing mappings.

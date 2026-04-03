@@ -23,7 +23,7 @@ use trueid_web::{auth, build_router, rate_limit, AppState};
 /// Parameters: none.
 /// Returns: `(Router, Arc<Db>)` ready for in-process requests.
 async fn build_test_app() -> (Router, Arc<trueid_common::db::Db>) {
-    build_test_app_with_engine_url("http://127.0.0.1:8080".to_string()).await
+    build_test_app_with_settings("http://127.0.0.1:8080".to_string(), None).await
 }
 
 /// Builds a test app with static assets mounted like production server.
@@ -45,6 +45,18 @@ async fn build_test_app_with_static() -> (Router, Arc<trueid_common::db::Db>) {
 /// Returns: `(Router, Arc<Db>)` ready for in-process requests.
 async fn build_test_app_with_engine_url(
     engine_url: String,
+) -> (Router, Arc<trueid_common::db::Db>) {
+    build_test_app_with_settings(engine_url, None).await
+}
+
+/// Builds an isolated in-memory test app with custom engine URL and optional metrics token.
+///
+/// Parameters: `engine_url` - upstream engine base URL for proxy routes,
+/// `metrics_token` - optional static token for `/metrics`.
+/// Returns: `(Router, Arc<Db>)` ready for in-process requests.
+async fn build_test_app_with_settings(
+    engine_url: String,
+    metrics_token: Option<String>,
 ) -> (Router, Arc<trueid_common::db::Db>) {
     ensure_test_encryption_key();
     let db = Arc::new(init_db("sqlite::memory:").await.expect("init_db failed"));
@@ -71,6 +83,7 @@ async fn build_test_app_with_engine_url(
         http_client,
         jwt_config: auth::JwtConfig::from_env(true),
         engine_service_token: None,
+        metrics_token,
         login_limiter: Arc::new(rate_limit::RateLimiter::new(1000, 60)),
         per_key_limiter: Arc::new(rate_limit::PerKeyLimiter::new(1000, 1000)),
         session_limiter: Arc::new(rate_limit::PerKeyLimiter::new(1000, 1000)),
@@ -79,6 +92,33 @@ async fn build_test_app_with_engine_url(
         )),
     };
     (build_router(state), db)
+}
+
+/// Spawns a minimal mock engine metrics endpoint for proxy tests.
+///
+/// Parameters: none.
+/// Returns: `(base_url, task_handle)` for the spawned mock server.
+async fn spawn_mock_engine_metrics() -> (String, tokio::task::JoinHandle<()>) {
+    let app = Router::new().route(
+        "/engine/metrics",
+        get(|| async {
+            (
+                StatusCode::OK,
+                [("content-type", "text/plain; version=0.0.4; charset=utf-8")],
+                "trueid_active_mappings 7\n",
+            )
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock engine failed");
+    let addr = listener
+        .local_addr()
+        .expect("read mock engine local addr failed");
+    let handle = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    (format!("http://{}", addr), handle)
 }
 
 /// Spawns a minimal mock engine SSE server for proxy tests.
@@ -2816,6 +2856,14 @@ async fn test_ldap_update_config_validation() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = auth_put(
+        &app,
+        &cookie,
+        "/api/v2/ldap/config",
+        &json!({"search_filter":"(|(uid=*)"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -2917,6 +2965,73 @@ async fn test_health() {
         .await
         .expect("execute health request failed");
     assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_metrics_requires_auth_or_token() {
+    let (app, _) = build_test_app().await;
+    let req = Request::builder()
+        .method("GET")
+        .uri("/metrics")
+        .body(Body::empty())
+        .expect("build metrics request failed");
+    let resp = app
+        .clone()
+        .oneshot(req)
+        .await
+        .expect("execute metrics request failed");
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_metrics_accepts_viewer_session() {
+    let (engine_url, _handle) = spawn_mock_engine_metrics().await;
+    let (app, db) = build_test_app_with_engine_url(engine_url).await;
+    let viewer = db
+        .create_user("metricsviewer", "testpassword123", UserRole::Viewer)
+        .await
+        .expect("create viewer failed");
+    db.set_force_password_change(viewer.id, false)
+        .await
+        .expect("set_force_password_change failed");
+    let cookie = login_and_get_cookie(&app, "metricsviewer", "testpassword123").await;
+    let (status, headers, body) = auth_get_raw(&app, &cookie, "/metrics").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default(),
+        "text/plain; version=0.0.4; charset=utf-8"
+    );
+    let text = String::from_utf8(body).expect("metrics body should be UTF-8");
+    assert!(text.contains("trueid_active_mappings 7"));
+}
+
+#[tokio::test]
+async fn test_metrics_accepts_static_token() {
+    let (engine_url, _handle) = spawn_mock_engine_metrics().await;
+    let (app, _) =
+        build_test_app_with_settings(engine_url, Some("metrics-secret".to_string())).await;
+    let req = Request::builder()
+        .method("GET")
+        .uri("/metrics?token=metrics-secret")
+        .body(Body::empty())
+        .expect("build metrics token request failed");
+    let resp = app
+        .clone()
+        .oneshot(req)
+        .await
+        .expect("execute metrics token request failed");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp
+        .into_body()
+        .collect()
+        .await
+        .expect("collect metrics body failed")
+        .to_bytes();
+    let text = String::from_utf8(body.to_vec()).expect("metrics body should be UTF-8");
+    assert!(text.contains("trueid_active_mappings 7"));
 }
 
 #[tokio::test]

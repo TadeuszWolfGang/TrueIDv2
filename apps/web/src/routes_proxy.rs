@@ -2,15 +2,23 @@
 
 use anyhow::Result;
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::header::{HeaderValue, CONTENT_TYPE},
     http::StatusCode,
     response::IntoResponse,
     Json,
 };
+use serde::Deserialize;
 use tracing::warn;
 
+use crate::error::{self, ApiError};
+use crate::middleware::{self, OptionalAuthUser};
 use crate::AppState;
+
+#[derive(Deserialize)]
+pub(crate) struct MetricsQuery {
+    token: Option<String>,
+}
 
 /// Proxies a request to the engine admin API and returns its JSON response.
 ///
@@ -222,10 +230,43 @@ pub(crate) async fn proxy_delete_mapping(
 
 /// Proxies Prometheus metrics endpoint from engine.
 ///
-/// Parameters: `s` - shared app state.
+/// Parameters: `auth` - optional authenticated user, `query` - optional static token,
+/// `s` - shared app state.
 /// Returns: plain-text Prometheus metrics payload.
 pub(crate) async fn proxy_metrics(
+    auth: OptionalAuthUser,
+    Query(query): Query<MetricsQuery>,
     State(s): State<AppState>,
-) -> Result<impl IntoResponse, StatusCode> {
-    proxy_text_to_engine(&s, reqwest::Method::GET, "/engine/metrics").await
+) -> Result<impl IntoResponse, ApiError> {
+    if let Some(token) = query.token.as_deref() {
+        if s.metrics_token.as_deref() == Some(token) {
+            return proxy_text_to_engine(&s, reqwest::Method::GET, "/engine/metrics")
+                .await
+                .map_err(|status| {
+                    ApiError::new(
+                        status,
+                        error::INTERNAL_ERROR,
+                        "Failed to proxy metrics endpoint",
+                    )
+                });
+        }
+    }
+
+    let user = auth.0.as_ref().ok_or_else(|| {
+        ApiError::new(
+            StatusCode::UNAUTHORIZED,
+            error::AUTH_REQUIRED,
+            "Metrics authentication required",
+        )
+    })?;
+    middleware::require_viewer(user)?;
+    proxy_text_to_engine(&s, reqwest::Method::GET, "/engine/metrics")
+        .await
+        .map_err(|status| {
+            ApiError::new(
+                status,
+                error::INTERNAL_ERROR,
+                "Failed to proxy metrics endpoint",
+            )
+        })
 }

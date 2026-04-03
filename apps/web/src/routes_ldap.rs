@@ -65,6 +65,76 @@ pub(crate) struct UserGroupRow {
     group_name: String,
 }
 
+/// Validates LDAP filter syntax with a conservative parser.
+///
+/// Parameters: `filter` - LDAP filter string.
+/// Returns: `true` when the filter is structurally valid.
+fn is_valid_ldap_filter(filter: &str) -> bool {
+    fn parse_filter_expr(bytes: &[u8], start: usize) -> Option<usize> {
+        if *bytes.get(start)? != b'(' {
+            return None;
+        }
+        let mut idx = start + 1;
+        match *bytes.get(idx)? {
+            b'&' | b'|' => {
+                idx += 1;
+                let mut count = 0usize;
+                while bytes.get(idx) == Some(&b'(') {
+                    idx = parse_filter_expr(bytes, idx)?;
+                    count += 1;
+                }
+                if count == 0 {
+                    return None;
+                }
+            }
+            b'!' => {
+                idx += 1;
+                idx = parse_filter_expr(bytes, idx)?;
+            }
+            _ => {
+                idx = parse_filter_item(bytes, idx)?;
+            }
+        }
+        if *bytes.get(idx)? != b')' {
+            return None;
+        }
+        Some(idx + 1)
+    }
+
+    fn parse_filter_item(bytes: &[u8], start: usize) -> Option<usize> {
+        let mut idx = start;
+        let mut eq_pos = None;
+        while let Some(&ch) = bytes.get(idx) {
+            match ch {
+                b'(' | b')' => break,
+                b'=' if eq_pos.is_none() => {
+                    eq_pos = Some(idx);
+                    idx += 1;
+                }
+                b'\\' => {
+                    idx += 1;
+                    bytes.get(idx)?;
+                    idx += 1;
+                }
+                _ => idx += 1,
+            }
+        }
+        let Some(eq_idx) = eq_pos else {
+            return None;
+        };
+        if eq_idx == start {
+            return None;
+        }
+        Some(idx)
+    }
+
+    let trimmed = filter.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    matches!(parse_filter_expr(trimmed.as_bytes(), 0), Some(end) if end == trimmed.len())
+}
+
 /// Loads LDAP config row from database.
 ///
 /// Parameters: `db` - database handle.
@@ -176,11 +246,20 @@ pub(crate) async fn update_ldap_config(
         }
     }
     if let Some(ref v) = body.search_filter {
-        if v.trim().is_empty() {
+        let trimmed = v.trim();
+        if trimmed.is_empty() {
             return Err(ApiError::new(
                 StatusCode::BAD_REQUEST,
                 error::INVALID_INPUT,
                 "search_filter cannot be empty",
+            )
+            .with_request_id(&auth.request_id));
+        }
+        if !is_valid_ldap_filter(trimmed) {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                error::INVALID_INPUT,
+                "search_filter is not a valid LDAP filter",
             )
             .with_request_id(&auth.request_id));
         }
@@ -365,4 +444,27 @@ pub(crate) async fn user_groups(
         })
         .collect::<Vec<_>>();
     Ok(Json(data))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_valid_ldap_filter;
+
+    #[test]
+    fn test_is_valid_ldap_filter_accepts_common_filters() {
+        assert!(is_valid_ldap_filter(
+            "(&(objectClass=user)(sAMAccountName=*))"
+        ));
+        assert!(is_valid_ldap_filter(
+            "(!(userAccountControl:1.2.840.113556.1.4.803:=2))"
+        ));
+    }
+
+    #[test]
+    fn test_is_valid_ldap_filter_rejects_broken_syntax() {
+        assert!(!is_valid_ldap_filter(""));
+        assert!(!is_valid_ldap_filter("(uid=test"));
+        assert!(!is_valid_ldap_filter("(|(uid=*)"));
+        assert!(!is_valid_ldap_filter("()"));
+    }
 }

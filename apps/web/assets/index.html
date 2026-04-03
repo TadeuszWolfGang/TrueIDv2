@@ -1284,7 +1284,7 @@
         <h2 class="section-title">Prometheus</h2>
         <div class="sync-status-box">
           <div><a class="ip-link" href="/metrics" target="_blank" rel="noopener noreferrer">Open /metrics endpoint</a></div>
-          <div class="muted" style="margin-top:6px;">Scrape this endpoint with Prometheus. Refresh interval: 15s recommended.</div>
+          <div class="muted" style="margin-top:6px;">Requires a logged-in Viewer+ session or <code>?token=&lt;METRICS_TOKEN&gt;</code>. Refresh interval: 15s recommended.</div>
         </div>
       </div>
     </div>
@@ -1605,7 +1605,9 @@
         <!-- Pattern B: Event Index -->
         <h2 class="section-title">Pattern B — Event History</h2>
         <p class="section-desc">
-          Optional. Auth and mapping change events injected into a Sycope Custom Index when the appliance version/API supports it.
+          Optional and appliance-dependent. Auth and mapping change events are injected into a Sycope
+          Custom Index only when the appliance/API supports it; otherwise Pattern B is auto-disabled
+          at runtime and Pattern A continues in lookup-only mode.
         </p>
 
         <div class="setting-row">

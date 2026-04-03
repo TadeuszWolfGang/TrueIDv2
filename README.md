@@ -235,14 +235,17 @@ docker compose up -d
 | GET | `/api/v2/ldap/config` | Admin | LDAP config |
 | GET | `/api/v2/timeline/ip/{ip}` | Session/Key | IP timeline |
 | GET | `/api/v1/audit-logs` | Admin | Audit log |
-| GET | `/metrics` | Public | Prometheus metrics |
+| GET | `/metrics` | Viewer+/Token | Prometheus metrics |
 | GET | `/health` | Public | Health check |
 
 Full API details: inline route documentation (OpenAPI planned).
 
 ## Prometheus Monitoring
 
-TrueID exposes Prometheus metrics at `/metrics` (no auth required).
+TrueID exposes Prometheus metrics at `/metrics`.
+Access requires either:
+- a Viewer+ session or API key
+- a static `METRICS_TOKEN` passed as `?token=...` for Prometheus-style scrapers
 
 ### `prometheus.yml`
 
@@ -250,6 +253,9 @@ TrueID exposes Prometheus metrics at `/metrics` (no auth required).
 scrape_configs:
   - job_name: trueid
     scrape_interval: 15s
+    metrics_path: /metrics
+    params:
+      token: ['set-a-strong-metrics-token']
     static_configs:
       - targets: ['trueid-web:3000']
 ```
