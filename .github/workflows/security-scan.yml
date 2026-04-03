@@ -119,17 +119,14 @@ jobs:
           CONFIG_ENCRYPTION_KEY_INPUT: ${{ secrets.CONFIG_ENCRYPTION_KEY }}
           RADIUS_SECRET_INPUT: ${{ secrets.RADIUS_SECRET }}
           TRUEID_ADMIN_PASS_INPUT: ${{ secrets.TRUEID_ADMIN_PASS }}
+          METRICS_TOKEN_INPUT: ${{ secrets.METRICS_TOKEN }}
         run: |
           gen_hex_secret() {
             openssl rand -hex 32
           }
 
           gen_password() {
-            python3 - <<'PY'
-import secrets
-alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#%^&*_-+="
-print("".join(secrets.choice(alphabet) for _ in range(24)))
-PY
+            python3 -c 'import secrets; alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#%^&*_-+="; print("".join(secrets.choice(alphabet) for _ in range(24)))'
           }
 
           jwt_secret="${JWT_SECRET_INPUT:-}"
@@ -137,12 +134,14 @@ PY
           config_encryption_key="${CONFIG_ENCRYPTION_KEY_INPUT:-}"
           radius_secret="${RADIUS_SECRET_INPUT:-}"
           trueid_admin_pass="${TRUEID_ADMIN_PASS_INPUT:-}"
+          metrics_token="${METRICS_TOKEN_INPUT:-}"
 
           [ -n "$jwt_secret" ] || jwt_secret="$(gen_hex_secret)"
           [ -n "$engine_service_token" ] || engine_service_token="$(gen_hex_secret)"
           [ -n "$config_encryption_key" ] || config_encryption_key="$(gen_hex_secret)"
           [ -n "$radius_secret" ] || radius_secret="$(gen_hex_secret)"
           [ -n "$trueid_admin_pass" ] || trueid_admin_pass="$(gen_password)"
+          [ -n "$metrics_token" ] || metrics_token="$(gen_hex_secret)"
 
           {
             echo "JWT_SECRET=$jwt_secret"
@@ -150,6 +149,7 @@ PY
             echo "CONFIG_ENCRYPTION_KEY=$config_encryption_key"
             echo "RADIUS_SECRET=$radius_secret"
             echo "TRUEID_ADMIN_PASS=$trueid_admin_pass"
+            echo "METRICS_TOKEN=$metrics_token"
           } >> "$GITHUB_ENV"
 
       - name: Start stack (prod-like)
@@ -190,6 +190,11 @@ PY
         run: |
           [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/api/v1/mappings)" = "401" ]
           [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/api/v1/users)" = "401" ]
+          [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/metrics)" = "401" ]
+
+      - name: Metrics token check
+        run: |
+          [ "$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:3000/metrics?token=${METRICS_TOKEN}")" = "200" ]
 
       - name: Brute-force/rate-limit login check
         run: |
@@ -241,11 +246,34 @@ PY
         run: |
           curl -sSI http://localhost:3000 | tee security-reports/headers.txt
 
+      - name: Create admin API key for Schemathesis
+        run: |
+          rm -f /tmp/trueid-cookies.txt
+          curl -sS \
+            -c /tmp/trueid-cookies.txt \
+            -X POST http://127.0.0.1:3000/api/auth/login \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"admin\",\"password\":\"${TRUEID_ADMIN_PASS}\"}" >/tmp/trueid-login.json
+
+          csrf_token="$(awk '$6 == "trueid_csrf_token" { print $7 }' /tmp/trueid-cookies.txt | tail -n 1)"
+          [ -n "$csrf_token" ]
+
+          api_key_json="$(curl -sS \
+            -b /tmp/trueid-cookies.txt \
+            -X POST http://127.0.0.1:3000/api/v1/api-keys \
+            -H "Content-Type: application/json" \
+            -H "X-CSRF-Token: ${csrf_token}" \
+            -d '{"description":"schemathesis-ci","role":"Admin","rate_limit_rpm":5000,"rate_limit_burst":1000}')"
+
+          api_key="$(printf '%s' "$api_key_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["key"])')"
+          [ -n "$api_key" ]
+          echo "SCHEMATHESIS_API_KEY=$api_key" >> "$GITHUB_ENV"
+
       - name: API property-based fuzzing (Schemathesis)
-        continue-on-error: true
         run: |
           schemathesis run docs/openapi.yaml \
             --url http://127.0.0.1:3000 \
+            -H "X-API-Key: ${SCHEMATHESIS_API_KEY}" \
             --max-examples 25 \
             --checks all \
             --report-junit-path security-reports/schemathesis-junit.xml

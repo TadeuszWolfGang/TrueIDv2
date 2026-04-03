@@ -100,8 +100,9 @@ fn parse_transport(raw: &str) -> Result<SiemTransport> {
 ///
 /// Parameters: `raw` - original value.
 /// Returns: CEF-safe string.
-fn escape_cef_value(raw: &str) -> String {
+fn escape_cef_extension_value(raw: &str) -> String {
     raw.replace('\\', "\\\\")
+        .replace('|', "\\|")
         .replace('=', "\\=")
         .replace('\n', "\\n")
 }
@@ -169,12 +170,12 @@ fn format_cef(event: &SiemEvent) -> String {
             let rt = timestamp.timestamp_millis();
             format!(
                 "CEF:0|TrueID|Engine|1.0|identity-mapping|Identity Mapping|3|src={} suser={} smac={} cs1={} cs1Label=IdentitySource cs2={} cs2Label=DeviceVendor cs3={} cs3Label=DeviceType rt={}",
-                escape_cef_value(ip),
-                escape_cef_value(user),
-                escape_cef_value(mac.as_deref().unwrap_or("")),
-                escape_cef_value(source),
-                escape_cef_value(vendor.as_deref().unwrap_or("")),
-                escape_cef_value(device_type.as_deref().unwrap_or("")),
+                escape_cef_extension_value(ip),
+                escape_cef_extension_value(user),
+                escape_cef_extension_value(mac.as_deref().unwrap_or("")),
+                escape_cef_extension_value(source),
+                escape_cef_extension_value(vendor.as_deref().unwrap_or("")),
+                escape_cef_extension_value(device_type.as_deref().unwrap_or("")),
                 rt
             )
         }
@@ -189,11 +190,11 @@ fn format_cef(event: &SiemEvent) -> String {
             let rt = timestamp.timestamp_millis();
             format!(
                 "CEF:0|TrueID|Engine|1.0|identity-conflict|Identity Conflict|7|src={} suser={} cs1={} cs1Label=OldUser cs2={} cs2Label=ConflictType cs3={} cs3Label=Severity rt={}",
-                escape_cef_value(ip.as_deref().unwrap_or("")),
-                escape_cef_value(user_new.as_deref().unwrap_or("")),
-                escape_cef_value(user_old.as_deref().unwrap_or("")),
-                escape_cef_value(conflict_type),
-                escape_cef_value(severity),
+                escape_cef_extension_value(ip.as_deref().unwrap_or("")),
+                escape_cef_extension_value(user_new.as_deref().unwrap_or("")),
+                escape_cef_extension_value(user_old.as_deref().unwrap_or("")),
+                escape_cef_extension_value(conflict_type),
+                escape_cef_extension_value(severity),
                 rt
             )
         }
@@ -208,11 +209,11 @@ fn format_cef(event: &SiemEvent) -> String {
             let rt = timestamp.timestamp_millis();
             format!(
                 "CEF:0|TrueID|Engine|1.0|alert-fired|Alert Fired|8|src={} suser={} cs1={} cs1Label=RuleName cs2={} cs2Label=Severity cs3={} cs3Label=Message rt={}",
-                escape_cef_value(ip.as_deref().unwrap_or("")),
-                escape_cef_value(user.as_deref().unwrap_or("")),
-                escape_cef_value(rule_name),
-                escape_cef_value(severity),
-                escape_cef_value(message),
+                escape_cef_extension_value(ip.as_deref().unwrap_or("")),
+                escape_cef_extension_value(user.as_deref().unwrap_or("")),
+                escape_cef_extension_value(rule_name),
+                escape_cef_extension_value(severity),
+                escape_cef_extension_value(message),
                 rt
             )
         }
@@ -615,8 +616,8 @@ mod tests {
 
     #[test]
     fn test_cef_escaping() {
-        let val = escape_cef_value("test=value\\with|pipe");
-        assert_eq!(val, "test\\=value\\\\with|pipe");
+        let val = escape_cef_extension_value("test=value\\with|pipe");
+        assert_eq!(val, "test\\=value\\\\with\\|pipe");
     }
 
     #[test]

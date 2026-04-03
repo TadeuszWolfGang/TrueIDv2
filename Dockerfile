@@ -2,8 +2,7 @@
 
 ARG RUST_VERSION=1.88.0
 
-# NOTE: Keep builder on bullseye (glibc 2.31). Do not switch to bookworm/latest.
-FROM rust:${RUST_VERSION}-bullseye AS builder
+FROM rust:${RUST_VERSION}-bookworm AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -51,25 +50,24 @@ COPY . .
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
-    --mount=type=cache,target=/src/target,sharing=locked \
     set -eux; \
     cargo build --release --locked --bin trueid-engine --bin trueid-web --bin trueid; \
     max_glibc="$(strings /src/target/release/trueid-engine | grep -o 'GLIBC_[0-9.]\+' | sort -Vu | tail -n 1)"; \
     echo "Detected max required glibc: ${max_glibc}"; \
     test -n "${max_glibc}"; \
     max_ver="${max_glibc#GLIBC_}"; \
-    dpkg --compare-versions "${max_ver}" le "2.31"; \
+    dpkg --compare-versions "${max_ver}" le "2.36"; \
     mkdir -p /out; \
     cp /src/target/release/trueid-engine /out/trueid-engine; \
     cp /src/target/release/trueid /out/trueid; \
     cp /src/target/release/trueid-web /out/trueid-web; \
     if [ -f /src/data/oui.csv ]; then cp /src/data/oui.csv /out/oui.csv; else : > /out/oui.csv; fi
 
-FROM debian:bullseye-slim AS runtime
+FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
-    libssl1.1 \
+    libssl3 \
     sqlite3 \
     curl \
     && rm -rf /var/lib/apt/lists/* \
@@ -93,7 +91,7 @@ USER trueid
 ENV DATABASE_URL=sqlite:///app/data/net-identity.db?mode=rwc
 ENV OUI_CSV_PATH=/app/oui.csv
 
-EXPOSE 1813/udp 5514/udp 5516/udp 5518/udp 3000 8080
+EXPOSE 1813/udp 5514/udp 5516/udp 5518/udp 3000
 
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["trueid-engine"]

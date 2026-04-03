@@ -15,6 +15,8 @@ use trueid_common::live_event::LiveEvent;
 
 use crate::live_bus;
 
+const MAX_FIREWALL_RETRY_DELAY_SECS: u64 = 900;
+
 /// Firewall vendor type for dispatch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FirewallType {
@@ -90,6 +92,40 @@ fn parse_subnet_filter(raw: Option<String>) -> Option<Vec<i64>> {
     } else {
         Some(ids)
     }
+}
+
+/// Escapes XML attribute values for PAN-OS payloads.
+///
+/// Parameters: `value` - raw attribute value.
+/// Returns: XML-safe attribute value.
+fn escape_xml_attr(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&apos;"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
+/// Computes next firewall push delay using capped exponential backoff.
+///
+/// Parameters: `base_secs` - configured target interval, `consecutive_failures` - current failure streak.
+/// Returns: next sleep duration in seconds.
+fn next_push_delay_secs(base_secs: u64, consecutive_failures: u32) -> u64 {
+    let base = base_secs.max(10);
+    if consecutive_failures <= 1 {
+        return base;
+    }
+    let factor_shift = consecutive_failures.saturating_sub(2).min(6);
+    let factor = 1u64 << factor_shift;
+    base.saturating_mul(factor)
+        .min(MAX_FIREWALL_RETRY_DELAY_SECS)
 }
 
 /// Loads a single firewall target by id and decrypts credentials.
@@ -258,7 +294,9 @@ fn panos_xml_payload(entries: &[PushEntry]) -> String {
     for entry in entries {
         body.push_str(&format!(
             "<entry name=\"{}\" ip=\"{}\" timeout=\"{}\"/>",
-            entry.user, entry.ip, entry.timeout_secs
+            escape_xml_attr(&entry.user),
+            escape_xml_attr(&entry.ip),
+            entry.timeout_secs
         ));
     }
     body.push_str("</login></payload></uid-message>");
@@ -471,6 +509,7 @@ async fn run_push_once(db: &Db, target: &FirewallTarget) -> Result<u32> {
 /// Parameters: `db` - database handle, `target_id` - target identifier.
 /// Returns: none.
 pub async fn run_push_loop(db: Arc<Db>, target_id: i64) {
+    let mut consecutive_failures = 0u32;
     loop {
         if FIREWALL_SHUTDOWN.load(Ordering::SeqCst) {
             break;
@@ -487,6 +526,7 @@ pub async fn run_push_loop(db: Arc<Db>, target_id: i64) {
         let started = Instant::now();
         match run_push_once(&db, &target).await {
             Ok(count) => {
+                consecutive_failures = 0;
                 let duration_ms = started.elapsed().as_millis() as i64;
                 if let Err(e) = insert_history(
                     db.pool(),
@@ -514,6 +554,7 @@ pub async fn run_push_loop(db: Arc<Db>, target_id: i64) {
                 info!(target_id, target = %target.name, pushed = count, "Firewall push cycle complete");
             }
             Err(e) => {
+                consecutive_failures = consecutive_failures.saturating_add(1);
                 let duration_ms = started.elapsed().as_millis() as i64;
                 let msg = e.to_string();
                 if let Err(write_err) =
@@ -539,7 +580,8 @@ pub async fn run_push_loop(db: Arc<Db>, target_id: i64) {
         if FIREWALL_SHUTDOWN.load(Ordering::SeqCst) {
             break;
         }
-        tokio::time::sleep(Duration::from_secs(target.push_interval_secs)).await;
+        let delay_secs = next_push_delay_secs(target.push_interval_secs, consecutive_failures);
+        tokio::time::sleep(Duration::from_secs(delay_secs)).await;
     }
 }
 
@@ -582,4 +624,34 @@ pub fn start_firewall_push(db: Arc<Db>) {
             tokio::time::sleep(Duration::from_secs(60)).await;
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_panos_xml_payload_escapes_xml_attributes() {
+        let xml = panos_xml_payload(&[PushEntry {
+            ip: "10.0.0.1\"/><hack".into(),
+            user: "admin\" ip=\"0.0.0.0\"/><entry name=\"hacked".into(),
+            timeout_secs: 60,
+        }]);
+
+        assert!(xml.contains(
+            "name=\"admin&quot; ip=&quot;0.0.0.0&quot;/&gt;&lt;entry name=&quot;hacked\""
+        ));
+        assert!(xml.contains("ip=\"10.0.0.1&quot;/&gt;&lt;hack\""));
+        assert!(!xml.contains("<entry name=\"hacked\""));
+    }
+
+    #[test]
+    fn test_next_push_delay_secs_applies_capped_backoff() {
+        assert_eq!(next_push_delay_secs(60, 0), 60);
+        assert_eq!(next_push_delay_secs(60, 1), 60);
+        assert_eq!(next_push_delay_secs(60, 2), 60);
+        assert_eq!(next_push_delay_secs(60, 3), 120);
+        assert_eq!(next_push_delay_secs(60, 4), 240);
+        assert_eq!(next_push_delay_secs(60, 10), MAX_FIREWALL_RETRY_DELAY_SECS);
+    }
 }

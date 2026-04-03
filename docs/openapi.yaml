@@ -2242,7 +2242,18 @@ paths:
     get:
       tags: [system]
       summary: Prometheus metrics
-      security: []
+      description: Requires Viewer+ authentication or a static metrics token query parameter.
+      security:
+        - cookieAuth: []
+        - apiKeyAuth: []
+        - metricsToken: []
+      parameters:
+        - name: token
+          in: query
+          required: false
+          description: Optional static metrics token configured via METRICS_TOKEN.
+          schema:
+            type: string
       responses:
         '200':
           description: Metrics in Prometheus exposition format
@@ -2250,6 +2261,7 @@ paths:
             text/plain:
               schema:
                 type: string
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '500': { $ref: '#/components/responses/InternalError' }
 
 components:
@@ -2266,6 +2278,10 @@ components:
       type: apiKey
       in: header
       name: X-API-Key
+    metricsToken:
+      type: apiKey
+      in: query
+      name: token
   parameters:
     Id:
       in: path

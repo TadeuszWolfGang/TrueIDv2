@@ -168,3 +168,131 @@ pub async fn generate_metrics(
     out.push_str(&format!("# generated_at {}\n", Utc::now().to_rfc3339()));
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Duration;
+    use std::net::IpAddr;
+    use trueid_common::db::init_db;
+    use trueid_common::model::{IdentityEvent, SourceType};
+
+    #[tokio::test]
+    async fn test_generate_metrics_renders_expected_families_and_labels() {
+        let db = init_db("sqlite::memory:")
+            .await
+            .expect("init_db should succeed");
+
+        let event = IdentityEvent {
+            source: SourceType::Radius,
+            ip: "10.1.2.3"
+                .parse::<IpAddr>()
+                .expect("ip parse should succeed"),
+            user: "alice".to_string(),
+            timestamp: Utc::now() - Duration::minutes(1),
+            raw_data: "radius login".to_string(),
+            mac: Some("AA:BB:CC:DD:EE:FF".to_string()),
+            confidence_score: 95,
+        };
+        db.upsert_mapping(event, Some("Acme \"Switch\"\nCore"))
+            .await
+            .expect("upsert_mapping should succeed");
+
+        sqlx::query(
+            "INSERT INTO conflicts (ip, conflict_type, severity, user_old, user_new, source)
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind("10.1.2.3")
+        .bind("duplicate_ip")
+        .bind("high")
+        .bind("alice")
+        .bind("bob")
+        .bind("Radius")
+        .execute(db.pool())
+        .await
+        .expect("insert conflict should succeed");
+
+        sqlx::query(
+            "INSERT INTO alert_rules (name, rule_type, severity)
+             VALUES (?, ?, ?)",
+        )
+        .bind("new_subnet")
+        .bind("new_subnet")
+        .bind("high")
+        .execute(db.pool())
+        .await
+        .expect("insert alert rule should succeed");
+
+        sqlx::query(
+            "INSERT INTO alert_history (rule_id, rule_name, rule_type, severity, details)
+             VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(1_i64)
+        .bind("new_subnet")
+        .bind("new_subnet")
+        .bind("high")
+        .bind("detected")
+        .execute(db.pool())
+        .await
+        .expect("insert alert should succeed");
+
+        sqlx::query(
+            "INSERT INTO firewall_targets (name, firewall_type, host, port, enabled)
+             VALUES (?, 'panos', ?, ?, 1)",
+        )
+        .bind("fw\"edge\n1")
+        .bind("fw.example")
+        .bind(443_i64)
+        .execute(db.pool())
+        .await
+        .expect("insert firewall target should succeed");
+
+        sqlx::query(
+            "INSERT INTO firewall_push_history (target_id, mapping_count, status, duration_ms)
+             VALUES (1, 1, 'ok', 12)",
+        )
+        .execute(db.pool())
+        .await
+        .expect("insert firewall history should succeed");
+
+        sqlx::query(
+            "INSERT INTO siem_targets (name, format, transport, host, port, events_forwarded)
+             VALUES (?, 'cef', 'udp', ?, ?, ?)",
+        )
+        .bind("siem\\core")
+        .bind("siem.example")
+        .bind(514_i64)
+        .bind(42_i64)
+        .execute(db.pool())
+        .await
+        .expect("insert siem target should succeed");
+
+        sqlx::query("UPDATE ldap_config SET last_sync_count = 17 WHERE id = 1")
+            .execute(db.pool())
+            .await
+            .expect("update ldap config should succeed");
+
+        let adapter_stats = vec![AdapterStatus {
+            name: "radius\nadapter".to_string(),
+            protocol: "udp".to_string(),
+            bind: "0.0.0.0:1813".to_string(),
+            status: "running".to_string(),
+            last_event_at: Some(Utc::now()),
+            events_total: 9,
+        }];
+
+        let output = generate_metrics(&adapter_stats, db.pool(), Instant::now()).await;
+
+        assert!(output.contains("# HELP trueid_events_total Total identity events processed"));
+        assert!(output.contains("trueid_events_total{source=\"radius\\nadapter\"} 9"));
+        assert!(output.contains("trueid_active_mappings 1"));
+        assert!(output.contains("trueid_conflicts_total 1"));
+        assert!(output.contains("trueid_alerts_fired_total 1"));
+        assert!(output
+            .contains("trueid_firewall_push_total{target=\"fw\\\"edge\\n1\",status=\"ok\"} 1"));
+        assert!(output.contains("trueid_siem_events_forwarded_total{target=\"siem\\\\core\"} 42"));
+        assert!(output.contains("trueid_ldap_sync_users 17"));
+        assert!(output.contains("trueid_db_pool_size "));
+        assert!(output.contains("trueid_uptime_seconds "));
+    }
+}

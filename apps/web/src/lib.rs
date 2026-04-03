@@ -69,6 +69,7 @@ pub struct AppState {
     pub http_client: reqwest::Client,
     pub jwt_config: JwtConfig,
     pub engine_service_token: Option<String>,
+    pub metrics_token: Option<String>,
     pub login_limiter: Arc<rate_limit::RateLimiter>,
     pub per_key_limiter: Arc<rate_limit::PerKeyLimiter>,
     pub session_limiter: Arc<rate_limit::PerKeyLimiter>,

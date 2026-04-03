@@ -156,6 +156,9 @@ async fn main() -> Result<()> {
     let engine_service_token = std::env::var("ENGINE_SERVICE_TOKEN")
         .ok()
         .filter(|s| !s.is_empty());
+    let metrics_token = std::env::var("METRICS_TOKEN")
+        .ok()
+        .filter(|s| !s.is_empty());
     let login_limiter = Arc::new(rate_limit::RateLimiter::new(10, 60));
     let per_key_limiter = Arc::new(rate_limit::PerKeyLimiter::new(100, 20));
     let session_limiter = Arc::new(rate_limit::PerKeyLimiter::new(300, 60));
@@ -176,6 +179,7 @@ async fn main() -> Result<()> {
         http_client: reqwest::Client::new(),
         jwt_config,
         engine_service_token,
+        metrics_token,
         login_limiter: login_limiter.clone(),
         per_key_limiter: per_key_limiter.clone(),
         session_limiter: session_limiter.clone(),
