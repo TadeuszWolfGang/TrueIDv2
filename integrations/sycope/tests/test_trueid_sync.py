@@ -9,16 +9,25 @@ SYNC_DIR = REPO_ROOT / "integrations" / "sycope"
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(SYNC_DIR))
 
-from trueid_sync import merge_lookup_data, select_lookup_user, sync_lookup
+from sycope.exceptions import SycopeApiError
+from trueid_sync import (
+    merge_lookup_data,
+    prepare_runtime_config,
+    select_lookup_user,
+    sync_lookup,
+)
 
 
 class FakeSycopeApi:
-    def __init__(self, saved_lookup):
+    def __init__(self, saved_lookup, indexes=None, lookup_id="lookup-123", index_error=None):
         self.saved_lookup = saved_lookup
+        self.indexes = indexes if indexes is not None else []
+        self.lookup_id = lookup_id
+        self.index_error = index_error
         self.edits = []
 
     def get_lookup(self, lookup_name, lookup_type="csvFile"):
-        return ("lookup-123", self.saved_lookup)
+        return (self.lookup_id, self.saved_lookup)
 
     def edit_lookup(self, lookup_id, updated_lookup, lookup_type="csvFile"):
         self.edits.append(
@@ -28,6 +37,11 @@ class FakeSycopeApi:
                 "lookup_type": lookup_type,
             }
         )
+
+    def get_user_indicies(self):
+        if self.index_error is not None:
+            raise self.index_error
+        return self.indexes
 
 
 class TrueIdSyncTests(unittest.TestCase):
@@ -135,6 +149,68 @@ class TrueIdSyncTests(unittest.TestCase):
 
         self.assertEqual(updated_lookup["file"]["rows"], [])
         self.assertEqual(summary, {"added": 0, "modified": 0, "unchanged": 0})
+
+    def test_prepare_runtime_config_keeps_pattern_b_when_index_exists(self):
+        sycope = FakeSycopeApi(
+            saved_lookup={"file": {"rows": []}},
+            indexes=[{"config": {"name": "trueid_events"}}],
+        )
+
+        runtime_cfg = prepare_runtime_config(
+            sycope,
+            {
+                "lookup_name": "TrueID_Enrichment",
+                "enable_event_index": True,
+                "index_name": "trueid_events",
+            },
+        )
+
+        self.assertTrue(runtime_cfg["enable_event_index"])
+
+    def test_prepare_runtime_config_disables_pattern_b_when_index_missing(self):
+        sycope = FakeSycopeApi(saved_lookup={"file": {"rows": []}}, indexes=[])
+
+        runtime_cfg = prepare_runtime_config(
+            sycope,
+            {
+                "lookup_name": "TrueID_Enrichment",
+                "enable_event_index": True,
+                "index_name": "trueid_events",
+            },
+        )
+
+        self.assertFalse(runtime_cfg["enable_event_index"])
+
+    def test_prepare_runtime_config_disables_pattern_b_when_index_api_fails(self):
+        sycope = FakeSycopeApi(
+            saved_lookup={"file": {"rows": []}},
+            index_error=SycopeApiError("custom index API unsupported"),
+        )
+
+        runtime_cfg = prepare_runtime_config(
+            sycope,
+            {
+                "lookup_name": "TrueID_Enrichment",
+                "enable_event_index": True,
+                "index_name": "trueid_events",
+            },
+        )
+
+        self.assertFalse(runtime_cfg["enable_event_index"])
+
+    def test_prepare_runtime_config_leaves_lookup_only_mode_unchanged(self):
+        sycope = FakeSycopeApi(saved_lookup={"file": {"rows": []}}, indexes=[])
+
+        runtime_cfg = prepare_runtime_config(
+            sycope,
+            {
+                "lookup_name": "TrueID_Enrichment",
+                "enable_event_index": False,
+                "index_name": "trueid_events",
+            },
+        )
+
+        self.assertFalse(runtime_cfg["enable_event_index"])
 
 
 if __name__ == "__main__":

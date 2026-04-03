@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from sycope.api import SycopeApi
 from sycope.config import load_config
+from sycope.exceptions import SycopeError
 from sycope.logging import setup_logging, suppress_ssl_warnings
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -54,6 +55,15 @@ def main() -> None:
             cfg.get("api_base", "/npm/api/v1/"),
         )
         try:
+            existing = [
+                item
+                for item in api.get_user_indicies()
+                if item.get("config", {}).get("name") == index_name
+            ]
+            if existing:
+                print(f'Custom index "{index_name}" already exists.')
+                return
+
             api.create_index(
                 stream_name=index_name,
                 fields=EVENT_INDEX_FIELDS,
@@ -62,6 +72,14 @@ def main() -> None:
                 store_raw=True,
             )
             print(f'Custom index "{index_name}" created successfully.')
+        except SycopeError as exc:
+            print(
+                "Custom index setup is not available on this Sycope appliance or "
+                f"for this account: {exc}\n"
+                "Leave enable_event_index=false and continue with lookup-only mode.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         finally:
             api.log_out()
 
