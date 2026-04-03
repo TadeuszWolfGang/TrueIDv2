@@ -14,6 +14,7 @@ data/
 
 # Backups
 backups/
+validation-reports/
 
 # OS files
 .DS_Store
