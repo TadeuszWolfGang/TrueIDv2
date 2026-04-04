@@ -1,7 +1,7 @@
 //! Router group builders extracted from `lib.rs`.
 
 use axum::middleware as axum_mw;
-use axum::routing::{delete, get, post, put};
+use axum::routing::{delete, get, post, put, MethodRouter};
 use axum::Router;
 
 use crate::middleware;
@@ -12,6 +12,61 @@ use crate::{
     routes_retention, routes_search, routes_security, routes_siem, routes_sse, routes_subnets,
     routes_switches, routes_tags, routes_timeline, routes_totp, routes_users, routes_v1, AppState,
 };
+
+/// Registers the same handler under both brace and colon path syntaxes.
+///
+/// Parameters: `router` - current router builder, `brace_path` - canonical path using `{param}`,
+/// `colon_path` - compatibility path using `:param`, `method_router` - route methods/handlers.
+/// Returns: router with both aliases registered.
+fn route_with_compat_alias(
+    router: Router<AppState>,
+    brace_path: &str,
+    colon_path: &str,
+    method_router: MethodRouter<AppState>,
+) -> Router<AppState> {
+    validate_compat_alias_paths(brace_path, colon_path);
+    router
+        .route(brace_path, method_router.clone())
+        .route(colon_path, method_router)
+}
+
+/// Verifies that brace and colon compatibility paths have identical structure.
+///
+/// Parameters: `brace_path` - canonical path using `{param}`, `colon_path` - compatibility path using `:param`.
+/// Returns: none; panics when paths are structurally incompatible.
+fn validate_compat_alias_paths(brace_path: &str, colon_path: &str) {
+    fn brace_param(segment: &str) -> Option<&str> {
+        segment.strip_prefix('{').and_then(|s| s.strip_suffix('}'))
+    }
+    fn colon_param(segment: &str) -> Option<&str> {
+        segment.strip_prefix(':')
+    }
+
+    let brace_segments = brace_path.trim_start_matches('/').split('/');
+    let colon_segments = colon_path.trim_start_matches('/').split('/');
+
+    let brace_segments = brace_segments.collect::<Vec<_>>();
+    let colon_segments = colon_segments.collect::<Vec<_>>();
+    assert_eq!(
+        brace_segments.len(),
+        colon_segments.len(),
+        "compat alias path mismatch: {brace_path} vs {colon_path}"
+    );
+
+    for (brace_segment, colon_segment) in brace_segments.iter().zip(colon_segments.iter()) {
+        match (brace_param(brace_segment), colon_param(colon_segment)) {
+            (Some(brace_name), Some(colon_name)) => assert_eq!(
+                brace_name, colon_name,
+                "compat alias parameter mismatch: {brace_path} vs {colon_path}"
+            ),
+            (None, None) => assert_eq!(
+                brace_segment, colon_segment,
+                "compat alias literal mismatch: {brace_path} vs {colon_path}"
+            ),
+            _ => panic!("compat alias syntax mismatch: {brace_path} vs {colon_path}"),
+        }
+    }
+}
 
 /// Builds routes for auth endpoints (public + viewer-protected).
 ///
@@ -59,12 +114,10 @@ pub fn auth_routes(state: AppState) -> Router<AppState> {
 /// Parameters: `state` - shared application state.
 /// Returns: grouped v1 router.
 pub fn v1_routes(state: AppState) -> Router<AppState> {
-    Router::new()
+    let routes = Router::new()
         .route("/api/v1/mappings", get(routes_v1::api_v1_mappings))
         .route("/api/v1/events", get(routes_v1::api_v1_events))
         .route("/api/v1/stats", get(routes_v1::api_v1_stats))
-        .route("/lookup/{ip}", get(routes_v1::lookup))
-        .route("/lookup/:ip", get(routes_v1::lookup))
         .route("/api/recent", get(routes_v1::recent))
         .route(
             "/api/v1/admin/adapters",
@@ -77,11 +130,17 @@ pub fn v1_routes(state: AppState) -> Router<AppState> {
         .route(
             "/api/v1/admin/runtime-config",
             get(routes_proxy::proxy_admin_runtime_config),
-        )
-        .layer(axum_mw::from_fn_with_state(
-            state,
-            middleware::require_viewer_layer,
-        ))
+        );
+    let routes = route_with_compat_alias(
+        routes,
+        "/lookup/{ip}",
+        "/lookup/:ip",
+        get(routes_v1::lookup),
+    );
+    routes.layer(axum_mw::from_fn_with_state(
+        state,
+        middleware::require_viewer_layer,
+    ))
 }
 
 /// Builds grouped v2 routes (viewer subset).
@@ -96,27 +155,6 @@ pub fn v2_routes(state: AppState) -> Router<AppState> {
             get(routes_search::export_mappings),
         )
         .route("/api/v2/export/events", get(routes_search::export_events))
-        .route(
-            "/api/v2/timeline/ip/{ip}",
-            get(routes_timeline::timeline_ip),
-        )
-        .route("/api/v2/timeline/ip/:ip", get(routes_timeline::timeline_ip))
-        .route(
-            "/api/v2/timeline/user/{user}",
-            get(routes_timeline::timeline_user),
-        )
-        .route(
-            "/api/v2/timeline/user/:user",
-            get(routes_timeline::timeline_user),
-        )
-        .route(
-            "/api/v2/timeline/mac/{mac}",
-            get(routes_timeline::timeline_mac),
-        )
-        .route(
-            "/api/v2/timeline/mac/:mac",
-            get(routes_timeline::timeline_mac),
-        )
         .route("/api/v2/conflicts", get(routes_conflicts::list_conflicts))
         .route(
             "/api/v2/conflicts/stats",
@@ -124,18 +162,8 @@ pub fn v2_routes(state: AppState) -> Router<AppState> {
         )
         .route("/api/v2/subnets", get(routes_subnets::list_subnets))
         .route("/api/v2/subnets/stats", get(routes_subnets::subnet_stats))
-        .route(
-            "/api/v2/subnets/{id}/mappings",
-            get(routes_subnets::subnet_mappings),
-        )
-        .route(
-            "/api/v2/subnets/:id/mappings",
-            get(routes_subnets::subnet_mappings),
-        )
         .route("/api/v2/switches", get(routes_switches::list_switches))
         .route("/api/v2/switches/stats", get(routes_switches::switch_stats))
-        .route("/api/v2/switches/{id}", get(routes_switches::get_switch))
-        .route("/api/v2/switches/:id", get(routes_switches::get_switch))
         .route(
             "/api/v2/switch-ports",
             get(routes_switches::list_port_mappings),
@@ -146,14 +174,8 @@ pub fn v2_routes(state: AppState) -> Router<AppState> {
         )
         .route("/api/v2/dns", get(routes_dns::list_dns))
         .route("/api/v2/dns/stats", get(routes_dns::dns_stats))
-        .route("/api/v2/dns/{ip}", get(routes_dns::dns_by_ip))
-        .route("/api/v2/dns/:ip", get(routes_dns::dns_by_ip))
         .route("/api/v2/geo/stats", get(routes_geo::stats))
-        .route("/api/v2/geo/{ip}", get(routes_geo::lookup))
-        .route("/api/v2/geo/:ip", get(routes_geo::lookup))
         .route("/api/v2/tags", get(routes_tags::list_tags))
-        .route("/api/v2/tags/ip/{ip}", get(routes_tags::tags_for_ip))
-        .route("/api/v2/tags/ip/:ip", get(routes_tags::tags_for_ip))
         .route("/api/v2/tags/search", get(routes_tags::search_by_tag))
         .route(
             "/api/v2/subnets/discovered",
@@ -161,25 +183,7 @@ pub fn v2_routes(state: AppState) -> Router<AppState> {
         )
         .route("/api/v2/siem/stats", get(routes_siem::siem_stats))
         .route("/api/v2/siem/targets", get(routes_siem::list_targets))
-        .route("/api/v2/siem/targets/{id}", get(routes_siem::get_target))
-        .route("/api/v2/siem/targets/:id", get(routes_siem::get_target))
         .route("/api/v2/ldap/groups", get(routes_ldap::list_groups))
-        .route(
-            "/api/v2/ldap/groups/{group}/members",
-            get(routes_ldap::group_members),
-        )
-        .route(
-            "/api/v2/ldap/groups/:group/members",
-            get(routes_ldap::group_members),
-        )
-        .route(
-            "/api/v2/ldap/users/{username}/groups",
-            get(routes_ldap::user_groups),
-        )
-        .route(
-            "/api/v2/ldap/users/:username/groups",
-            get(routes_ldap::user_groups),
-        )
         .route(
             "/api/v2/firewall/stats",
             get(routes_firewall::firewall_stats),
@@ -187,22 +191,6 @@ pub fn v2_routes(state: AppState) -> Router<AppState> {
         .route(
             "/api/v2/firewall/targets",
             get(routes_firewall::list_targets),
-        )
-        .route(
-            "/api/v2/firewall/targets/{id}/history",
-            get(routes_firewall::target_history),
-        )
-        .route(
-            "/api/v2/firewall/targets/:id/history",
-            get(routes_firewall::target_history),
-        )
-        .route(
-            "/api/v2/firewall/targets/{id}",
-            get(routes_firewall::get_target),
-        )
-        .route(
-            "/api/v2/firewall/targets/:id",
-            get(routes_firewall::get_target),
         )
         .route(
             "/api/v2/fingerprints",
@@ -232,21 +220,97 @@ pub fn v2_routes(state: AppState) -> Router<AppState> {
             "/api/v2/analytics/reports",
             get(routes_analytics::list_reports),
         )
-        .route(
-            "/api/v2/analytics/reports/{id}",
-            get(routes_analytics::get_report),
-        )
-        .route(
-            "/api/v2/analytics/reports/:id",
-            get(routes_analytics::get_report),
-        )
         .route("/api/v2/map/topology", get(routes_map::topology))
         .route("/api/v2/map/flows", get(routes_map::flows))
-        .route("/api/v2/events/stream", get(routes_sse::event_stream))
-        .layer(axum_mw::from_fn_with_state(
-            state.clone(),
-            middleware::require_viewer_layer,
-        ));
+        .route("/api/v2/events/stream", get(routes_sse::event_stream));
+    let viewer_routes = route_with_compat_alias(
+        viewer_routes,
+        "/api/v2/timeline/ip/{ip}",
+        "/api/v2/timeline/ip/:ip",
+        get(routes_timeline::timeline_ip),
+    );
+    let viewer_routes = route_with_compat_alias(
+        viewer_routes,
+        "/api/v2/timeline/user/{user}",
+        "/api/v2/timeline/user/:user",
+        get(routes_timeline::timeline_user),
+    );
+    let viewer_routes = route_with_compat_alias(
+        viewer_routes,
+        "/api/v2/timeline/mac/{mac}",
+        "/api/v2/timeline/mac/:mac",
+        get(routes_timeline::timeline_mac),
+    );
+    let viewer_routes = route_with_compat_alias(
+        viewer_routes,
+        "/api/v2/subnets/{id}/mappings",
+        "/api/v2/subnets/:id/mappings",
+        get(routes_subnets::subnet_mappings),
+    );
+    let viewer_routes = route_with_compat_alias(
+        viewer_routes,
+        "/api/v2/switches/{id}",
+        "/api/v2/switches/:id",
+        get(routes_switches::get_switch),
+    );
+    let viewer_routes = route_with_compat_alias(
+        viewer_routes,
+        "/api/v2/dns/{ip}",
+        "/api/v2/dns/:ip",
+        get(routes_dns::dns_by_ip),
+    );
+    let viewer_routes = route_with_compat_alias(
+        viewer_routes,
+        "/api/v2/geo/{ip}",
+        "/api/v2/geo/:ip",
+        get(routes_geo::lookup),
+    );
+    let viewer_routes = route_with_compat_alias(
+        viewer_routes,
+        "/api/v2/tags/ip/{ip}",
+        "/api/v2/tags/ip/:ip",
+        get(routes_tags::tags_for_ip),
+    );
+    let viewer_routes = route_with_compat_alias(
+        viewer_routes,
+        "/api/v2/siem/targets/{id}",
+        "/api/v2/siem/targets/:id",
+        get(routes_siem::get_target),
+    );
+    let viewer_routes = route_with_compat_alias(
+        viewer_routes,
+        "/api/v2/ldap/groups/{group}/members",
+        "/api/v2/ldap/groups/:group/members",
+        get(routes_ldap::group_members),
+    );
+    let viewer_routes = route_with_compat_alias(
+        viewer_routes,
+        "/api/v2/ldap/users/{username}/groups",
+        "/api/v2/ldap/users/:username/groups",
+        get(routes_ldap::user_groups),
+    );
+    let viewer_routes = route_with_compat_alias(
+        viewer_routes,
+        "/api/v2/firewall/targets/{id}/history",
+        "/api/v2/firewall/targets/:id/history",
+        get(routes_firewall::target_history),
+    );
+    let viewer_routes = route_with_compat_alias(
+        viewer_routes,
+        "/api/v2/firewall/targets/{id}",
+        "/api/v2/firewall/targets/:id",
+        get(routes_firewall::get_target),
+    );
+    let viewer_routes = route_with_compat_alias(
+        viewer_routes,
+        "/api/v2/analytics/reports/{id}",
+        "/api/v2/analytics/reports/:id",
+        get(routes_analytics::get_report),
+    );
+    let viewer_routes = viewer_routes.layer(axum_mw::from_fn_with_state(
+        state.clone(),
+        middleware::require_viewer_layer,
+    ));
     Router::new().merge(viewer_routes)
 }
 
@@ -255,7 +319,7 @@ pub fn v2_routes(state: AppState) -> Router<AppState> {
 /// Parameters: `state` - shared application state.
 /// Returns: grouped operator-protected router.
 pub fn operator_routes(state: AppState) -> Router<AppState> {
-    Router::new()
+    let routes = Router::new()
         .route("/api/v1/mappings", post(routes_proxy::proxy_post_mapping))
         .route(
             "/api/v1/mappings/{ip}",
@@ -265,25 +329,27 @@ pub fn operator_routes(state: AppState) -> Router<AppState> {
             "/api/auth/sessions/{id}",
             delete(routes_auth::revoke_session),
         )
-        .route(
-            "/api/v2/conflicts/{id}/resolve",
-            post(routes_conflicts::resolve_conflict),
-        )
-        .route(
-            "/api/v2/conflicts/:id/resolve",
-            post(routes_conflicts::resolve_conflict),
-        )
         .route("/api/v2/tags", post(routes_tags::create_tag))
-        .route("/api/v2/tags/{id}", delete(routes_tags::delete_tag))
-        .route("/api/v2/tags/:id", delete(routes_tags::delete_tag))
         .route(
             "/api/v2/subnets/promote",
             post(routes_subnets::promote_discovered_subnet),
-        )
-        .layer(axum_mw::from_fn_with_state(
-            state,
-            middleware::require_operator_layer,
-        ))
+        );
+    let routes = route_with_compat_alias(
+        routes,
+        "/api/v2/conflicts/{id}/resolve",
+        "/api/v2/conflicts/:id/resolve",
+        post(routes_conflicts::resolve_conflict),
+    );
+    let routes = route_with_compat_alias(
+        routes,
+        "/api/v2/tags/{id}",
+        "/api/v2/tags/:id",
+        delete(routes_tags::delete_tag),
+    );
+    routes.layer(axum_mw::from_fn_with_state(
+        state,
+        middleware::require_operator_layer,
+    ))
 }
 
 /// Builds grouped admin routes (v1 admin + v2 mutable/admin actions).
@@ -291,7 +357,7 @@ pub fn operator_routes(state: AppState) -> Router<AppState> {
 /// Parameters: `state` - shared application state.
 /// Returns: grouped admin router.
 pub fn admin_routes(state: AppState) -> Router<AppState> {
-    Router::new()
+    let routes = Router::new()
         .route(
             "/api/v1/admin/config/ttl",
             get(routes_proxy::proxy_get_ttl).put(routes_proxy::proxy_put_ttl),
@@ -318,33 +384,9 @@ pub fn admin_routes(state: AppState) -> Router<AppState> {
             "/api/v1/users/{id}",
             get(routes_users::get_user).delete(routes_users::delete_user),
         )
-        .route(
-            "/api/v2/admin/users/{id}",
-            get(routes_users::get_user).delete(routes_users::delete_user),
-        )
-        .route(
-            "/api/v2/admin/users/:id",
-            get(routes_users::get_user).delete(routes_users::delete_user),
-        )
         .route("/api/v1/users/{id}/role", put(routes_users::change_role))
         .route(
-            "/api/v2/admin/users/{id}/role",
-            put(routes_users::change_role),
-        )
-        .route(
-            "/api/v2/admin/users/:id/role",
-            put(routes_users::change_role),
-        )
-        .route(
             "/api/v1/users/{id}/reset-password",
-            post(routes_users::reset_password),
-        )
-        .route(
-            "/api/v2/admin/users/{id}/reset-password",
-            post(routes_users::reset_password),
-        )
-        .route(
-            "/api/v2/admin/users/:id/reset-password",
             post(routes_users::reset_password),
         )
         .route(
@@ -356,34 +398,10 @@ pub fn admin_routes(state: AppState) -> Router<AppState> {
             delete(routes_users::disable_user_totp),
         )
         .route(
-            "/api/v2/admin/users/{id}/totp",
-            delete(routes_users::disable_user_totp),
-        )
-        .route(
-            "/api/v2/admin/users/:id/totp",
-            delete(routes_users::disable_user_totp),
-        )
-        .route(
             "/api/v1/api-keys",
             get(routes_api_keys::list_keys).post(routes_api_keys::create_key),
         )
         .route("/api/v1/api-keys/{id}", delete(routes_api_keys::revoke_key))
-        .route(
-            "/api/v2/api-keys/{id}/usage",
-            get(routes_api_keys::get_usage),
-        )
-        .route(
-            "/api/v2/api-keys/:id/usage",
-            get(routes_api_keys::get_usage),
-        )
-        .route(
-            "/api/v2/api-keys/{id}/limits",
-            put(routes_api_keys::update_limits),
-        )
-        .route(
-            "/api/v2/api-keys/:id/limits",
-            put(routes_api_keys::update_limits),
-        )
         .route("/api/v1/audit-logs", get(routes_audit::list_audit_logs))
         .route("/api/v1/audit-logs/stats", get(routes_audit::audit_stats))
         .route(
@@ -395,14 +413,6 @@ pub fn admin_routes(state: AppState) -> Router<AppState> {
             get(routes_security::list_all_sessions),
         )
         .route(
-            "/api/v2/admin/security/sessions/{id}",
-            delete(routes_security::revoke_any_session),
-        )
-        .route(
-            "/api/v2/admin/security/sessions/:id",
-            delete(routes_security::revoke_any_session),
-        )
-        .route(
             "/api/v2/admin/security/totp-requirement",
             put(routes_security::set_totp_requirement),
         )
@@ -410,42 +420,8 @@ pub fn admin_routes(state: AppState) -> Router<AppState> {
             "/api/v2/alerts/rules",
             get(routes_alerts::list_rules).post(routes_alerts::create_rule),
         )
-        .route(
-            "/api/v2/alerts/rules/{id}",
-            put(routes_alerts::update_rule).delete(routes_alerts::delete_rule),
-        )
-        .route(
-            "/api/v2/alerts/rules/:id",
-            put(routes_alerts::update_rule).delete(routes_alerts::delete_rule),
-        )
         .route("/api/v2/subnets", post(routes_subnets::create_subnet))
-        .route(
-            "/api/v2/subnets/{id}",
-            put(routes_subnets::update_subnet).delete(routes_subnets::delete_subnet),
-        )
-        .route(
-            "/api/v2/subnets/:id",
-            put(routes_subnets::update_subnet).delete(routes_subnets::delete_subnet),
-        )
         .route("/api/v2/switches", post(routes_switches::create_switch))
-        .route(
-            "/api/v2/switches/{id}",
-            put(routes_switches::update_switch).delete(routes_switches::delete_switch),
-        )
-        .route(
-            "/api/v2/switches/:id",
-            put(routes_switches::update_switch).delete(routes_switches::delete_switch),
-        )
-        .route(
-            "/api/v2/switches/{id}/poll",
-            post(routes_switches::force_poll),
-        )
-        .route(
-            "/api/v2/switches/:id/poll",
-            post(routes_switches::force_poll),
-        )
-        .route("/api/v2/dns/{ip}", delete(routes_dns::delete_dns_ip))
-        .route("/api/v2/dns/:ip", delete(routes_dns::delete_dns_ip))
         .route("/api/v2/dns/flush", post(routes_dns::flush_dns_cache))
         .route("/api/v2/ldap/config", get(routes_ldap::get_ldap_config))
         .route("/api/v2/ldap/config", put(routes_ldap::update_ldap_config))
@@ -454,14 +430,6 @@ pub fn admin_routes(state: AppState) -> Router<AppState> {
         .route(
             "/api/v2/admin/retention",
             get(routes_retention::list_policies),
-        )
-        .route(
-            "/api/v2/admin/retention/{table_name}",
-            put(routes_retention::update_policy),
-        )
-        .route(
-            "/api/v2/admin/retention/:table_name",
-            put(routes_retention::update_policy),
         )
         .route(
             "/api/v2/admin/retention/run",
@@ -473,81 +441,13 @@ pub fn admin_routes(state: AppState) -> Router<AppState> {
         )
         .route("/api/v2/geo/refresh", post(routes_geo::refresh))
         .route(
-            "/api/v2/subnets/discovered/{id}",
-            delete(routes_subnets::dismiss_discovered_subnet),
-        )
-        .route(
-            "/api/v2/subnets/discovered/:id",
-            delete(routes_subnets::dismiss_discovered_subnet),
-        )
-        .route(
             "/api/v2/notifications/channels",
             get(routes_notifications::list_channels).post(routes_notifications::create_channel),
         )
-        .route(
-            "/api/v2/notifications/channels/{id}",
-            get(routes_notifications::get_channel)
-                .put(routes_notifications::update_channel)
-                .delete(routes_notifications::delete_channel),
-        )
-        .route(
-            "/api/v2/notifications/channels/:id",
-            get(routes_notifications::get_channel)
-                .put(routes_notifications::update_channel)
-                .delete(routes_notifications::delete_channel),
-        )
-        .route(
-            "/api/v2/notifications/channels/{id}/test",
-            post(routes_notifications::test_channel),
-        )
-        .route(
-            "/api/v2/notifications/channels/:id/test",
-            post(routes_notifications::test_channel),
-        )
-        .route(
-            "/api/v2/notifications/channels/{id}/deliveries",
-            get(routes_notifications::channel_deliveries),
-        )
-        .route(
-            "/api/v2/notifications/channels/:id/deliveries",
-            get(routes_notifications::channel_deliveries),
-        )
         .route("/api/v2/siem/targets", post(routes_siem::create_target))
-        .route(
-            "/api/v2/siem/targets/{id}",
-            put(routes_siem::update_target).delete(routes_siem::delete_target),
-        )
-        .route(
-            "/api/v2/siem/targets/:id",
-            put(routes_siem::update_target).delete(routes_siem::delete_target),
-        )
         .route(
             "/api/v2/firewall/targets",
             post(routes_firewall::create_target),
-        )
-        .route(
-            "/api/v2/firewall/targets/{id}/push",
-            post(routes_firewall::force_push),
-        )
-        .route(
-            "/api/v2/firewall/targets/:id/push",
-            post(routes_firewall::force_push),
-        )
-        .route(
-            "/api/v2/firewall/targets/{id}/test",
-            post(routes_firewall::test_target),
-        )
-        .route(
-            "/api/v2/firewall/targets/:id/test",
-            post(routes_firewall::test_target),
-        )
-        .route(
-            "/api/v2/firewall/targets/{id}",
-            put(routes_firewall::update_target).delete(routes_firewall::delete_target),
-        )
-        .route(
-            "/api/v2/firewall/targets/:id",
-            put(routes_firewall::update_target).delete(routes_firewall::delete_target),
         )
         .route(
             "/api/v2/fingerprints",
@@ -558,14 +458,6 @@ pub fn admin_routes(state: AppState) -> Router<AppState> {
             post(routes_fingerprints::backfill),
         )
         .route(
-            "/api/v2/fingerprints/{id}",
-            delete(routes_fingerprints::delete_fingerprint),
-        )
-        .route(
-            "/api/v2/fingerprints/:id",
-            delete(routes_fingerprints::delete_fingerprint),
-        )
-        .route(
             "/api/v2/analytics/reports/generate",
             post(routes_analytics::generate_report),
         )
@@ -574,34 +466,163 @@ pub fn admin_routes(state: AppState) -> Router<AppState> {
             get(routes_report_schedules::list_schedules)
                 .post(routes_report_schedules::create_schedule),
         )
-        .route(
-            "/api/v2/reports/schedules/{id}",
-            put(routes_report_schedules::update_schedule)
-                .delete(routes_report_schedules::delete_schedule),
-        )
-        .route(
-            "/api/v2/reports/schedules/:id",
-            put(routes_report_schedules::update_schedule)
-                .delete(routes_report_schedules::delete_schedule),
-        )
-        .route(
-            "/api/v2/reports/schedules/{id}/send-now",
-            post(routes_report_schedules::send_now),
-        )
-        .route(
-            "/api/v2/reports/schedules/:id/send-now",
-            post(routes_report_schedules::send_now),
-        )
         .route("/api/auth/oidc/config", get(routes_oidc::get_config))
         .route("/api/auth/oidc/config", put(routes_oidc::update_config))
         .route("/api/auth/oidc/test", post(routes_oidc::test_discovery))
         .route("/api/v2/admin/oidc/config", get(routes_oidc::get_config))
         .route("/api/v2/admin/oidc/config", put(routes_oidc::update_config))
-        .route("/api/v2/admin/oidc/test", post(routes_oidc::test_discovery))
-        .layer(axum_mw::from_fn_with_state(
-            state,
-            middleware::require_admin_layer,
-        ))
+        .route("/api/v2/admin/oidc/test", post(routes_oidc::test_discovery));
+    let routes = route_with_compat_alias(
+        routes,
+        "/api/v2/admin/users/{id}",
+        "/api/v2/admin/users/:id",
+        get(routes_users::get_user).delete(routes_users::delete_user),
+    );
+    let routes = route_with_compat_alias(
+        routes,
+        "/api/v2/admin/users/{id}/role",
+        "/api/v2/admin/users/:id/role",
+        put(routes_users::change_role),
+    );
+    let routes = route_with_compat_alias(
+        routes,
+        "/api/v2/admin/users/{id}/reset-password",
+        "/api/v2/admin/users/:id/reset-password",
+        post(routes_users::reset_password),
+    );
+    let routes = route_with_compat_alias(
+        routes,
+        "/api/v2/admin/users/{id}/totp",
+        "/api/v2/admin/users/:id/totp",
+        delete(routes_users::disable_user_totp),
+    );
+    let routes = route_with_compat_alias(
+        routes,
+        "/api/v2/api-keys/{id}/usage",
+        "/api/v2/api-keys/:id/usage",
+        get(routes_api_keys::get_usage),
+    );
+    let routes = route_with_compat_alias(
+        routes,
+        "/api/v2/api-keys/{id}/limits",
+        "/api/v2/api-keys/:id/limits",
+        put(routes_api_keys::update_limits),
+    );
+    let routes = route_with_compat_alias(
+        routes,
+        "/api/v2/admin/security/sessions/{id}",
+        "/api/v2/admin/security/sessions/:id",
+        delete(routes_security::revoke_any_session),
+    );
+    let routes = route_with_compat_alias(
+        routes,
+        "/api/v2/alerts/rules/{id}",
+        "/api/v2/alerts/rules/:id",
+        put(routes_alerts::update_rule).delete(routes_alerts::delete_rule),
+    );
+    let routes = route_with_compat_alias(
+        routes,
+        "/api/v2/subnets/{id}",
+        "/api/v2/subnets/:id",
+        put(routes_subnets::update_subnet).delete(routes_subnets::delete_subnet),
+    );
+    let routes = route_with_compat_alias(
+        routes,
+        "/api/v2/switches/{id}",
+        "/api/v2/switches/:id",
+        put(routes_switches::update_switch).delete(routes_switches::delete_switch),
+    );
+    let routes = route_with_compat_alias(
+        routes,
+        "/api/v2/switches/{id}/poll",
+        "/api/v2/switches/:id/poll",
+        post(routes_switches::force_poll),
+    );
+    let routes = route_with_compat_alias(
+        routes,
+        "/api/v2/dns/{ip}",
+        "/api/v2/dns/:ip",
+        delete(routes_dns::delete_dns_ip),
+    );
+    let routes = route_with_compat_alias(
+        routes,
+        "/api/v2/admin/retention/{table_name}",
+        "/api/v2/admin/retention/:table_name",
+        put(routes_retention::update_policy),
+    );
+    let routes = route_with_compat_alias(
+        routes,
+        "/api/v2/subnets/discovered/{id}",
+        "/api/v2/subnets/discovered/:id",
+        delete(routes_subnets::dismiss_discovered_subnet),
+    );
+    let routes = route_with_compat_alias(
+        routes,
+        "/api/v2/notifications/channels/{id}",
+        "/api/v2/notifications/channels/:id",
+        get(routes_notifications::get_channel)
+            .put(routes_notifications::update_channel)
+            .delete(routes_notifications::delete_channel),
+    );
+    let routes = route_with_compat_alias(
+        routes,
+        "/api/v2/notifications/channels/{id}/test",
+        "/api/v2/notifications/channels/:id/test",
+        post(routes_notifications::test_channel),
+    );
+    let routes = route_with_compat_alias(
+        routes,
+        "/api/v2/notifications/channels/{id}/deliveries",
+        "/api/v2/notifications/channels/:id/deliveries",
+        get(routes_notifications::channel_deliveries),
+    );
+    let routes = route_with_compat_alias(
+        routes,
+        "/api/v2/siem/targets/{id}",
+        "/api/v2/siem/targets/:id",
+        put(routes_siem::update_target).delete(routes_siem::delete_target),
+    );
+    let routes = route_with_compat_alias(
+        routes,
+        "/api/v2/firewall/targets/{id}/push",
+        "/api/v2/firewall/targets/:id/push",
+        post(routes_firewall::force_push),
+    );
+    let routes = route_with_compat_alias(
+        routes,
+        "/api/v2/firewall/targets/{id}/test",
+        "/api/v2/firewall/targets/:id/test",
+        post(routes_firewall::test_target),
+    );
+    let routes = route_with_compat_alias(
+        routes,
+        "/api/v2/firewall/targets/{id}",
+        "/api/v2/firewall/targets/:id",
+        put(routes_firewall::update_target).delete(routes_firewall::delete_target),
+    );
+    let routes = route_with_compat_alias(
+        routes,
+        "/api/v2/fingerprints/{id}",
+        "/api/v2/fingerprints/:id",
+        delete(routes_fingerprints::delete_fingerprint),
+    );
+    let routes = route_with_compat_alias(
+        routes,
+        "/api/v2/reports/schedules/{id}",
+        "/api/v2/reports/schedules/:id",
+        put(routes_report_schedules::update_schedule)
+            .delete(routes_report_schedules::delete_schedule),
+    );
+    let routes = route_with_compat_alias(
+        routes,
+        "/api/v2/reports/schedules/{id}/send-now",
+        "/api/v2/reports/schedules/:id/send-now",
+        post(routes_report_schedules::send_now),
+    );
+    routes.layer(axum_mw::from_fn_with_state(
+        state,
+        middleware::require_admin_layer,
+    ))
 }
 
 /// Builds public system routes.
@@ -612,4 +633,30 @@ pub fn system_routes() -> Router<AppState> {
     Router::new()
         .route("/health", get(routes_v1::health))
         .route("/metrics", get(routes_proxy::proxy_metrics))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_compat_alias_paths;
+
+    #[test]
+    fn validate_compat_alias_paths_accepts_matching_shapes() {
+        validate_compat_alias_paths("/api/v2/timeline/ip/{ip}", "/api/v2/timeline/ip/:ip");
+        validate_compat_alias_paths(
+            "/api/v2/firewall/targets/{id}/history",
+            "/api/v2/firewall/targets/:id/history",
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "parameter mismatch")]
+    fn validate_compat_alias_paths_rejects_param_name_mismatch() {
+        validate_compat_alias_paths("/api/v2/timeline/ip/{ip}", "/api/v2/timeline/ip/:user");
+    }
+
+    #[test]
+    #[should_panic(expected = "literal mismatch")]
+    fn validate_compat_alias_paths_rejects_literal_mismatch() {
+        validate_compat_alias_paths("/api/v2/timeline/ip/{ip}", "/api/v2/timeline/user/:ip");
+    }
 }
