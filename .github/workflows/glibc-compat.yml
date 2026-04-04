@@ -34,26 +34,61 @@ jobs:
         run: |
           docker buildx build --platform linux/amd64 --target runtime --load -t trueid-runtime:glibc236 .
 
-      - name: Runtime baseline info
+      - name: Runtime image metadata
         run: |
-          docker run --rm --entrypoint /bin/sh trueid-runtime:glibc236 -c '
-            set -eu
-            ldd --version | head -n 1
-            cat /etc/os-release
-          '
+          cid="$(docker create trueid-runtime:glibc236)"
+          cleanup() {
+            docker rm -f "${cid}" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
 
-      - name: Runtime ldd inspection
+          docker image inspect trueid-runtime:glibc236 --format 'user={{.Config.User}} cmd={{json .Config.Cmd}}'
+          docker cp "${cid}:/usr/local/bin/trueid-engine" "${RUNNER_TEMP}/trueid-engine"
+          docker cp "${cid}:/usr/local/bin/trueid-probe" "${RUNNER_TEMP}/trueid-probe"
+          docker cp "${cid}:/app/migrations" "${RUNNER_TEMP}/migrations"
+
+          test -x "${RUNNER_TEMP}/trueid-engine"
+          test -x "${RUNNER_TEMP}/trueid-probe"
+          find "${RUNNER_TEMP}/migrations" -type f | grep -q .
+
+      - name: Binary ldd inspection
         run: |
-          docker run --rm --entrypoint /bin/sh trueid-runtime:glibc236 -c '
+          docker run --rm --entrypoint /bin/sh trueid-builder:glibc236 -c '
             set -eu
-            ldd /usr/local/bin/trueid-engine
+            ldd /out/trueid-engine
+            ldd /out/trueid
+            ldd /out/trueid-web
+            ldd /out/trueid-probe
           '
 
       - name: Smoke test trueid-engine
         run: |
-          docker run --rm --entrypoint /bin/sh trueid-runtime:glibc236 -c '
-            set -eu
-            test -x /usr/local/bin/trueid-engine
-            ldd /usr/local/bin/trueid-engine
-            echo "Binary exists and is linked correctly"
-          '
+          tmpdir="$(mktemp -d)"
+          cid="$(docker run -d --rm \
+            -v "${tmpdir}:/app/data" \
+            -e DATABASE_URL=sqlite:///app/data/net-identity.db?mode=rwc \
+            -e RUST_LOG=info \
+            -e RADIUS_SECRET=glibc-compat-secret \
+            -e RADIUS_BIND=0.0.0.0:1813 \
+            -e AD_SYSLOG_BIND=0.0.0.0:5514 \
+            -e DHCP_SYSLOG_BIND=0.0.0.0:5516 \
+            -e ADMIN_HTTP_BIND=0.0.0.0:9090 \
+            trueid-runtime:glibc236 /usr/local/bin/trueid-engine)"
+          cleanup() {
+            docker rm -f "${cid}" >/dev/null 2>&1 || true
+            rm -rf "${tmpdir}"
+          }
+          trap cleanup EXIT
+
+          ready=0
+          for _ in $(seq 1 20); do
+            if docker exec "${cid}" /usr/local/bin/trueid-probe tcp 127.0.0.1:9090 >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+
+          [ "${ready}" = "1" ]
+          test -s "${tmpdir}/net-identity.db"
+          docker logs "${cid}" | grep -q "Initializing database"

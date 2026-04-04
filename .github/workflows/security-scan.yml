@@ -186,7 +186,9 @@ jobs:
 
       - name: Ensure TRUEID_DEV_MODE=false
         run: |
-          [ "$(docker compose exec -T web printenv TRUEID_DEV_MODE)" = "false" ]
+          web_cid="$(docker compose ps -q web)"
+          [ -n "${web_cid}" ]
+          docker inspect "${web_cid}" --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -qx 'TRUEID_DEV_MODE=false'
 
       - name: Unauthenticated API checks (RBAC bypass guard)
         run: |
