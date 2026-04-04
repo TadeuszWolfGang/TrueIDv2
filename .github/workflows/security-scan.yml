@@ -210,12 +210,15 @@ jobs:
 
       - name: Brute-force/rate-limit login check
         run: |
+          LOGIN_ATTACK_IP="198.51.100.240"
+          LOGIN_ATTACK_USER="rate-limit-probe"
           got_429=0
           for i in $(seq 1 15); do
             code="$(curl -s -o /dev/null -w "%{http_code}" \
               -X POST http://localhost:3000/api/auth/login \
               -H "Content-Type: application/json" \
-              -d '{"username":"admin","password":"wrong-password"}')"
+              -H "X-Forwarded-For: ${LOGIN_ATTACK_IP}" \
+              -d "{\"username\":\"${LOGIN_ATTACK_USER}\",\"password\":\"wrong-password\"}")"
             if [ "$code" = "429" ]; then
               got_429=1
               break
@@ -261,23 +264,39 @@ jobs:
       - name: Create admin API key for Schemathesis
         run: |
           rm -f /tmp/trueid-cookies.txt
-          curl -sS \
+          SCHEMATHESIS_LOGIN_IP="198.51.100.241"
+          login_status="$(curl -sS \
             -c /tmp/trueid-cookies.txt \
             -X POST http://127.0.0.1:3000/api/auth/login \
             -H "Content-Type: application/json" \
-            -d "{\"username\":\"admin\",\"password\":\"${TRUEID_ADMIN_PASS}\"}" >/tmp/trueid-login.json
+            -H "X-Forwarded-For: ${SCHEMATHESIS_LOGIN_IP}" \
+            -d "{\"username\":\"admin\",\"password\":\"${TRUEID_ADMIN_PASS}\"}" \
+            -o /tmp/trueid-login.json \
+            -w "%{http_code}")"
+          if [ "${login_status}" != "200" ]; then
+            echo "Schemathesis login failed with HTTP ${login_status}"
+            cat /tmp/trueid-login.json || true
+            exit 1
+          fi
 
           csrf_token="$(awk '$6 == "trueid_csrf_token" { print $7 }' /tmp/trueid-cookies.txt | tail -n 1)"
           [ -n "$csrf_token" ]
 
-          api_key_json="$(curl -sS \
+          api_key_status="$(curl -sS \
             -b /tmp/trueid-cookies.txt \
             -X POST http://127.0.0.1:3000/api/v1/api-keys \
             -H "Content-Type: application/json" \
             -H "X-CSRF-Token: ${csrf_token}" \
+            -o /tmp/trueid-api-key.json \
+            -w "%{http_code}" \
             -d '{"description":"schemathesis-ci","role":"Admin","rate_limit_rpm":5000,"rate_limit_burst":1000}')"
+          if [ "${api_key_status}" != "201" ]; then
+            echo "Schemathesis API key creation failed with HTTP ${api_key_status}"
+            cat /tmp/trueid-api-key.json || true
+            exit 1
+          fi
 
-          api_key="$(printf '%s' "$api_key_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["key"])')"
+          api_key="$(python3 -c 'import json,sys; print(json.load(open("/tmp/trueid-api-key.json"))["key"])')"
           [ -n "$api_key" ]
           echo "SCHEMATHESIS_API_KEY=$api_key" >> "$GITHUB_ENV"
 
