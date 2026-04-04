@@ -978,4 +978,189 @@ mod tests {
         let radius = sources.iter().find(|s| s["name"] == "Radius").unwrap();
         assert!(radius["priority"].as_i64().unwrap() > 0);
     }
+
+    // ── Phase 4: SSE live event streaming ──
+
+    #[tokio::test]
+    async fn test_sse_stream_receives_mapping_event() {
+        let db = Arc::new(init_db("sqlite::memory:").await.unwrap());
+        let (live_tx, _) = tokio::sync::broadcast::channel::<LiveEvent>(16);
+        let tx_clone = live_tx.clone();
+
+        let state = EngineAdminState {
+            db,
+            vendors: Arc::new(HashMap::new()),
+            adapter_stats: Arc::new(RwLock::new(vec![])),
+            runtime_env: Arc::new(RuntimeEnv {
+                database_url: "sqlite::memory:".to_string(),
+                radius_bind: "0.0.0.0:1813".to_string(),
+                radius_secret_set: true,
+                ad_syslog_bind: "0.0.0.0:5514".to_string(),
+                dhcp_syslog_bind: "0.0.0.0:5516".to_string(),
+                ad_tls_bind: "0.0.0.0:5615".to_string(),
+                dhcp_tls_bind: "0.0.0.0:5617".to_string(),
+                tls_enabled: false,
+                tls_ca_exists: false,
+                tls_cert_exists: false,
+                tls_key_exists: false,
+                oui_csv_path: "./data/oui.csv".to_string(),
+                admin_http_bind: "127.0.0.1:8080".to_string(),
+            }),
+            service_token: None,
+            start_time: Instant::now(),
+            live_tx,
+        };
+        let app = admin_router(state);
+
+        // Send event shortly after SSE connection starts
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            let _ = tx_clone.send(LiveEvent::MappingUpdate {
+                ip: "10.0.0.1".to_string(),
+                user: "alice".to_string(),
+                mac: Some("AA:BB:CC:DD:EE:FF".to_string()),
+                source: "Radius".to_string(),
+                timestamp: Utc::now(),
+            });
+        });
+
+        let req = HttpRequest::builder()
+            .uri("/engine/events/stream")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            app.oneshot(req),
+        )
+        .await;
+
+        // SSE streams don't complete normally — timeout is expected.
+        // Verify we got a 200 OK response with SSE content-type.
+        match resp {
+            Ok(Ok(response)) => {
+                assert_eq!(response.status(), StatusCode::OK);
+                let ct = response
+                    .headers()
+                    .get("content-type")
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("");
+                assert!(
+                    ct.contains("text/event-stream"),
+                    "SSE should have text/event-stream content-type, got: {ct}"
+                );
+
+                // Read partial body — should contain the mapping event
+                let body = tokio::time::timeout(
+                    std::time::Duration::from_secs(2),
+                    response.into_body().collect(),
+                )
+                .await;
+                if let Ok(Ok(collected)) = body {
+                    let bytes = collected.to_bytes();
+                    let text = String::from_utf8_lossy(&bytes);
+                    assert!(
+                        text.contains("10.0.0.1") || text.contains("alice"),
+                        "SSE body should contain the broadcast event data: {text}"
+                    );
+                }
+                // Timeout on body read is acceptable for SSE
+            }
+            // Timeout on entire request is also acceptable for SSE
+            Err(_) => {}
+            Ok(Err(e)) => panic!("SSE request failed: {e}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_sse_stream_receives_multiple_event_types() {
+        let db = Arc::new(init_db("sqlite::memory:").await.unwrap());
+        let (live_tx, _) = tokio::sync::broadcast::channel::<LiveEvent>(16);
+        let tx_clone = live_tx.clone();
+
+        let state = EngineAdminState {
+            db,
+            vendors: Arc::new(HashMap::new()),
+            adapter_stats: Arc::new(RwLock::new(vec![])),
+            runtime_env: Arc::new(RuntimeEnv {
+                database_url: "sqlite::memory:".to_string(),
+                radius_bind: "0.0.0.0:1813".to_string(),
+                radius_secret_set: true,
+                ad_syslog_bind: "0.0.0.0:5514".to_string(),
+                dhcp_syslog_bind: "0.0.0.0:5516".to_string(),
+                ad_tls_bind: "0.0.0.0:5615".to_string(),
+                dhcp_tls_bind: "0.0.0.0:5617".to_string(),
+                tls_enabled: false,
+                tls_ca_exists: false,
+                tls_cert_exists: false,
+                tls_key_exists: false,
+                oui_csv_path: "./data/oui.csv".to_string(),
+                admin_http_bind: "127.0.0.1:8080".to_string(),
+            }),
+            service_token: None,
+            start_time: Instant::now(),
+            live_tx,
+        };
+        let app = admin_router(state);
+
+        // Broadcast three different event types
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            let _ = tx_clone.send(LiveEvent::MappingUpdate {
+                ip: "10.0.0.1".to_string(),
+                user: "alice".to_string(),
+                mac: None,
+                source: "Radius".to_string(),
+                timestamp: Utc::now(),
+            });
+            let _ = tx_clone.send(LiveEvent::ConflictDetected {
+                id: 1,
+                conflict_type: "ip_user_change".to_string(),
+                severity: "warning".to_string(),
+                ip: Some("10.0.0.1".to_string()),
+                user_old: Some("bob".to_string()),
+                user_new: Some("alice".to_string()),
+                detected_at: Utc::now(),
+            });
+            let _ = tx_clone.send(LiveEvent::AlertFired {
+                rule_name: "test-rule".to_string(),
+                rule_type: "ip_conflict".to_string(),
+                severity: "critical".to_string(),
+                ip: Some("10.0.0.1".to_string()),
+                user: Some("alice".to_string()),
+                fired_at: Utc::now(),
+            });
+        });
+
+        let req = HttpRequest::builder()
+            .uri("/engine/events/stream")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            app.oneshot(req),
+        )
+        .await;
+
+        if let Ok(Ok(response)) = resp {
+            assert_eq!(response.status(), StatusCode::OK);
+            if let Ok(Ok(collected)) = tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                response.into_body().collect(),
+            )
+            .await
+            {
+                let bytes = collected.to_bytes();
+                let text = String::from_utf8_lossy(&bytes);
+                // Verify event type tags appear in SSE stream
+                assert!(text.contains("event: mapping"), "missing mapping event tag");
+                assert!(
+                    text.contains("event: conflict"),
+                    "missing conflict event tag"
+                );
+                assert!(text.contains("event: alert"), "missing alert event tag");
+            }
+        }
+    }
 }

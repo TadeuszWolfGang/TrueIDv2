@@ -19,3 +19,8 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
+criterion = { version = "0.5", features = ["async_tokio"] }
+
+[[bench]]
+name = "ingestion_throughput"
+harness = false
