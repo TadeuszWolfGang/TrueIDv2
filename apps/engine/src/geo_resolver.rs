@@ -67,11 +67,13 @@ impl GeoResolver {
         let Some(reader) = &self.reader else {
             return None;
         };
-        if let Ok(city) = reader.lookup::<geoip2::City<'_>>(*ip) {
-            let mut info = GeoInfo::from_maxmind_city(&city);
-            info.is_private = false;
-            let _ = self.cache_result(ip, &info).await;
-            return Some(info);
+        if let Ok(result) = reader.lookup(*ip) {
+            if let Ok(Some(city)) = result.decode::<geoip2::City<'_>>() {
+                let mut info = GeoInfo::from_maxmind_city(&city);
+                info.is_private = false;
+                let _ = self.cache_result(ip, &info).await;
+                return Some(info);
+            }
         }
         None
     }
@@ -165,22 +167,11 @@ impl GeoInfo {
     /// Parameters: `city` - MaxMind city record.
     /// Returns: normalized GeoInfo.
     fn from_maxmind_city(city: &geoip2::City<'_>) -> Self {
-        let country_code = city
-            .country
-            .as_ref()
-            .and_then(|c| c.iso_code.map(str::to_string));
-        let country_name = city
-            .country
-            .as_ref()
-            .and_then(|c| c.names.as_ref())
-            .and_then(|n| n.get("en").map(|v| v.to_string()));
-        let city_name = city
-            .city
-            .as_ref()
-            .and_then(|c| c.names.as_ref())
-            .and_then(|n| n.get("en").map(|v| v.to_string()));
-        let latitude = city.location.as_ref().and_then(|l| l.latitude);
-        let longitude = city.location.as_ref().and_then(|l| l.longitude);
+        let country_code = city.country.iso_code.map(str::to_string);
+        let country_name = city.country.names.english.map(str::to_string);
+        let city_name = city.city.names.english.map(str::to_string);
+        let latitude = city.location.latitude;
+        let longitude = city.location.longitude;
         Self {
             country_code,
             country_name,

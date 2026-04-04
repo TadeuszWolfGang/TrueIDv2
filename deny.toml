@@ -1,0 +1,9 @@
+# cargo-deny configuration for TrueIDv2.
+#
+# RUSTSEC-2023-0071 is carried by the sqlx umbrella crate through sqlx-mysql.
+# TrueID only enables SQLite, but sqlx still includes the MySQL backend in the
+# resolved graph. There is no fixed upstream version for rsa, so this exception
+# is documented explicitly until the sqlx dependency model is refactored.
+
+[advisories]
+unmaintained = "none"

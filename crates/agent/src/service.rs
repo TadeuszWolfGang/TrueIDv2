@@ -29,6 +29,8 @@ fn build_child_launch_arguments(config_path: &Path) -> Vec<OsString> {
 #[cfg(windows)]
 pub mod imp {
     use anyhow::{Context, Result};
+    use std::ffi::OsString;
+    use std::path::Path;
     use std::process::Command;
     use std::sync::{mpsc, OnceLock};
     use std::thread;
