@@ -873,7 +873,11 @@ async fn auto_encrypt_sensitive_config(pool: &SqlitePool, key: &[u8; 32]) -> Res
 pub async fn init_db(db_url: &str) -> Result<Db> {
     ensure_sqlite_parent_dir(db_url)?;
     let pool = SqlitePool::connect(db_url).await?;
-    sqlx::migrate!("./migrations").run(&pool).await?;
+    let migrations_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+    sqlx::migrate::Migrator::new(migrations_dir.as_path())
+        .await?
+        .run(&pool)
+        .await?;
     let pepper = std::env::var("ARGON2_PEPPER")
         .ok()
         .filter(|s| !s.is_empty());

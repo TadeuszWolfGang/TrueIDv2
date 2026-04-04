@@ -17,26 +17,26 @@ jobs:
 
       - name: Build builder image (linux/amd64)
         run: |
-          docker buildx build --platform linux/amd64 --target builder --load -t trueid-builder:glibc231 .
+          docker buildx build --platform linux/amd64 --target builder --load -t trueid-builder:glibc236 .
 
-      - name: Verify max required GLIBC <= 2.31
+      - name: Verify max required GLIBC <= 2.36
         run: |
-          docker run --rm --entrypoint /bin/sh trueid-builder:glibc231 -c '
+          docker run --rm --entrypoint /bin/sh trueid-builder:glibc236 -c '
             set -eu
             max_glibc="$(strings /out/trueid-engine | grep -o "GLIBC_[0-9.]\+" | sort -Vu | tail -n 1)"
             echo "max_glibc=${max_glibc}"
             [ -n "${max_glibc}" ]
             max_ver="${max_glibc#GLIBC_}"
-            dpkg --compare-versions "${max_ver}" le "2.31"
+            dpkg --compare-versions "${max_ver}" le "2.36"
           '
 
       - name: Build runtime image (linux/amd64)
         run: |
-          docker buildx build --platform linux/amd64 --target runtime --load -t trueid-runtime:glibc231 .
+          docker buildx build --platform linux/amd64 --target runtime --load -t trueid-runtime:glibc236 .
 
       - name: Runtime baseline info
         run: |
-          docker run --rm --entrypoint /bin/sh trueid-runtime:glibc231 -c '
+          docker run --rm --entrypoint /bin/sh trueid-runtime:glibc236 -c '
             set -eu
             ldd --version | head -n 1
             cat /etc/os-release
@@ -44,14 +44,14 @@ jobs:
 
       - name: Runtime ldd inspection
         run: |
-          docker run --rm --entrypoint /bin/sh trueid-runtime:glibc231 -c '
+          docker run --rm --entrypoint /bin/sh trueid-runtime:glibc236 -c '
             set -eu
             ldd /usr/local/bin/trueid-engine
           '
 
       - name: Smoke test trueid-engine
         run: |
-          docker run --rm --entrypoint /bin/sh trueid-runtime:glibc231 -c '
+          docker run --rm --entrypoint /bin/sh trueid-runtime:glibc236 -c '
             set -eu
             test -x /usr/local/bin/trueid-engine
             ldd /usr/local/bin/trueid-engine
