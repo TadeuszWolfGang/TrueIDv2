@@ -64,6 +64,7 @@ jobs:
       - name: Smoke test trueid-engine
         run: |
           tmpdir="$(mktemp -d)"
+          chmod 0777 "${tmpdir}"
           cid="$(docker run -d --rm \
             -v "${tmpdir}:/app/data" \
             -e DATABASE_URL=sqlite:///app/data/net-identity.db?mode=rwc \
@@ -75,8 +76,13 @@ jobs:
             -e ADMIN_HTTP_BIND=0.0.0.0:9090 \
             trueid-runtime:glibc236 /usr/local/bin/trueid-engine)"
           cleanup() {
+            status=$?
+            if [ "${status}" -ne 0 ]; then
+              docker logs "${cid}" || true
+            fi
             docker rm -f "${cid}" >/dev/null 2>&1 || true
             rm -rf "${tmpdir}"
+            exit "${status}"
           }
           trap cleanup EXIT
 
