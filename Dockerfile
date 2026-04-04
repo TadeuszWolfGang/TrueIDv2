@@ -60,6 +60,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     mkdir -p /out; \
     cp /src/target/release/trueid-engine /out/trueid-engine; \
     cp /src/target/release/trueid /out/trueid; \
+    cp /src/target/release/trueid-probe /out/trueid-probe; \
     cp /src/target/release/trueid-web /out/trueid-web; \
     if [ -f /src/data/oui.csv ]; then cp /src/data/oui.csv /out/oui.csv; else : > /out/oui.csv; fi
 
