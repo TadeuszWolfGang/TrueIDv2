@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -64,7 +64,7 @@ jobs:
     needs: sast
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -103,7 +103,7 @@ jobs:
     needs: container-scan
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install DAST dependencies
         run: |
@@ -302,6 +302,7 @@ jobs:
 
       - name: API property-based fuzzing (Schemathesis)
         run: |
+          set -o pipefail
           schemathesis run docs/openapi.yaml \
             --url http://127.0.0.1:3000 \
             -H "X-API-Key: ${SCHEMATHESIS_API_KEY}" \
@@ -313,7 +314,9 @@ jobs:
             --include-path /api/v2/timeline/user/{user} \
             --include-path /api/v2/timeline/mac/{mac} \
             --max-examples 25 \
-            --report-junit-path security-reports/schemathesis-junit.xml
+            --report-junit-path security-reports/schemathesis-junit.xml \
+            2>&1 | tee security-reports/schemathesis.txt
+          grep -Eq 'Operations:[[:space:]]+5 selected /' security-reports/schemathesis.txt
 
       - name: Upload security artifacts
         uses: actions/upload-artifact@v4

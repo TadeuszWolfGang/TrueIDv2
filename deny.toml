@@ -4,6 +4,7 @@
 # TrueID only enables SQLite, but sqlx still includes the MySQL backend in the
 # resolved graph. There is no fixed upstream version for rsa, so this exception
 # is documented explicitly until the sqlx dependency model is refactored.
+# Last reviewed: 2026-04-04.
 
 [advisories]
 unmaintained = "none"
