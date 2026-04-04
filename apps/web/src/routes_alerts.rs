@@ -9,14 +9,21 @@ use axum::{
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Write,
+};
 use tracing::warn;
 
 use crate::error::{self, ApiError};
 use crate::helpers;
 use crate::middleware::AuthUser;
 use crate::AppState;
-use trueid_common::pagination::{PaginatedResponse, PaginationParams};
+use trueid_common::pagination::PaginatedResponse;
+
+const DEFAULT_ALERT_HISTORY_LIMIT: u32 = 50;
+const MAX_ALERT_HISTORY_LIMIT: u32 = 200;
+const MAX_DEPRECATED_OFFSET: u64 = 50_000;
 
 /// Alert rule database record.
 #[derive(Debug, Clone, Serialize)]
@@ -108,6 +115,7 @@ pub struct AlertHistoryQuery {
     pub from_ts: Option<String>,
     #[serde(rename = "to")]
     pub to_ts: Option<String>,
+    pub cursor: Option<String>,
     pub page: Option<u32>,
     pub limit: Option<u32>,
 }
@@ -130,6 +138,19 @@ enum BindParam {
     I64(i64),
     Bool(bool),
     DateTime(DateTime<Utc>),
+}
+
+#[derive(Debug, Serialize)]
+struct AlertHistoryResponse {
+    #[serde(flatten)]
+    page: PaginatedResponse<AlertHistoryRecord>,
+    next_cursor: Option<String>,
+}
+
+#[derive(Debug)]
+struct AlertHistoryCursor {
+    fired_at: DateTime<Utc>,
+    id: i64,
 }
 
 const RULE_TYPES: [&str; 5] = [
@@ -156,6 +177,88 @@ fn parse_datetime(raw: &str) -> Option<DateTime<Utc>> {
         return Some(DateTime::from_naive_utc_and_offset(dt, Utc));
     }
     None
+}
+
+/// Resolves alert history pagination parameters and keeps deprecated page path for compatibility.
+fn resolve_history_pagination(q: &AlertHistoryQuery) -> (u32, u32) {
+    let page = q.page.unwrap_or(1).max(1);
+    let limit = q
+        .limit
+        .unwrap_or(DEFAULT_ALERT_HISTORY_LIMIT)
+        .clamp(1, MAX_ALERT_HISTORY_LIMIT);
+    (page, limit)
+}
+
+/// Builds a uniform validation error for malformed alert-history cursors.
+fn invalid_cursor(request_id: &str, message: &str) -> ApiError {
+    ApiError::new(StatusCode::BAD_REQUEST, error::INVALID_INPUT, message)
+        .with_request_id(request_id)
+}
+
+/// Hex-encodes cursor payload into a query-safe opaque token.
+fn encode_cursor_payload(payload: &str) -> String {
+    let mut out = String::with_capacity(payload.len() * 2);
+    for byte in payload.bytes() {
+        let _ = write!(&mut out, "{byte:02x}");
+    }
+    out
+}
+
+/// Decodes an opaque hex cursor payload into UTF-8 string content.
+fn decode_cursor_payload(raw: &str, request_id: &str, message: &str) -> Result<String, ApiError> {
+    if raw.is_empty() || raw.len() % 2 != 0 || !raw.is_ascii() {
+        return Err(invalid_cursor(request_id, message));
+    }
+
+    let mut bytes = Vec::with_capacity(raw.len() / 2);
+    for chunk in raw.as_bytes().chunks_exact(2) {
+        let pair = std::str::from_utf8(chunk).map_err(|_| invalid_cursor(request_id, message))?;
+        let byte = u8::from_str_radix(pair, 16).map_err(|_| invalid_cursor(request_id, message))?;
+        bytes.push(byte);
+    }
+
+    String::from_utf8(bytes).map_err(|_| invalid_cursor(request_id, message))
+}
+
+/// Resolves deprecated page-based offset and rejects pathological scans.
+fn deprecated_offset(page: u32, limit: u32, request_id: &str) -> Result<Option<i64>, ApiError> {
+    if page <= 1 {
+        return Ok(None);
+    }
+
+    let offset = u64::from(page.saturating_sub(1)) * u64::from(limit);
+    if offset > MAX_DEPRECATED_OFFSET {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            error::INVALID_INPUT,
+            "Deprecated page pagination exceeds the maximum offset; use cursor pagination",
+        )
+        .with_request_id(request_id));
+    }
+
+    Ok(Some(offset as i64))
+}
+
+/// Encodes alert-history cursor into query-safe string.
+fn encode_alert_history_cursor(fired_at: DateTime<Utc>, id: i64) -> String {
+    encode_cursor_payload(&format!("{}\n{}", fired_at.to_rfc3339(), id))
+}
+
+/// Decodes alert-history cursor from client query.
+fn decode_alert_history_cursor(
+    raw: &str,
+    request_id: &str,
+) -> Result<AlertHistoryCursor, ApiError> {
+    let payload = decode_cursor_payload(raw, request_id, "Invalid alert history cursor")?;
+    let (fired_at_raw, id_raw) = payload
+        .split_once('\n')
+        .ok_or_else(|| invalid_cursor(request_id, "Invalid alert history cursor"))?;
+    let fired_at = parse_datetime(fired_at_raw)
+        .ok_or_else(|| invalid_cursor(request_id, "Invalid alert history cursor timestamp"))?;
+    let id = id_raw
+        .parse::<i64>()
+        .map_err(|_| invalid_cursor(request_id, "Invalid alert history cursor id"))?;
+    Ok(AlertHistoryCursor { fired_at, id })
 }
 
 /// Parses optional datetime parameter with API-style validation errors.
@@ -810,13 +913,16 @@ pub async fn alert_history(
 
     let from_dt = parse_datetime_param(&q.from_ts, "from", &auth.request_id)?;
     let to_dt = parse_datetime_param(&q.to_ts, "to", &auth.request_id)?;
-    let pagination = PaginationParams {
-        page: q.page,
-        limit: q.limit,
+    let (page, limit) = resolve_history_pagination(&q);
+    let cursor = match q.cursor.as_deref() {
+        Some(raw) => Some(decode_alert_history_cursor(raw, &auth.request_id)?),
+        None => None,
     };
-    let page = pagination.page_or(1);
-    let limit = pagination.limit_or(50, 200);
-    let offset = pagination.offset(50, 200);
+    let offset = if cursor.is_none() {
+        deprecated_offset(page, limit, &auth.request_id)?
+    } else {
+        None
+    };
 
     let mut conditions = Vec::<String>::new();
     let mut binds = Vec::<BindParam>::new();
@@ -844,6 +950,15 @@ pub async fn alert_history(
         conditions.push("fired_at <= ?".to_string());
         binds.push(BindParam::DateTime(to));
     }
+    if let Some(cursor) = &cursor {
+        conditions.push(
+            "(julianday(fired_at) < julianday(?) OR (julianday(fired_at) = julianday(?) AND id < ?))"
+                .to_string(),
+        );
+        binds.push(BindParam::DateTime(cursor.fired_at));
+        binds.push(BindParam::DateTime(cursor.fired_at));
+        binds.push(BindParam::I64(cursor.id));
+    }
 
     let where_clause = if conditions.is_empty() {
         String::new()
@@ -866,15 +981,22 @@ pub async fn alert_history(
     let total: i64 = total_row.try_get("c").unwrap_or(0);
 
     let mut data_binds = binds.clone();
-    data_binds.push(BindParam::I64(i64::from(limit)));
-    data_binds.push(BindParam::I64(offset));
+    data_binds.push(BindParam::I64(i64::from(limit) + 1));
+    if let Some(offset) = offset {
+        data_binds.push(BindParam::I64(offset));
+    }
+    let pagination_clause = if offset.is_some() {
+        "LIMIT ? OFFSET ?"
+    } else {
+        "LIMIT ?"
+    };
     let data_sql = format!(
         "SELECT id, rule_id, rule_name, rule_type, severity, ip, mac, user_name, source,
                 details, webhook_status, webhook_response, fired_at
          FROM alert_history
          {where_clause}
-         ORDER BY fired_at DESC
-         LIMIT ? OFFSET ?"
+         ORDER BY julianday(fired_at) DESC, id DESC
+         {pagination_clause}"
     );
     let rows = apply_binds(sqlx::query(&data_sql), &data_binds)
         .fetch_all(db.pool())
@@ -889,7 +1011,7 @@ pub async fn alert_history(
             .with_request_id(&auth.request_id)
         })?;
 
-    let mut data = Vec::with_capacity(rows.len());
+    let mut data = Vec::with_capacity(rows.len().min(limit as usize));
     for row in rows {
         data.push(AlertHistoryRecord {
             id: row.try_get("id").unwrap_or(0),
@@ -908,7 +1030,21 @@ pub async fn alert_history(
         });
     }
 
-    Ok(Json(PaginatedResponse::new(data, total, page, limit)))
+    let next_cursor = if data.len() > limit as usize {
+        let cursor_row = data
+            .get(limit as usize - 1)
+            .expect("cursor row must exist when data exceeds limit");
+        let next = encode_alert_history_cursor(cursor_row.fired_at, cursor_row.id);
+        data.truncate(limit as usize);
+        Some(next)
+    } else {
+        None
+    };
+
+    Ok(Json(AlertHistoryResponse {
+        page: PaginatedResponse::new(data, total, page, limit),
+        next_cursor,
+    }))
 }
 
 /// Returns alert summary statistics for the last 24h.
