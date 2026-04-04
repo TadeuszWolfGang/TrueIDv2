@@ -5663,3 +5663,720 @@ async fn test_login_rate_limit_wrong_credentials_still_counts() {
         "failed logins should consume rate limit quota"
     );
 }
+
+// ── Phase 3: API contract tests ──
+
+// ── 3a: Response schema contracts ──
+
+#[tokio::test]
+async fn test_contract_search_response_shape() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/search?q=jkowalski").await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Required top-level fields
+    assert!(body["page"].is_number(), "page must be a number");
+    assert!(body["limit"].is_number(), "limit must be a number");
+    assert!(body["query_time_ms"].is_number(), "query_time_ms must be present");
+
+    // Mappings section structure
+    let mappings = &body["mappings"];
+    assert!(mappings["data"].is_array(), "mappings.data must be an array");
+    assert!(mappings["total"].is_number(), "mappings.total must be a number");
+
+    // Mapping record required fields
+    let m = &mappings["data"][0];
+    assert!(m["ip"].is_string(), "mapping.ip must be a string");
+    assert!(m["source"].is_string(), "mapping.source must be a string");
+    assert!(m["last_seen"].is_string(), "mapping.last_seen must be a string");
+    assert!(m["confidence_score"].is_number(), "mapping.confidence_score must be a number");
+    assert!(m["is_active"].is_boolean(), "mapping.is_active must be a boolean");
+    assert!(m["current_users"].is_array(), "mapping.current_users must be an array");
+
+    // Events section structure
+    let events = &body["events"];
+    assert!(events["data"].is_array(), "events.data must be an array");
+    assert!(events["total"].is_number(), "events.total must be a number");
+}
+
+#[tokio::test]
+async fn test_contract_search_mappings_enrichment_fields() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/search?ip=10.1.2.3&scope=mappings").await;
+    assert_eq!(status, StatusCode::OK);
+
+    let m = &body["mappings"]["data"][0];
+    // Phase 2+ enrichment fields must be present (even if null)
+    for field in &[
+        "vendor", "subnet_id", "subnet_name", "hostname",
+        "device_type", "multi_user", "groups", "country_code",
+        "city", "tags",
+    ] {
+        assert!(
+            !m[field].is_null() || m.get(field).is_some(),
+            "enrichment field '{}' must be present in mapping response",
+            field
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_contract_conflicts_response_shape() {
+    let (app, db) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    // Seed a conflict
+    sqlx::query(
+        "INSERT INTO conflicts (conflict_type, severity, ip, user_old, user_new, source, detected_at)
+         VALUES ('ip_user_change', 'warning', '10.1.2.3', 'alice', 'bob', 'Radius', datetime('now'))",
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
+
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/conflicts").await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Paginated response envelope
+    assert!(body["data"].is_array());
+    assert!(body["total"].is_number());
+    assert!(body["page"].is_number());
+    assert!(body["limit"].is_number());
+    assert!(body["total_pages"].is_number());
+    // next_cursor may be null or string
+    assert!(body["next_cursor"].is_null() || body["next_cursor"].is_string());
+
+    // Conflict record fields
+    let c = &body["data"][0];
+    assert!(c["id"].is_number());
+    assert!(c["conflict_type"].is_string());
+    assert!(c["severity"].is_string());
+    assert!(c["detected_at"].is_string());
+    assert!(c["source"].is_string());
+}
+
+#[tokio::test]
+async fn test_contract_alerts_history_response_shape() {
+    let (app, db) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    // Seed alert rule + history
+    sqlx::query(
+        "INSERT INTO alert_rules (id, name, enabled, rule_type, severity, action_log, cooldown_seconds)
+         VALUES (1, 'test-rule', 1, 'new_mac', 'warning', 1, 300)",
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO alert_history (rule_id, rule_name, rule_type, severity, ip, user_name, source, details, webhook_status)
+         VALUES (1, 'test-rule', 'new_mac', 'warning', '10.1.2.3', 'alice', 'Radius', '{}', 'no_webhook')",
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
+
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/alerts/history").await;
+    assert_eq!(status, StatusCode::OK);
+
+    assert!(body["data"].is_array());
+    assert!(body["total"].is_number());
+    assert!(body["next_cursor"].is_null() || body["next_cursor"].is_string());
+
+    let h = &body["data"][0];
+    assert!(h["id"].is_number());
+    assert!(h["rule_id"].is_number());
+    assert!(h["rule_name"].is_string());
+    assert!(h["rule_type"].is_string());
+    assert!(h["severity"].is_string());
+    assert!(h["fired_at"].is_string());
+}
+
+#[tokio::test]
+async fn test_contract_timeline_ip_response_shape() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/timeline/ip/10.1.2.3").await;
+    assert_eq!(status, StatusCode::OK);
+
+    assert!(body["ip"].is_string());
+    assert!(body["current_mapping"].is_object());
+    assert!(body["events"]["data"].is_array());
+    assert!(body["events"]["total"].is_number());
+    assert!(body["events"]["next_cursor"].is_null() || body["events"]["next_cursor"].is_string());
+    assert!(body["user_changes"].is_array());
+    assert!(body["conflicts_count"].is_number());
+
+    let cm = &body["current_mapping"];
+    assert!(cm["user"].is_string());
+    assert!(cm["source"].is_string());
+    assert!(cm["last_seen"].is_string());
+    assert!(cm["is_active"].is_boolean());
+}
+
+#[tokio::test]
+async fn test_contract_timeline_user_response_shape() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/timeline/user/jkowalski").await;
+    assert_eq!(status, StatusCode::OK);
+
+    assert!(body["user"].is_string());
+    assert!(body["active_mappings"].is_array());
+    assert!(body["events"]["data"].is_array());
+    assert!(body["ip_addresses_used"].is_array());
+}
+
+#[tokio::test]
+async fn test_contract_timeline_mac_response_shape() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, body) = auth_get(
+        &app,
+        &cookie,
+        &format!("/api/v2/timeline/mac/{}", encode("AA:BB:CC:DD:EE:01")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    assert!(body["mac"].is_string());
+    assert!(body["current_mappings"].is_array());
+    assert!(body["ip_history"].is_array());
+}
+
+// ── 3b: Cursor pagination contracts ──
+
+#[tokio::test]
+async fn test_contract_cursor_pagination_chaining_conflicts() {
+    let (app, db) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    // Seed 5 conflicts to test cursor chaining
+    for i in 0..5 {
+        sqlx::query(
+            "INSERT INTO conflicts (conflict_type, severity, ip, user_old, user_new, source, detected_at)
+             VALUES ('ip_user_change', 'warning', ?, ?, ?, 'Radius', datetime('now', ? || ' seconds'))",
+        )
+        .bind(format!("10.0.0.{}", i + 1))
+        .bind(format!("old-user-{i}"))
+        .bind(format!("new-user-{i}"))
+        .bind(format!("-{}", 300 - i * 10))
+        .execute(db.pool())
+        .await
+        .unwrap();
+    }
+
+    // Page 1: limit=2
+    let (s1, p1) = auth_get(&app, &cookie, "/api/v2/conflicts?limit=2").await;
+    assert_eq!(s1, StatusCode::OK);
+    assert_eq!(p1["data"].as_array().unwrap().len(), 2);
+    assert!(p1["total"].as_i64().unwrap() >= 5);
+    let cursor1 = p1["next_cursor"].as_str().expect("first page should have next_cursor");
+
+    // Page 2: use cursor from page 1
+    let (s2, p2) = auth_get(
+        &app,
+        &cookie,
+        &format!("/api/v2/conflicts?limit=2&cursor={cursor1}"),
+    )
+    .await;
+    assert_eq!(s2, StatusCode::OK);
+    assert_eq!(p2["data"].as_array().unwrap().len(), 2);
+
+    // No overlap between pages
+    let ids1: Vec<i64> = p1["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["id"].as_i64().unwrap())
+        .collect();
+    let ids2: Vec<i64> = p2["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["id"].as_i64().unwrap())
+        .collect();
+    assert!(
+        ids1.iter().all(|id| !ids2.contains(id)),
+        "cursor pages must not overlap: {:?} vs {:?}",
+        ids1,
+        ids2
+    );
+}
+
+#[tokio::test]
+async fn test_contract_cursor_pagination_chaining_alerts() {
+    let (app, db) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    sqlx::query(
+        "INSERT INTO alert_rules (id, name, enabled, rule_type, severity, action_log, cooldown_seconds)
+         VALUES (1, 'test-rule', 1, 'new_mac', 'warning', 1, 300)",
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
+
+    for i in 0..5 {
+        sqlx::query(
+            "INSERT INTO alert_history (rule_id, rule_name, rule_type, severity, ip, source, details, webhook_status, fired_at)
+             VALUES (1, 'test-rule', 'new_mac', 'warning', ?, 'Radius', '{}', 'sent', datetime('now', ? || ' seconds'))",
+        )
+        .bind(format!("10.0.0.{}", i + 1))
+        .bind(format!("-{}", 300 - i * 10))
+        .execute(db.pool())
+        .await
+        .unwrap();
+    }
+
+    let (s1, p1) = auth_get(&app, &cookie, "/api/v2/alerts/history?limit=2").await;
+    assert_eq!(s1, StatusCode::OK);
+    assert_eq!(p1["data"].as_array().unwrap().len(), 2);
+    let cursor = p1["next_cursor"].as_str().expect("should have cursor");
+
+    let (s2, p2) = auth_get(
+        &app,
+        &cookie,
+        &format!("/api/v2/alerts/history?limit=2&cursor={cursor}"),
+    )
+    .await;
+    assert_eq!(s2, StatusCode::OK);
+    assert_eq!(p2["data"].as_array().unwrap().len(), 2);
+
+    // Verify ordering: DESC by fired_at
+    let ts1 = p1["data"][0]["fired_at"].as_str().unwrap();
+    let ts2 = p1["data"][1]["fired_at"].as_str().unwrap();
+    assert!(ts1 >= ts2, "alerts must be ordered DESC by fired_at");
+}
+
+#[tokio::test]
+async fn test_contract_cursor_is_opaque_hex() {
+    let (app, db) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    for i in 0..3 {
+        sqlx::query(
+            "INSERT INTO conflicts (conflict_type, severity, ip, source, detected_at)
+             VALUES ('ip_user_change', 'warning', ?, 'Radius', datetime('now', ? || ' seconds'))",
+        )
+        .bind(format!("10.0.0.{}", i + 1))
+        .bind(format!("-{}", 60 - i * 10))
+        .execute(db.pool())
+        .await
+        .unwrap();
+    }
+
+    let (_, body) = auth_get(&app, &cookie, "/api/v2/conflicts?limit=1").await;
+    let cursor = body["next_cursor"].as_str().unwrap();
+
+    // Cursor must be hex-encoded (only hex chars, even length)
+    assert!(
+        cursor.len() % 2 == 0 && cursor.chars().all(|c| c.is_ascii_hexdigit()),
+        "cursor must be hex-encoded: {cursor}"
+    );
+}
+
+#[tokio::test]
+async fn test_contract_last_page_has_no_cursor() {
+    let (app, db) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    // Seed exactly 2 conflicts
+    for i in 0..2 {
+        sqlx::query(
+            "INSERT INTO conflicts (conflict_type, severity, ip, source, detected_at)
+             VALUES ('ip_user_change', 'warning', ?, 'Radius', datetime('now', ? || ' seconds'))",
+        )
+        .bind(format!("10.0.0.{}", i + 1))
+        .bind(format!("-{}", 60 - i * 10))
+        .execute(db.pool())
+        .await
+        .unwrap();
+    }
+
+    // Fetch all in one page
+    let (_, body) = auth_get(&app, &cookie, "/api/v2/conflicts?limit=50").await;
+    assert!(
+        body["next_cursor"].is_null(),
+        "last page should have null next_cursor"
+    );
+}
+
+#[tokio::test]
+async fn test_contract_cursor_and_page_are_mutually_exclusive() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    // When cursor is provided, page parameter should be ignored (cursor takes precedence)
+    // This verifies the server doesn't error when both are given
+    let (status, _) = auth_get(
+        &app,
+        &cookie,
+        "/api/v2/conflicts?cursor=deadbeef&page=2&limit=10",
+    )
+    .await;
+    // Should either succeed (ignoring page) or return 400 for invalid cursor
+    // The important thing: it doesn't crash
+    assert!(
+        status == StatusCode::OK || status == StatusCode::BAD_REQUEST,
+        "mixed cursor+page should not cause 500: got {status}"
+    );
+}
+
+// ── 3c: Export format compliance ──
+
+#[tokio::test]
+async fn test_contract_export_csv_escapes_special_chars() {
+    let (app, db) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    // Seed mapping with comma and quote in raw_data via user field
+    // Note: CSV user column takes first user, current_users uses semicolons.
+    // The csv_escape function handles RFC4180 quoting.
+    let event = IdentityEvent {
+        source: SourceType::Manual,
+        ip: "10.99.99.1".parse().unwrap(),
+        user: "user,with\"quotes".to_string(),
+        timestamp: Utc::now(),
+        raw_data: "data with, comma and \"quotes\"".to_string(),
+        mac: Some("FF:FF:FF:FF:FF:01".to_string()),
+        confidence_score: 100,
+    };
+    db.upsert_mapping(event, None).await.unwrap();
+
+    let (status, headers, body) = auth_get_raw(
+        &app,
+        &cookie,
+        "/api/v2/export/mappings?format=csv&ip=10.99.99.1",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let csv = String::from_utf8(body).unwrap();
+    // The current_users column (semicolon-separated) should be quoted because
+    // the username contains comma and quotes
+    let data_line = csv.lines().nth(1).expect("should have data row");
+    assert!(
+        data_line.contains("with\"\"quotes"),
+        "CSV should double-quote internal quotes per RFC4180: {data_line}"
+    );
+
+    // Content-Type check
+    let ct = headers.get("content-type").unwrap().to_str().unwrap();
+    assert!(ct.contains("text/csv"), "export CSV content-type: {ct}");
+}
+
+#[tokio::test]
+async fn test_contract_export_csv_header_row() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, _, body) =
+        auth_get_raw(&app, &cookie, "/api/v2/export/mappings?format=csv").await;
+    assert_eq!(status, StatusCode::OK);
+
+    let csv = String::from_utf8(body).unwrap();
+    let header_line = csv.lines().next().unwrap();
+    let expected_columns = [
+        "ip", "user", "mac", "source", "last_seen", "confidence",
+        "is_active", "vendor", "subnet_id", "subnet_name", "hostname",
+        "device_type", "multi_user", "current_users", "groups",
+    ];
+    for col in &expected_columns {
+        assert!(
+            header_line.contains(col),
+            "CSV header missing column '{}': {}",
+            col,
+            header_line
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_contract_export_events_csv_header_row() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, _, body) =
+        auth_get_raw(&app, &cookie, "/api/v2/export/events?format=csv").await;
+    assert_eq!(status, StatusCode::OK);
+
+    let csv = String::from_utf8(body).unwrap();
+    let header_line = csv.lines().next().unwrap();
+    for col in &["id", "ip", "user", "source", "timestamp", "raw_data"] {
+        assert!(
+            header_line.contains(col),
+            "events CSV header missing '{}': {}",
+            col,
+            header_line
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_contract_export_content_disposition_header() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    // JSON export
+    let (_, json_headers, _) =
+        auth_get_raw(&app, &cookie, "/api/v2/export/mappings?format=json").await;
+    let json_cd = json_headers
+        .get("content-disposition")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(
+        json_cd.contains("attachment") && json_cd.contains(".json"),
+        "JSON content-disposition: {json_cd}"
+    );
+
+    // CSV export
+    let (_, csv_headers, _) =
+        auth_get_raw(&app, &cookie, "/api/v2/export/mappings?format=csv").await;
+    let csv_cd = csv_headers
+        .get("content-disposition")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(
+        csv_cd.contains("attachment") && csv_cd.contains(".csv"),
+        "CSV content-disposition: {csv_cd}"
+    );
+}
+
+#[tokio::test]
+async fn test_contract_export_json_is_array() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (_, _, body) =
+        auth_get_raw(&app, &cookie, "/api/v2/export/mappings?format=json").await;
+    let parsed: Value = serde_json::from_slice(&body).unwrap();
+    assert!(parsed.is_array(), "JSON export must be a top-level array");
+    assert!(parsed.as_array().unwrap().len() >= 5);
+
+    let (_, _, body) =
+        auth_get_raw(&app, &cookie, "/api/v2/export/events?format=json").await;
+    let parsed: Value = serde_json::from_slice(&body).unwrap();
+    assert!(parsed.is_array(), "events JSON export must be a top-level array");
+}
+
+#[tokio::test]
+async fn test_contract_export_csv_row_count_matches_data() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (_, _, body) =
+        auth_get_raw(&app, &cookie, "/api/v2/export/mappings?format=csv").await;
+    let csv = String::from_utf8(body).unwrap();
+    let lines: Vec<&str> = csv.lines().collect();
+    // Header + 5 base mappings (at least)
+    assert!(
+        lines.len() >= 6,
+        "CSV should have header + at least 5 data rows, got {} lines",
+        lines.len()
+    );
+}
+
+// ── 3d: Input validation boundary tests ──
+
+#[tokio::test]
+async fn test_contract_search_limit_clamped_to_max() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    // Requesting limit=999 should be clamped to 200
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/search?q=test&limit=999").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body["limit"].as_u64().unwrap() <= 200,
+        "limit should be clamped to max 200"
+    );
+}
+
+#[tokio::test]
+async fn test_contract_search_page_minimum_is_one() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/search?q=test&page=0").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body["page"].as_u64().unwrap() >= 1,
+        "page should be at least 1"
+    );
+}
+
+#[tokio::test]
+async fn test_contract_search_invalid_scope_rejected() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, _) = auth_get(&app, &cookie, "/api/v2/search?scope=invalid").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_contract_search_invalid_datetime_rejected() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, _) =
+        auth_get(&app, &cookie, "/api/v2/search?from=not-a-date&q=test").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_contract_search_supports_multiple_datetime_formats() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    // RFC3339
+    let (s1, _) = auth_get(
+        &app,
+        &cookie,
+        "/api/v2/search?from=2024-01-01T00:00:00Z&q=test",
+    )
+    .await;
+    assert_eq!(s1, StatusCode::OK, "RFC3339 format should be accepted");
+
+    // Naive ISO (T separator)
+    let (s2, _) = auth_get(
+        &app,
+        &cookie,
+        "/api/v2/search?from=2024-01-01T00:00:00&q=test",
+    )
+    .await;
+    assert_eq!(s2, StatusCode::OK, "naive ISO format should be accepted");
+
+    // Naive SQL (space separator)
+    let (s3, _) = auth_get(
+        &app,
+        &cookie,
+        &format!(
+            "/api/v2/search?from={}&q=test",
+            encode("2024-01-01 00:00:00")
+        ),
+    )
+    .await;
+    assert_eq!(s3, StatusCode::OK, "SQL datetime format should be accepted");
+}
+
+#[tokio::test]
+async fn test_contract_export_rejects_unsupported_format() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, _) = auth_get(&app, &cookie, "/api/v2/export/mappings?format=xml").await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "unsupported export format should be rejected"
+    );
+}
+
+#[tokio::test]
+async fn test_contract_conflicts_filter_by_severity() {
+    let (app, db) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    sqlx::query(
+        "INSERT INTO conflicts (conflict_type, severity, ip, source, detected_at)
+         VALUES ('ip_user_change', 'warning', '10.0.0.1', 'Radius', datetime('now'))",
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO conflicts (conflict_type, severity, ip, source, detected_at)
+         VALUES ('duplicate_mac', 'critical', '10.0.0.2', 'Radius', datetime('now'))",
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
+
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/conflicts?severity=critical").await;
+    assert_eq!(status, StatusCode::OK);
+
+    let conflicts = body["data"].as_array().unwrap();
+    assert!(
+        conflicts.iter().all(|c| c["severity"] == "critical"),
+        "severity filter should return only critical conflicts"
+    );
+}
+
+#[tokio::test]
+async fn test_contract_conflicts_filter_by_type() {
+    let (app, db) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    sqlx::query(
+        "INSERT INTO conflicts (conflict_type, severity, ip, source, detected_at)
+         VALUES ('ip_user_change', 'warning', '10.0.0.1', 'Radius', datetime('now'))",
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO conflicts (conflict_type, severity, ip, source, detected_at)
+         VALUES ('duplicate_mac', 'critical', '10.0.0.2', 'Radius', datetime('now'))",
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
+
+    let (status, body) = auth_get(
+        &app,
+        &cookie,
+        "/api/v2/conflicts?type=duplicate_mac",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let conflicts = body["data"].as_array().unwrap();
+    assert!(
+        conflicts
+            .iter()
+            .all(|c| c["conflict_type"] == "duplicate_mac"),
+        "type filter should return only duplicate_mac conflicts"
+    );
+}
+
+#[tokio::test]
+async fn test_contract_timeline_nonexistent_ip_returns_empty() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/timeline/ip/10.99.99.99").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["current_mapping"].is_null());
+    assert_eq!(body["events"]["data"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn test_contract_conflicts_stats_shape() {
+    let (app, db) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    sqlx::query(
+        "INSERT INTO conflicts (conflict_type, severity, ip, source, detected_at)
+         VALUES ('ip_user_change', 'warning', '10.0.0.1', 'Radius', datetime('now'))",
+    )
+    .execute(db.pool())
+    .await
+    .unwrap();
+
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/conflicts/stats").await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Stats should have aggregate structure
+    assert!(body["total"].is_number() || body["by_type"].is_object() || body["by_severity"].is_object(),
+        "conflicts stats should contain aggregate data"
+    );
+}
