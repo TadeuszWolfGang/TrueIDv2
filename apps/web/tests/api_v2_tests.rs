@@ -5708,7 +5708,9 @@ async fn test_contract_search_mappings_enrichment_fields() {
     assert_eq!(status, StatusCode::OK);
 
     let m = &body["mappings"]["data"][0];
-    // Phase 2+ enrichment fields must be present (even if null)
+    // NOTE: validates implementation shape, not OpenAPI contract.
+    // OpenAPI DeviceMapping schema does not yet declare country_code, city, tags.
+    // These assertions guard against regression until the spec catches up.
     for field in &[
         "vendor", "subnet_id", "subnet_name", "hostname",
         "device_type", "multi_user", "groups", "country_code",
@@ -6012,20 +6014,22 @@ async fn test_contract_cursor_and_page_are_mutually_exclusive() {
     let (app, _) = build_test_app().await;
     let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
 
-    // When cursor is provided, page parameter should be ignored (cursor takes precedence)
-    // This verifies the server doesn't error when both are given
-    let (status, _) = auth_get(
+    // "deadbeef" is syntactically valid hex but decodes to gibberish,
+    // so the server should reject it as an invalid cursor (400).
+    // This also implicitly verifies that cursor takes precedence over page
+    // when both are provided — the server parses cursor first.
+    let (status, body) = auth_get(
         &app,
         &cookie,
         "/api/v2/conflicts?cursor=deadbeef&page=2&limit=10",
     )
     .await;
-    // Should either succeed (ignoring page) or return 400 for invalid cursor
-    // The important thing: it doesn't crash
-    assert!(
-        status == StatusCode::OK || status == StatusCode::BAD_REQUEST,
-        "mixed cursor+page should not cause 500: got {status}"
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "invalid cursor should be rejected even when page is also provided"
     );
+    assert_eq!(body["code"], "INVALID_INPUT");
 }
 
 // ── 3c: Export format compliance ──
@@ -6375,8 +6379,21 @@ async fn test_contract_conflicts_stats_shape() {
     let (status, body) = auth_get(&app, &cookie, "/api/v2/conflicts/stats").await;
     assert_eq!(status, StatusCode::OK);
 
-    // Stats should have aggregate structure
-    assert!(body["total"].is_number() || body["by_type"].is_object() || body["by_severity"].is_object(),
-        "conflicts stats should contain aggregate data"
+    // Runtime returns ConflictStatsResponse { total_unresolved, by_type, by_severity }
+    assert!(
+        body["total_unresolved"].is_number(),
+        "conflicts stats must include total_unresolved"
+    );
+    assert!(
+        body["by_type"].is_object(),
+        "conflicts stats must include by_type breakdown"
+    );
+    assert!(
+        body["by_severity"].is_object(),
+        "conflicts stats must include by_severity breakdown"
+    );
+    assert!(
+        body["total_unresolved"].as_i64().unwrap() >= 1,
+        "seeded conflict should be counted"
     );
 }
