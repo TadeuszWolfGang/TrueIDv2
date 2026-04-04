@@ -267,14 +267,14 @@ fn encode_cursor_payload(payload: &str) -> String {
 
 /// Decodes an opaque hex cursor payload into UTF-8 string content.
 fn decode_cursor_payload(raw: &str, request_id: &str, message: &str) -> Result<String, ApiError> {
-    if raw.is_empty() || raw.len() % 2 != 0 {
+    if raw.is_empty() || raw.len() % 2 != 0 || !raw.is_ascii() {
         return Err(invalid_cursor(request_id, message));
     }
 
     let mut bytes = Vec::with_capacity(raw.len() / 2);
-    for idx in (0..raw.len()).step_by(2) {
-        let byte = u8::from_str_radix(&raw[idx..idx + 2], 16)
-            .map_err(|_| invalid_cursor(request_id, message))?;
+    for chunk in raw.as_bytes().chunks_exact(2) {
+        let pair = std::str::from_utf8(chunk).map_err(|_| invalid_cursor(request_id, message))?;
+        let byte = u8::from_str_radix(pair, 16).map_err(|_| invalid_cursor(request_id, message))?;
         bytes.push(byte);
     }
 
@@ -1053,6 +1053,13 @@ mod tests {
     #[test]
     fn decode_event_cursor_rejects_invalid_shape() {
         let err = decode_event_cursor("broken", "req-1").expect_err("cursor must fail");
+        assert_eq!(err.code, error::INVALID_INPUT);
+    }
+
+    #[test]
+    fn decode_event_cursor_rejects_non_ascii_input_without_panicking() {
+        let err = decode_event_cursor("0\u{80}000", "req-1")
+            .expect_err("cursor must reject invalid utf8-ish hex");
         assert_eq!(err.code, error::INVALID_INPUT);
     }
 
