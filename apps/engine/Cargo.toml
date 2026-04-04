@@ -32,3 +32,7 @@ ldap3 = { version = "0.12", default-features = false, features = ["tls-rustls-ri
 lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder"] }
 maxminddb = "0.27"
 hickory-resolver = { version = "0.25.2", features = ["tokio", "system-config"] }
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"

@@ -680,4 +680,502 @@ mod tests {
             "same rule/user/mac/source should stay on cooldown"
         );
     }
+
+    // ── Phase 1: evaluate_event rule type coverage ──
+
+    fn test_event(ip: &str, user: &str, mac: Option<&str>) -> IdentityEvent {
+        IdentityEvent {
+            source: trueid_common::model::SourceType::AdLog,
+            ip: ip.parse::<std::net::IpAddr>().expect("ip parse failed"),
+            user: user.to_string(),
+            timestamp: chrono::Utc::now(),
+            raw_data: format!("test event for {ip}"),
+            mac: mac.map(|m| m.to_string()),
+            confidence_score: 90,
+        }
+    }
+
+    fn make_rule(id: i64, name: &str, rule_type: &str) -> AlertRule {
+        AlertRule {
+            id,
+            name: name.to_string(),
+            enabled: true,
+            rule_type: rule_type.to_string(),
+            severity: "warning".to_string(),
+            conditions: None,
+            action_webhook_url: None,
+            action_webhook_headers: None,
+            action_log: true,
+            cooldown_seconds: 300,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_new_mac_fires_when_mac_unseen() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+        let event = test_event("10.0.0.1", "alice", Some("AA:BB:CC:DD:EE:01"));
+        let rules = vec![make_rule(1, "new-mac-rule", "new_mac")];
+
+        let firings = evaluate_event(db.pool(), &event, &[], &rules).await;
+
+        assert_eq!(firings.len(), 1);
+        assert_eq!(firings[0].rule_type, "new_mac");
+        assert_eq!(firings[0].rule_name, "new-mac-rule");
+    }
+
+    #[tokio::test]
+    async fn test_new_mac_does_not_fire_when_mac_exists() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+        db.upsert_mapping(
+            test_event("10.0.0.1", "alice", Some("AA:BB:CC:DD:EE:01")),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let event = test_event("10.0.0.2", "bob", Some("AA:BB:CC:DD:EE:01"));
+        let rules = vec![make_rule(1, "new-mac-rule", "new_mac")];
+
+        let firings = evaluate_event(db.pool(), &event, &[], &rules).await;
+
+        assert!(firings.is_empty(), "existing active MAC should not trigger new_mac");
+    }
+
+    #[tokio::test]
+    async fn test_new_mac_does_not_fire_without_mac() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+        let event = test_event("10.0.0.1", "alice", None);
+        let rules = vec![make_rule(1, "new-mac-rule", "new_mac")];
+
+        let firings = evaluate_event(db.pool(), &event, &[], &rules).await;
+
+        assert!(firings.is_empty(), "event without MAC should not trigger new_mac");
+    }
+
+    #[tokio::test]
+    async fn test_ip_conflict_fires_on_ip_user_change() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+        let event = test_event("10.0.0.1", "alice", Some("AA:BB:CC:DD:EE:01"));
+        let rules = vec![make_rule(1, "conflict-rule", "ip_conflict")];
+
+        let conflicts = vec![ConflictRecord {
+            id: 1,
+            conflict_type: "ip_user_change".to_string(),
+            severity: "warning".to_string(),
+            ip: Some("10.0.0.1".to_string()),
+            mac: None,
+            user_old: Some("bob".to_string()),
+            user_new: Some("alice".to_string()),
+            source: "AdLog".to_string(),
+            details: None,
+            detected_at: chrono::Utc::now(),
+            resolved_at: None,
+            resolved_by: None,
+        }];
+
+        let firings = evaluate_event(db.pool(), &event, &conflicts, &rules).await;
+
+        assert_eq!(firings.len(), 1);
+        assert_eq!(firings[0].rule_type, "ip_conflict");
+    }
+
+    #[tokio::test]
+    async fn test_ip_conflict_fires_on_duplicate_mac() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+        let event = test_event("10.0.0.1", "alice", Some("AA:BB:CC:DD:EE:01"));
+        let rules = vec![make_rule(1, "conflict-rule", "ip_conflict")];
+
+        let conflicts = vec![ConflictRecord {
+            id: 1,
+            conflict_type: "duplicate_mac".to_string(),
+            severity: "critical".to_string(),
+            ip: Some("10.0.0.1".to_string()),
+            mac: Some("AA:BB:CC:DD:EE:01".to_string()),
+            user_old: None,
+            user_new: Some("alice".to_string()),
+            source: "AdLog".to_string(),
+            details: None,
+            detected_at: chrono::Utc::now(),
+            resolved_at: None,
+            resolved_by: None,
+        }];
+
+        let firings = evaluate_event(db.pool(), &event, &conflicts, &rules).await;
+
+        assert_eq!(firings.len(), 1);
+        assert_eq!(firings[0].rule_type, "ip_conflict");
+    }
+
+    #[tokio::test]
+    async fn test_ip_conflict_ignores_mac_ip_conflict_type() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+        let event = test_event("10.0.0.1", "alice", Some("AA:BB:CC:DD:EE:01"));
+        let rules = vec![make_rule(1, "conflict-rule", "ip_conflict")];
+
+        let conflicts = vec![ConflictRecord {
+            id: 1,
+            conflict_type: "mac_ip_conflict".to_string(),
+            severity: "info".to_string(),
+            ip: Some("10.0.0.1".to_string()),
+            mac: Some("AA:BB:CC:DD:EE:01".to_string()),
+            user_old: None,
+            user_new: Some("alice".to_string()),
+            source: "AdLog".to_string(),
+            details: None,
+            detected_at: chrono::Utc::now(),
+            resolved_at: None,
+            resolved_by: None,
+        }];
+
+        let firings = evaluate_event(db.pool(), &event, &conflicts, &rules).await;
+
+        assert!(
+            firings.is_empty(),
+            "mac_ip_conflict (info) alone should not trigger ip_conflict rule"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_user_change_fires_when_user_differs_from_mapping() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+        db.upsert_mapping(
+            test_event("10.0.0.1", "alice", Some("AA:BB:CC:DD:EE:01")),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let event = test_event("10.0.0.1", "bob", Some("AA:BB:CC:DD:EE:01"));
+        let rules = vec![make_rule(1, "user-change-rule", "user_change")];
+
+        let firings = evaluate_event(db.pool(), &event, &[], &rules).await;
+
+        assert_eq!(firings.len(), 1);
+        assert_eq!(firings[0].rule_type, "user_change");
+    }
+
+    #[tokio::test]
+    async fn test_user_change_does_not_fire_for_same_user() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+        db.upsert_mapping(
+            test_event("10.0.0.1", "alice", Some("AA:BB:CC:DD:EE:01")),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let event = test_event("10.0.0.1", "alice", Some("AA:BB:CC:DD:EE:01"));
+        let rules = vec![make_rule(1, "user-change-rule", "user_change")];
+
+        let firings = evaluate_event(db.pool(), &event, &[], &rules).await;
+
+        assert!(firings.is_empty(), "same user should not trigger user_change");
+    }
+
+    #[tokio::test]
+    async fn test_user_change_does_not_fire_for_unknown_ip() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+        let event = test_event("10.0.0.99", "alice", Some("AA:BB:CC:DD:EE:01"));
+        let rules = vec![make_rule(1, "user-change-rule", "user_change")];
+
+        let firings = evaluate_event(db.pool(), &event, &[], &rules).await;
+
+        assert!(
+            firings.is_empty(),
+            "unmapped IP should not trigger user_change"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_new_subnet_fires_for_empty_subnet() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+        let event = test_event("192.168.1.50", "alice", Some("AA:BB:CC:DD:EE:01"));
+        let rules = vec![make_rule(1, "new-subnet-rule", "new_subnet")];
+
+        let firings = evaluate_event(db.pool(), &event, &[], &rules).await;
+
+        assert_eq!(firings.len(), 1);
+        assert_eq!(firings[0].rule_type, "new_subnet");
+    }
+
+    #[tokio::test]
+    async fn test_new_subnet_does_not_fire_when_subnet_has_mappings() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+        db.upsert_mapping(
+            test_event("192.168.1.10", "existing-user", Some("BB:CC:DD:EE:FF:01")),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let event = test_event("192.168.1.50", "alice", Some("AA:BB:CC:DD:EE:01"));
+        let rules = vec![make_rule(1, "new-subnet-rule", "new_subnet")];
+
+        let firings = evaluate_event(db.pool(), &event, &[], &rules).await;
+
+        assert!(
+            firings.is_empty(),
+            "subnet with existing mappings should not trigger new_subnet"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_source_down_never_fires() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+        let event = test_event("10.0.0.1", "alice", Some("AA:BB:CC:DD:EE:01"));
+        let rules = vec![make_rule(1, "source-down-rule", "source_down")];
+
+        let firings = evaluate_event(db.pool(), &event, &[], &rules).await;
+
+        assert!(firings.is_empty(), "source_down is not yet implemented");
+    }
+
+    #[tokio::test]
+    async fn test_unknown_rule_type_never_fires() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+        let event = test_event("10.0.0.1", "alice", Some("AA:BB:CC:DD:EE:01"));
+        let rules = vec![make_rule(1, "bogus-rule", "nonexistent_type")];
+
+        let firings = evaluate_event(db.pool(), &event, &[], &rules).await;
+
+        assert!(firings.is_empty(), "unknown rule type should never fire");
+    }
+
+    // ── Phase 1: multiple rules fire independently ──
+
+    #[tokio::test]
+    async fn test_multiple_rules_fire_independently() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+        db.upsert_mapping(
+            test_event("10.0.0.1", "alice", Some("AA:BB:CC:DD:EE:01")),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let event = test_event("10.0.0.1", "bob", Some("FF:EE:DD:CC:BB:AA"));
+        let conflicts = vec![ConflictRecord {
+            id: 1,
+            conflict_type: "ip_user_change".to_string(),
+            severity: "warning".to_string(),
+            ip: Some("10.0.0.1".to_string()),
+            mac: None,
+            user_old: Some("alice".to_string()),
+            user_new: Some("bob".to_string()),
+            source: "AdLog".to_string(),
+            details: None,
+            detected_at: chrono::Utc::now(),
+            resolved_at: None,
+            resolved_by: None,
+        }];
+        let rules = vec![
+            make_rule(1, "new-mac-rule", "new_mac"),
+            make_rule(2, "conflict-rule", "ip_conflict"),
+            make_rule(3, "user-change-rule", "user_change"),
+        ];
+
+        let firings = evaluate_event(db.pool(), &event, &conflicts, &rules).await;
+
+        let types: Vec<&str> = firings.iter().map(|f| f.rule_type.as_str()).collect();
+        assert!(types.contains(&"new_mac"), "new_mac should fire for unseen MAC");
+        assert!(
+            types.contains(&"ip_conflict"),
+            "ip_conflict should fire for ip_user_change"
+        );
+        assert!(
+            types.contains(&"user_change"),
+            "user_change should fire for different user"
+        );
+    }
+
+    // ── Phase 1: firing details and metadata ──
+
+    #[tokio::test]
+    async fn test_firing_metadata_correctness() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+        let event = test_event("10.0.0.1", "alice", Some("AA:BB:CC:DD:EE:01"));
+        let mut rule = make_rule(42, "test-meta", "new_mac");
+        rule.severity = "critical".to_string();
+        rule.cooldown_seconds = 120;
+        let rules = vec![rule];
+
+        let firings = evaluate_event(db.pool(), &event, &[], &rules).await;
+
+        assert_eq!(firings.len(), 1);
+        let f = &firings[0];
+        assert_eq!(f.rule_id, 42);
+        assert_eq!(f.rule_name, "test-meta");
+        assert_eq!(f.severity, "critical");
+        assert_eq!(f.ip.as_deref(), Some("10.0.0.1"));
+        assert_eq!(f.mac.as_deref(), Some("AA:BB:CC:DD:EE:01"));
+        assert_eq!(f.user_name.as_deref(), Some("alice"));
+        assert_eq!(f.cooldown_seconds, 120);
+
+        let details: serde_json::Value = serde_json::from_str(&f.details).unwrap();
+        assert_eq!(details["event_ip"], "10.0.0.1");
+        assert_eq!(details["event_user"], "alice");
+    }
+
+    // ── Phase 1: cooldown edge cases ──
+
+    #[tokio::test]
+    async fn test_cooldown_different_source_not_shared() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+        sqlx::query(
+            "INSERT INTO alert_rules (id, name, enabled, rule_type, severity, action_log, cooldown_seconds)
+             VALUES (1, 'test-rule', 1, 'new_mac', 'warning', 1, 300)",
+        )
+        .execute(db.pool())
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO alert_history (
+                rule_id, rule_name, rule_type, severity, ip, mac, user_name, source, details, webhook_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(1_i64)
+        .bind("test-rule")
+        .bind("new_mac")
+        .bind("warning")
+        .bind("")
+        .bind("AA:BB:CC:DD:EE:FF")
+        .bind("alice")
+        .bind("AdLog")
+        .bind("{}")
+        .bind("sent")
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+        let mut firing = sample_firing();
+        firing.source = "Radius".to_string();
+        assert!(
+            !is_on_cooldown(db.pool(), &firing).await,
+            "different source should not share cooldown bucket"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cooldown_different_mac_not_shared() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+        sqlx::query(
+            "INSERT INTO alert_rules (id, name, enabled, rule_type, severity, action_log, cooldown_seconds)
+             VALUES (1, 'test-rule', 1, 'new_mac', 'warning', 1, 300)",
+        )
+        .execute(db.pool())
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO alert_history (
+                rule_id, rule_name, rule_type, severity, ip, mac, user_name, source, details, webhook_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(1_i64)
+        .bind("test-rule")
+        .bind("new_mac")
+        .bind("warning")
+        .bind("")
+        .bind("AA:BB:CC:DD:EE:FF")
+        .bind("alice")
+        .bind("AdLog")
+        .bind("{}")
+        .bind("sent")
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+        let mut firing = sample_firing();
+        firing.mac = Some("11:22:33:44:55:66".to_string());
+        assert!(
+            !is_on_cooldown(db.pool(), &firing).await,
+            "different MAC should not share cooldown bucket"
+        );
+    }
+
+    // ── Phase 1: webhook security ──
+
+    #[test]
+    fn test_is_forbidden_webhook_ip_private_ranges() {
+        assert!(is_forbidden_webhook_ip("10.0.0.1".parse().unwrap()));
+        assert!(is_forbidden_webhook_ip("172.16.0.1".parse().unwrap()));
+        assert!(is_forbidden_webhook_ip("192.168.1.1".parse().unwrap()));
+        assert!(is_forbidden_webhook_ip("127.0.0.1".parse().unwrap()));
+        assert!(is_forbidden_webhook_ip("169.254.1.1".parse().unwrap()));
+        assert!(is_forbidden_webhook_ip("0.0.0.0".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_is_forbidden_webhook_ip_ipv6() {
+        assert!(is_forbidden_webhook_ip("::1".parse().unwrap()));
+        assert!(is_forbidden_webhook_ip("fe80::1".parse().unwrap()));
+        assert!(is_forbidden_webhook_ip("fc00::1".parse().unwrap()));
+        assert!(is_forbidden_webhook_ip("::".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_is_forbidden_webhook_ip_allows_public() {
+        assert!(!is_forbidden_webhook_ip("8.8.8.8".parse().unwrap()));
+        assert!(!is_forbidden_webhook_ip("1.1.1.1".parse().unwrap()));
+        assert!(!is_forbidden_webhook_ip(
+            "2607:f8b0:4004:800::200e".parse().unwrap()
+        ));
+    }
+
+    // ── Phase 1: build_extra_headers edge cases ──
+
+    #[test]
+    fn test_build_extra_headers_none_input() {
+        let headers = build_extra_headers(None);
+        assert!(headers.is_some());
+        assert!(headers.unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_build_extra_headers_invalid_json() {
+        let headers = build_extra_headers(Some("not json"));
+        assert!(headers.is_none());
+    }
+
+    #[test]
+    fn test_build_extra_headers_skips_non_string_values() {
+        let headers = build_extra_headers(Some(r#"{"X-Valid":"ok","X-Num":42}"#))
+            .expect("should parse");
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers[0].0.as_str(), "x-valid");
+    }
+
+    // ── Phase 1: load_rules from database ──
+
+    #[tokio::test]
+    async fn test_load_rules_returns_only_enabled() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+        sqlx::query(
+            "INSERT INTO alert_rules (name, enabled, rule_type, severity, action_log, cooldown_seconds)
+             VALUES ('enabled-rule', 1, 'new_mac', 'warning', 1, 300)",
+        )
+        .execute(db.pool())
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO alert_rules (name, enabled, rule_type, severity, action_log, cooldown_seconds)
+             VALUES ('disabled-rule', 0, 'new_mac', 'warning', 1, 300)",
+        )
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+        let rules = load_rules(db.pool()).await.unwrap();
+
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].name, "enabled-rule");
+    }
+
+    #[tokio::test]
+    async fn test_load_rules_empty_table() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+
+        let rules = load_rules(db.pool()).await.unwrap();
+
+        assert!(rules.is_empty());
+    }
 }

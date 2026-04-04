@@ -1192,4 +1192,325 @@ mod tests {
         db.close().await;
         std::fs::remove_dir_all(&base).ok();
     }
+
+    // ── Phase 1: source_priority hierarchy ──
+
+    #[test]
+    fn test_source_priority_ordering() {
+        assert_eq!(source_priority(&SourceType::Radius), 3);
+        assert_eq!(source_priority(&SourceType::AdLog), 2);
+        assert_eq!(source_priority(&SourceType::VpnAnyConnect), 2);
+        assert_eq!(source_priority(&SourceType::VpnGlobalProtect), 2);
+        assert_eq!(source_priority(&SourceType::VpnFortinet), 2);
+        assert_eq!(source_priority(&SourceType::DhcpLease), 1);
+        assert_eq!(source_priority(&SourceType::Manual), 0);
+    }
+
+    #[test]
+    fn test_source_priority_radius_wins_over_all() {
+        let radius = source_priority(&SourceType::Radius);
+        assert!(radius > source_priority(&SourceType::AdLog));
+        assert!(radius > source_priority(&SourceType::VpnAnyConnect));
+        assert!(radius > source_priority(&SourceType::DhcpLease));
+        assert!(radius > source_priority(&SourceType::Manual));
+    }
+
+    #[test]
+    fn test_source_priority_vpn_equals_adlog() {
+        let adlog = source_priority(&SourceType::AdLog);
+        assert_eq!(adlog, source_priority(&SourceType::VpnAnyConnect));
+        assert_eq!(adlog, source_priority(&SourceType::VpnGlobalProtect));
+        assert_eq!(adlog, source_priority(&SourceType::VpnFortinet));
+    }
+
+    // ── Phase 1: source_to_str / source_from_str round-trip ──
+
+    #[test]
+    fn test_source_roundtrip_all_variants() {
+        let variants = [
+            SourceType::Radius,
+            SourceType::AdLog,
+            SourceType::DhcpLease,
+            SourceType::Manual,
+            SourceType::VpnAnyConnect,
+            SourceType::VpnGlobalProtect,
+            SourceType::VpnFortinet,
+        ];
+        for src in variants {
+            let s = source_to_str(src);
+            let back = source_from_str(s);
+            assert_eq!(
+                back, src,
+                "roundtrip failed for {:?} -> {:?} -> {:?}",
+                src, s, back
+            );
+        }
+    }
+
+    #[test]
+    fn test_source_from_str_unknown_falls_back_to_manual() {
+        assert_eq!(source_from_str("Unknown"), SourceType::Manual);
+        assert_eq!(source_from_str(""), SourceType::Manual);
+        assert_eq!(source_from_str("syslog"), SourceType::Manual);
+    }
+
+    #[test]
+    fn test_source_from_str_dhcp_legacy_alias() {
+        assert_eq!(source_from_str("Dhcp"), SourceType::DhcpLease);
+        assert_eq!(source_from_str("DhcpLease"), SourceType::DhcpLease);
+    }
+
+    // ── Phase 1: upsert_mapping priority resolution ──
+
+    fn make_event(ip: &str, user: &str, source: SourceType, mac: Option<&str>) -> IdentityEvent {
+        IdentityEvent {
+            source,
+            ip: ip.parse().expect("ip parse failed"),
+            user: user.to_string(),
+            timestamp: Utc::now(),
+            raw_data: format!("event for {ip}"),
+            mac: mac.map(|m| m.to_string()),
+            confidence_score: 90,
+        }
+    }
+
+    /// Reads the raw `user` column from the mappings table (the "winner"
+    /// according to source priority), bypassing ip_sessions aggregation.
+    async fn mapping_user(db: &Db, ip: &str) -> String {
+        sqlx::query_scalar::<_, String>("SELECT user FROM mappings WHERE ip = ?")
+            .bind(ip)
+            .fetch_one(db.pool())
+            .await
+            .expect("mapping should exist")
+    }
+
+    #[tokio::test]
+    async fn test_upsert_new_ip_creates_mapping() {
+        let db = init_db("sqlite::memory:").await.unwrap();
+        let event = make_event("10.0.0.1", "alice", SourceType::Radius, Some("AA:BB:CC:DD:EE:01"));
+        db.upsert_mapping(event, Some("Cisco")).await.unwrap();
+
+        let mapping = db.get_mapping("10.0.0.1").await.unwrap().unwrap();
+        assert_eq!(mapping.source, SourceType::Radius);
+        assert_eq!(mapping_user(&db, "10.0.0.1").await, "alice");
+        assert_eq!(mapping.mac.as_deref(), Some("AA:BB:CC:DD:EE:01"));
+        assert_eq!(mapping.vendor.as_deref(), Some("Cisco"));
+        assert!(mapping.is_active);
+    }
+
+    #[tokio::test]
+    async fn test_upsert_higher_priority_replaces_user_and_source() {
+        let db = init_db("sqlite::memory:").await.unwrap();
+        // DhcpLease (priority 1)
+        db.upsert_mapping(
+            make_event("10.0.0.1", "dhcp-user", SourceType::DhcpLease, Some("AA:BB:CC:DD:EE:01")),
+            None,
+        )
+        .await
+        .unwrap();
+
+        // Radius (priority 3) should replace
+        db.upsert_mapping(
+            make_event("10.0.0.1", "radius-user", SourceType::Radius, Some("AA:BB:CC:DD:EE:01")),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let mapping = db.get_mapping("10.0.0.1").await.unwrap().unwrap();
+        assert_eq!(mapping.source, SourceType::Radius);
+        assert_eq!(mapping_user(&db, "10.0.0.1").await, "radius-user");
+    }
+
+    #[tokio::test]
+    async fn test_upsert_lower_priority_keeps_existing_user_and_source() {
+        let db = init_db("sqlite::memory:").await.unwrap();
+        // Radius (priority 3)
+        db.upsert_mapping(
+            make_event("10.0.0.1", "radius-user", SourceType::Radius, Some("AA:BB:CC:DD:EE:01")),
+            None,
+        )
+        .await
+        .unwrap();
+
+        // DhcpLease (priority 1) should NOT replace user/source
+        db.upsert_mapping(
+            make_event("10.0.0.1", "dhcp-user", SourceType::DhcpLease, None),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let mapping = db.get_mapping("10.0.0.1").await.unwrap().unwrap();
+        assert_eq!(mapping.source, SourceType::Radius);
+        assert_eq!(mapping_user(&db, "10.0.0.1").await, "radius-user");
+        assert!(mapping.is_active, "lower-priority event should still refresh is_active");
+    }
+
+    #[tokio::test]
+    async fn test_upsert_equal_priority_replaces() {
+        let db = init_db("sqlite::memory:").await.unwrap();
+        // AdLog (priority 2)
+        db.upsert_mapping(
+            make_event("10.0.0.1", "ad-user", SourceType::AdLog, Some("AA:BB:CC:DD:EE:01")),
+            None,
+        )
+        .await
+        .unwrap();
+
+        // VpnAnyConnect (priority 2) — equal, should replace (>= semantics)
+        db.upsert_mapping(
+            make_event("10.0.0.1", "vpn-user", SourceType::VpnAnyConnect, Some("AA:BB:CC:DD:EE:01")),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let mapping = db.get_mapping("10.0.0.1").await.unwrap().unwrap();
+        assert_eq!(mapping.source, SourceType::VpnAnyConnect);
+        assert_eq!(mapping_user(&db, "10.0.0.1").await, "vpn-user");
+    }
+
+    #[tokio::test]
+    async fn test_upsert_preserves_mac_when_new_is_none() {
+        let db = init_db("sqlite::memory:").await.unwrap();
+        db.upsert_mapping(
+            make_event("10.0.0.1", "alice", SourceType::Radius, Some("AA:BB:CC:DD:EE:01")),
+            Some("Cisco"),
+        )
+        .await
+        .unwrap();
+
+        // Update with no MAC — should keep existing via COALESCE
+        db.upsert_mapping(
+            make_event("10.0.0.1", "alice", SourceType::Radius, None),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let mapping = db.get_mapping("10.0.0.1").await.unwrap().unwrap();
+        assert_eq!(
+            mapping.mac.as_deref(),
+            Some("AA:BB:CC:DD:EE:01"),
+            "COALESCE should preserve existing MAC when new is NULL"
+        );
+        assert_eq!(
+            mapping.vendor.as_deref(),
+            Some("Cisco"),
+            "COALESCE should preserve existing vendor when new is NULL"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_upsert_lower_priority_preserves_mac_via_coalesce() {
+        let db = init_db("sqlite::memory:").await.unwrap();
+        db.upsert_mapping(
+            make_event("10.0.0.1", "radius-user", SourceType::Radius, Some("AA:BB:CC:DD:EE:01")),
+            Some("Cisco"),
+        )
+        .await
+        .unwrap();
+
+        // Lower priority, no MAC — should still preserve via COALESCE
+        db.upsert_mapping(
+            make_event("10.0.0.1", "dhcp-user", SourceType::DhcpLease, None),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let mapping = db.get_mapping("10.0.0.1").await.unwrap().unwrap();
+        assert_eq!(mapping.mac.as_deref(), Some("AA:BB:CC:DD:EE:01"));
+        assert_eq!(mapping.vendor.as_deref(), Some("Cisco"));
+    }
+
+    // ── Phase 1: multi-user session tracking ──
+
+    #[tokio::test]
+    async fn test_upsert_multi_user_flag() {
+        let db = init_db("sqlite::memory:").await.unwrap();
+        db.upsert_mapping(
+            make_event("10.0.0.1", "alice", SourceType::AdLog, Some("AA:BB:CC:DD:EE:01")),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let mapping = db.get_mapping("10.0.0.1").await.unwrap().unwrap();
+        assert!(!mapping.multi_user, "single user should not be multi_user");
+
+        // Different user on same IP via different source
+        db.upsert_mapping(
+            make_event("10.0.0.1", "bob", SourceType::Radius, Some("AA:BB:CC:DD:EE:01")),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let mapping = db.get_mapping("10.0.0.1").await.unwrap().unwrap();
+        assert!(mapping.multi_user, "two active users should set multi_user");
+    }
+
+    #[tokio::test]
+    async fn test_upsert_records_event_in_events_table() {
+        let db = init_db("sqlite::memory:").await.unwrap();
+        db.upsert_mapping(
+            make_event("10.0.0.1", "alice", SourceType::Radius, Some("AA:BB:CC:DD:EE:01")),
+            None,
+        )
+        .await
+        .unwrap();
+
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM events WHERE ip = '10.0.0.1'")
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+        assert_eq!(count, 1, "upsert_mapping should insert an audit event");
+    }
+
+    // ── Phase 1: full priority chain scenario ──
+
+    #[tokio::test]
+    async fn test_full_priority_chain_manual_dhcp_adlog_radius() {
+        let db = init_db("sqlite::memory:").await.unwrap();
+
+        // Manual (0) → DhcpLease (1) → AdLog (2) → Radius (3)
+        // Each higher should replace the previous.
+        db.upsert_mapping(make_event("10.0.0.1", "manual-user", SourceType::Manual, None), None)
+            .await
+            .unwrap();
+        let m = db.get_mapping("10.0.0.1").await.unwrap().unwrap();
+        assert_eq!(m.source, SourceType::Manual);
+
+        db.upsert_mapping(make_event("10.0.0.1", "dhcp-user", SourceType::DhcpLease, None), None)
+            .await
+            .unwrap();
+        let m = db.get_mapping("10.0.0.1").await.unwrap().unwrap();
+        assert_eq!(m.source, SourceType::DhcpLease);
+        assert_eq!(mapping_user(&db, "10.0.0.1").await, "dhcp-user");
+
+        db.upsert_mapping(make_event("10.0.0.1", "ad-user", SourceType::AdLog, None), None)
+            .await
+            .unwrap();
+        let m = db.get_mapping("10.0.0.1").await.unwrap().unwrap();
+        assert_eq!(m.source, SourceType::AdLog);
+        assert_eq!(mapping_user(&db, "10.0.0.1").await, "ad-user");
+
+        db.upsert_mapping(make_event("10.0.0.1", "radius-user", SourceType::Radius, None), None)
+            .await
+            .unwrap();
+        let m = db.get_mapping("10.0.0.1").await.unwrap().unwrap();
+        assert_eq!(m.source, SourceType::Radius);
+        assert_eq!(mapping_user(&db, "10.0.0.1").await, "radius-user");
+
+        // Now lower priority should not replace
+        db.upsert_mapping(make_event("10.0.0.1", "manual-again", SourceType::Manual, None), None)
+            .await
+            .unwrap();
+        let m = db.get_mapping("10.0.0.1").await.unwrap().unwrap();
+        assert_eq!(m.source, SourceType::Radius, "Manual should not replace Radius");
+        assert_eq!(mapping_user(&db, "10.0.0.1").await, "radius-user");
+    }
 }

@@ -337,4 +337,259 @@ mod tests {
             "expected duplicate_mac conflict for inactive prior mapping"
         );
     }
+
+    // ── Phase 1: ip_user_change detection ──
+
+    #[tokio::test]
+    async fn test_ip_user_change_fires_when_user_differs() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+        db.upsert_mapping(test_event("10.0.0.1", "alice", "AA:BB:CC:DD:EE:01"), None)
+            .await
+            .expect("seed mapping failed");
+
+        let conflicts = detect_conflicts(
+            db.pool(),
+            &test_event("10.0.0.1", "bob", "AA:BB:CC:DD:EE:01"),
+        )
+        .await
+        .expect("conflict detection failed");
+
+        let change = conflicts
+            .iter()
+            .find(|c| c.conflict_type == "ip_user_change");
+        assert!(change.is_some(), "expected ip_user_change conflict");
+        let c = change.unwrap();
+        assert_eq!(c.severity, "warning");
+        assert_eq!(c.user_old.as_deref(), Some("alice"));
+        assert_eq!(c.user_new.as_deref(), Some("bob"));
+        assert_eq!(c.ip.as_deref(), Some("10.0.0.1"));
+    }
+
+    #[tokio::test]
+    async fn test_ip_user_change_does_not_fire_for_same_user() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+        db.upsert_mapping(test_event("10.0.0.1", "alice", "AA:BB:CC:DD:EE:01"), None)
+            .await
+            .expect("seed mapping failed");
+
+        let conflicts = detect_conflicts(
+            db.pool(),
+            &test_event("10.0.0.1", "alice", "AA:BB:CC:DD:EE:02"),
+        )
+        .await
+        .expect("conflict detection failed");
+
+        assert!(
+            !conflicts.iter().any(|c| c.conflict_type == "ip_user_change"),
+            "same user should not trigger ip_user_change"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_ip_user_change_does_not_fire_for_new_ip() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+
+        let conflicts = detect_conflicts(
+            db.pool(),
+            &test_event("10.0.0.99", "alice", "AA:BB:CC:DD:EE:01"),
+        )
+        .await
+        .expect("conflict detection failed");
+
+        assert!(
+            conflicts.is_empty(),
+            "new IP with no prior mapping should produce no conflicts"
+        );
+    }
+
+    // ── Phase 1: mac_ip_conflict and duplicate_mac detection ──
+
+    #[tokio::test]
+    async fn test_mac_conflict_fires_when_mac_seen_on_different_ip() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+        db.upsert_mapping(test_event("10.0.0.1", "alice", "AA:BB:CC:DD:EE:01"), None)
+            .await
+            .expect("seed mapping failed");
+
+        let conflicts = detect_conflicts(
+            db.pool(),
+            &test_event("10.0.0.2", "bob", "AA:BB:CC:DD:EE:01"),
+        )
+        .await
+        .expect("conflict detection failed");
+
+        assert!(
+            conflicts.iter().any(|c| c.conflict_type == "mac_ip_conflict"),
+            "expected mac_ip_conflict when MAC appears on different IP"
+        );
+        let info = conflicts
+            .iter()
+            .find(|c| c.conflict_type == "mac_ip_conflict")
+            .unwrap();
+        assert_eq!(info.severity, "info");
+
+        assert!(
+            conflicts.iter().any(|c| c.conflict_type == "duplicate_mac"),
+            "expected duplicate_mac alongside mac_ip_conflict"
+        );
+        let crit = conflicts
+            .iter()
+            .find(|c| c.conflict_type == "duplicate_mac")
+            .unwrap();
+        assert_eq!(crit.severity, "critical");
+    }
+
+    #[tokio::test]
+    async fn test_mac_conflict_does_not_fire_for_same_ip() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+        db.upsert_mapping(test_event("10.0.0.1", "alice", "AA:BB:CC:DD:EE:01"), None)
+            .await
+            .expect("seed mapping failed");
+
+        let conflicts = detect_conflicts(
+            db.pool(),
+            &test_event("10.0.0.1", "bob", "AA:BB:CC:DD:EE:01"),
+        )
+        .await
+        .expect("conflict detection failed");
+
+        assert!(
+            !conflicts.iter().any(|c| c.conflict_type == "mac_ip_conflict"),
+            "same IP should not trigger mac_ip_conflict"
+        );
+        assert!(
+            !conflicts.iter().any(|c| c.conflict_type == "duplicate_mac"),
+            "same IP should not trigger duplicate_mac"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_no_mac_conflict_without_mac_in_event() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+        db.upsert_mapping(test_event("10.0.0.1", "alice", "AA:BB:CC:DD:EE:01"), None)
+            .await
+            .expect("seed mapping failed");
+
+        let event = IdentityEvent {
+            source: SourceType::AdLog,
+            ip: "10.0.0.2".parse::<IpAddr>().unwrap(),
+            user: "bob".to_string(),
+            timestamp: Utc::now(),
+            raw_data: "no-mac event".to_string(),
+            mac: None,
+            confidence_score: 90,
+        };
+
+        let conflicts = detect_conflicts(db.pool(), &event)
+            .await
+            .expect("conflict detection failed");
+
+        assert!(
+            !conflicts.iter().any(|c| c.conflict_type == "mac_ip_conflict"
+                || c.conflict_type == "duplicate_mac"),
+            "events without MAC should not produce MAC-related conflicts"
+        );
+    }
+
+    // ── Phase 1: multi-IP MAC scenario ──
+
+    #[tokio::test]
+    async fn test_duplicate_mac_reports_all_other_ips_in_details() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+        db.upsert_mapping(test_event("10.0.0.1", "alice", "AA:BB:CC:DD:EE:01"), None)
+            .await
+            .expect("seed first mapping");
+        db.upsert_mapping(test_event("10.0.0.2", "bob", "AA:BB:CC:DD:EE:01"), None)
+            .await
+            .expect("seed second mapping");
+
+        let conflicts = detect_conflicts(
+            db.pool(),
+            &test_event("10.0.0.3", "charlie", "AA:BB:CC:DD:EE:01"),
+        )
+        .await
+        .expect("conflict detection failed");
+
+        let dup = conflicts
+            .iter()
+            .find(|c| c.conflict_type == "duplicate_mac")
+            .expect("expected duplicate_mac conflict");
+
+        let details: serde_json::Value =
+            serde_json::from_str(dup.details.as_deref().unwrap()).unwrap();
+        let other_ips = details["other_ips"].as_array().unwrap();
+        assert!(
+            other_ips.len() >= 2,
+            "expected at least 2 other IPs in details, got {}",
+            other_ips.len()
+        );
+    }
+
+    // ── Phase 1: deduplication edge cases ──
+
+    #[tokio::test]
+    async fn test_dedup_allows_same_type_different_ip() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+        db.upsert_mapping(test_event("10.0.0.1", "alice", "AA:BB:CC:DD:EE:01"), None)
+            .await
+            .unwrap();
+        db.upsert_mapping(test_event("10.0.0.2", "alice", "AA:BB:CC:DD:EE:02"), None)
+            .await
+            .unwrap();
+
+        let first = detect_conflicts(
+            db.pool(),
+            &test_event("10.0.0.1", "bob", "AA:BB:CC:DD:EE:01"),
+        )
+        .await
+        .unwrap();
+        let second = detect_conflicts(
+            db.pool(),
+            &test_event("10.0.0.2", "bob", "AA:BB:CC:DD:EE:02"),
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            first.iter().any(|c| c.conflict_type == "ip_user_change"),
+            "first ip_user_change should be inserted"
+        );
+        assert!(
+            second.iter().any(|c| c.conflict_type == "ip_user_change"),
+            "different IP should not be deduped against first"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolved_conflict_allows_new_insert() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+        db.upsert_mapping(test_event("10.0.0.1", "alice", "AA:BB:CC:DD:EE:01"), None)
+            .await
+            .unwrap();
+
+        let first = detect_conflicts(
+            db.pool(),
+            &test_event("10.0.0.1", "bob", "AA:BB:CC:DD:EE:01"),
+        )
+        .await
+        .unwrap();
+        assert!(!first.is_empty(), "first conflict should be inserted");
+
+        // Resolve all conflicts
+        sqlx::query("UPDATE conflicts SET resolved_at = datetime('now'), resolved_by = 'admin'")
+            .execute(db.pool())
+            .await
+            .unwrap();
+
+        let second = detect_conflicts(
+            db.pool(),
+            &test_event("10.0.0.1", "bob", "AA:BB:CC:DD:EE:01"),
+        )
+        .await
+        .unwrap();
+        assert!(
+            second.iter().any(|c| c.conflict_type == "ip_user_change"),
+            "resolved conflict should allow re-detection"
+        );
+    }
 }
