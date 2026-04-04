@@ -63,6 +63,10 @@ async fn main() -> Result<()> {
             DEFAULT_DB_URL.to_string()
         }
     };
+    if let Err(err) = trueid_common::db::verify_sqlite_writable(&db_url) {
+        error!("FATAL: {err}");
+        std::process::exit(1);
+    }
     let http_addr = parse_socket_addr(
         &env_or_default("HTTP_BIND", DEFAULT_HTTP_ADDR),
         DEFAULT_HTTP_ADDR,

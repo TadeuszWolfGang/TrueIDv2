@@ -398,6 +398,7 @@ async fn main() -> Result<()> {
             DEFAULT_DB_URL.to_string()
         }
     };
+    trueid_common::db::verify_sqlite_writable(&db_url)?;
     let radius_bind_str = env_or_default("RADIUS_BIND", DEFAULT_RADIUS_ADDR);
     let ad_syslog_bind_str = env_or_default("AD_SYSLOG_BIND", DEFAULT_AD_SYSLOG_ADDR);
     let dhcp_syslog_bind_str = env_or_default("DHCP_SYSLOG_BIND", DEFAULT_DHCP_SYSLOG_ADDR);

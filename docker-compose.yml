@@ -1,7 +1,7 @@
 services:
   engine:
     build: .
-    command: trueid-engine
+    command: /usr/local/bin/trueid-engine
     working_dir: /app
     ports:
       - "${RADIUS_PORT:-1813}:1813/udp"
@@ -30,7 +30,7 @@ services:
       TLS_SERVER_KEY: "${TLS_SERVER_KEY:-}"
       RUST_LOG: "${RUST_LOG:-info}"
     healthcheck:
-      test: ["CMD-SHELL", "sqlite3 /app/data/net-identity.db 'SELECT 1' || exit 1"]
+      test: ["CMD", "/usr/local/bin/trueid-probe", "tcp", "127.0.0.1:8080"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -39,7 +39,7 @@ services:
 
   web:
     build: .
-    command: trueid-web
+    command: /usr/local/bin/trueid-web
     working_dir: /app
     ports:
       - "${WEB_PORT:-3000}:3000"
@@ -66,10 +66,11 @@ services:
       engine:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:3000/health"]
+      test: ["CMD", "/usr/local/bin/trueid", "--url", "http://127.0.0.1:3000", "--format", "json", "health"]
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 15s
     restart: unless-stopped
 
   # Optional: Prometheus metrics scraper

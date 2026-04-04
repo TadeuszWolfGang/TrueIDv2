@@ -51,7 +51,7 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     set -eux; \
-    cargo build --release --locked --bin trueid-engine --bin trueid-web --bin trueid; \
+    cargo build --release --locked --bin trueid-engine --bin trueid-web --bin trueid --bin trueid-probe; \
     max_glibc="$(strings /src/target/release/trueid-engine | grep -o 'GLIBC_[0-9.]\+' | sort -Vu | tail -n 1)"; \
     echo "Detected max required glibc: ${max_glibc}"; \
     test -n "${max_glibc}"; \
@@ -63,35 +63,26 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cp /src/target/release/trueid-web /out/trueid-web; \
     if [ -f /src/data/oui.csv ]; then cp /src/data/oui.csv /out/oui.csv; else : > /out/oui.csv; fi
 
-FROM debian:bookworm-slim AS runtime
+RUN mkdir -p /runtime-root/usr/local/bin /runtime-root/app/data /runtime-root/app/tls \
+    && cp /out/trueid-engine /runtime-root/usr/local/bin/trueid-engine \
+    && cp /out/trueid /runtime-root/usr/local/bin/trueid \
+    && cp /src/target/release/trueid-probe /runtime-root/usr/local/bin/trueid-probe \
+    && cp /out/trueid-web /runtime-root/usr/local/bin/trueid-web \
+    && cp -R /src/crates/common/migrations /runtime-root/app/migrations \
+    && cp -R /src/apps/web/assets /runtime-root/app/assets \
+    && cp /out/oui.csv /runtime-root/app/oui.csv
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    libssl3 \
-    sqlite3 \
-    curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && groupadd -r trueid \
-    && useradd -r -g trueid -d /app trueid
+FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
 
 WORKDIR /app
 
-COPY --from=builder /out/trueid-engine /usr/local/bin/trueid-engine
-COPY --from=builder /out/trueid        /usr/local/bin/trueid
-COPY --from=builder /out/trueid-web    /usr/local/bin/trueid-web
-COPY --from=builder /src/apps/web/assets              /app/assets
-COPY --from=builder /out/oui.csv                       /app/oui.csv
-COPY --from=builder /src/docker-entrypoint.sh         /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
-
-RUN mkdir -p /app/data /app/tls && chown -R trueid:trueid /app
-
-USER trueid
+COPY --from=builder --chown=nonroot:nonroot /runtime-root/ /
 
 ENV DATABASE_URL=sqlite:///app/data/net-identity.db?mode=rwc
 ENV OUI_CSV_PATH=/app/oui.csv
+ENV TRUEID_MIGRATIONS_DIR=/app/migrations
+ENV ASSETS_DIR=/app/assets
 
 EXPOSE 1813/udp 5514/udp 5516/udp 5518/udp 3000
 
-ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["trueid-engine"]
+CMD ["/usr/local/bin/trueid-engine"]
