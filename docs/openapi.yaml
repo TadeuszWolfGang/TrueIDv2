@@ -689,6 +689,9 @@ paths:
           name: mac
           schema: { type: string }
         - in: query
+          name: vendor
+          schema: { type: string }
+        - in: query
           name: source
           schema: { type: string }
         - in: query
@@ -697,6 +700,8 @@ paths:
         - in: query
           name: active
           schema: { type: boolean }
+        - $ref: '#/components/parameters/TimelineFrom'
+        - $ref: '#/components/parameters/TimelineTo'
         - $ref: '#/components/parameters/Sort'
         - $ref: '#/components/parameters/Order'
         - $ref: '#/components/parameters/Page'
@@ -736,14 +741,26 @@ paths:
           name: mac
           schema: { type: string }
         - in: query
+          name: vendor
+          schema: { type: string }
+        - in: query
           name: source
           schema: { type: string }
         - in: query
           name: active
           schema: { type: boolean }
+        - $ref: '#/components/parameters/TimelineFrom'
+        - $ref: '#/components/parameters/TimelineTo'
       responses:
         '200':
           description: Export data
+          headers:
+            Content-Disposition:
+              description: Attachment filename ending with `.json` or `.csv`.
+              schema: { type: string }
+            x-trueid-truncated:
+              description: Present with value `true` when the export hits the server-side row cap.
+              schema: { type: string }
           content:
             application/json:
               schema:
@@ -752,6 +769,9 @@ paths:
             text/csv:
               schema:
                 type: string
+                description: >
+                  RFC4180 CSV. The `user` column contains the first active user for the mapping,
+                  while `current_users` contains all active users joined with semicolons.
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -777,14 +797,23 @@ paths:
         - in: query
           name: source
           schema: { type: string }
+        - $ref: '#/components/parameters/TimelineFrom'
+        - $ref: '#/components/parameters/TimelineTo'
       responses:
         '200':
           description: Export data
+          headers:
+            Content-Disposition:
+              description: Attachment filename ending with `.json` or `.csv`.
+              schema: { type: string }
+            x-trueid-truncated:
+              description: Present with value `true` when the export hits the server-side row cap.
+              schema: { type: string }
           content:
             application/json:
               schema:
                 type: array
-                items: { type: object, additionalProperties: true }
+                items: { $ref: '#/components/schemas/StoredEvent' }
             text/csv:
               schema:
                 type: string
@@ -803,6 +832,7 @@ paths:
       parameters:
         - in: query
           name: type
+          description: Public alias for the internal `conflict_type` filter.
           schema: { type: string }
         - in: query
           name: severity
@@ -813,12 +843,8 @@ paths:
         - in: query
           name: resolved
           schema: { type: boolean }
-        - in: query
-          name: from
-          schema: { type: string, format: date-time }
-        - in: query
-          name: to
-          schema: { type: string, format: date-time }
+        - $ref: '#/components/parameters/TimelineFrom'
+        - $ref: '#/components/parameters/TimelineTo'
         - in: query
           name: cursor
           description: Opaque cursor returned by the previous conflicts page.
@@ -836,19 +862,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  data:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Conflict'
-                  total: { type: integer }
-                  page: { type: integer }
-                  limit: { type: integer }
-                  total_pages: { type: integer }
-                  next_cursor:
-                    type: string
-                    nullable: true
+                $ref: '#/components/schemas/PaginatedConflictResponse'
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -867,12 +881,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  total_unresolved: { type: integer }
-                  by_type:
-                    type: object
-                    additionalProperties: { type: integer }
+                $ref: '#/components/schemas/ConflictStatsResponse'
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/InternalError' }
@@ -916,11 +925,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  rules:
-                    type: array
-                    items: { $ref: '#/components/schemas/AlertRule' }
+                $ref: '#/components/schemas/AlertRulesResponse'
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/InternalError' }
@@ -935,13 +940,13 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/AlertRule'
+              $ref: '#/components/schemas/CreateAlertRuleRequest'
       responses:
-        '200':
+        '201':
           description: Rule created
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/AlertRule' }
+              schema: { $ref: '#/components/schemas/AlertRuleRecord' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -960,9 +965,13 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/AlertRule' }
+            schema: { $ref: '#/components/schemas/UpdateAlertRuleRequest' }
       responses:
-        '200': { $ref: '#/components/responses/OkMessage' }
+        '200':
+          description: Updated alert rule
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AlertRuleRecord' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -976,7 +985,8 @@ paths:
           csrfToken: []
       parameters: [ { $ref: '#/components/parameters/Id' } ]
       responses:
-        '200': { $ref: '#/components/responses/OkMessage' }
+        '204':
+          description: Alert rule deleted
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -1021,18 +1031,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  data:
-                    type: array
-                    items: { $ref: '#/components/schemas/AlertFiring' }
-                  total: { type: integer }
-                  page: { type: integer }
-                  limit: { type: integer }
-                  total_pages: { type: integer }
-                  next_cursor:
-                    type: string
-                    nullable: true
+                $ref: '#/components/schemas/PaginatedAlertHistoryResponse'
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -1051,8 +1050,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/AlertStatsResponse'
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/InternalError' }
@@ -1535,8 +1533,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/IpTimelineResponse'
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -1567,8 +1564,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/UserTimelineResponse'
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -1594,8 +1590,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                additionalProperties: true
+                $ref: '#/components/schemas/MacTimelineResponse'
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -2375,11 +2370,17 @@ components:
     TimelineFrom:
       in: query
       name: from
-      schema: { type: string, format: date-time }
+      description: >
+        Lower bound timestamp. Runtime accepts RFC3339, `YYYY-MM-DDTHH:MM:SS`,
+        and `YYYY-MM-DD HH:MM:SS`.
+      schema: { type: string }
     TimelineTo:
       in: query
       name: to
-      schema: { type: string, format: date-time }
+      description: >
+        Upper bound timestamp. Runtime accepts RFC3339, `YYYY-MM-DDTHH:MM:SS`,
+        and `YYYY-MM-DD HH:MM:SS`.
+      schema: { type: string }
     TimelineCursor:
       in: query
       name: cursor
@@ -2493,28 +2494,51 @@ components:
         created_at: { type: string, format: date-time, nullable: true }
         expires_at: { type: string, format: date-time, nullable: true }
         last_used_at: { type: string, format: date-time, nullable: true }
+    MappingTag:
+      type: object
+      properties:
+        tag: { type: string }
+        color: { type: string }
     DeviceMapping:
       type: object
       properties:
         ip: { type: string }
-        user: { type: string }
         mac: { type: string, nullable: true }
-        source: { type: string }
+        current_users:
+          type: array
+          description: Active users observed for this IP from `ip_sessions` aggregation.
+          items: { type: string }
         last_seen: { type: string, format: date-time }
-        confidence_score: { type: number, format: double, nullable: true }
+        source: { type: string }
+        confidence_score:
+          type: integer
+          minimum: 0
+          maximum: 100
         is_active: { type: boolean }
         vendor: { type: string, nullable: true }
         subnet_id: { type: integer, nullable: true }
         subnet_name: { type: string, nullable: true }
         hostname: { type: string, nullable: true }
         device_type: { type: string, nullable: true }
-        multi_user: { type: boolean, nullable: true }
-        current_users:
-          type: array
-          items: { type: string }
+        multi_user: { type: boolean }
         groups:
           type: array
+          nullable: true
           items: { type: string }
+        country_code: { type: string, nullable: true }
+        city: { type: string, nullable: true }
+        tags:
+          type: array
+          items: { $ref: '#/components/schemas/MappingTag' }
+    StoredEvent:
+      type: object
+      properties:
+        id: { type: integer }
+        ip: { type: string }
+        user: { type: string }
+        source: { type: string }
+        timestamp: { type: string, format: date-time }
+        raw_data: { type: string }
     MappingsPage:
       type: object
       properties:
@@ -2528,44 +2552,249 @@ components:
       type: object
       properties:
         id: { type: integer }
-        conflict_type: { type: string }
+        conflict_type:
+          type: string
+          description: Response field name for the conflict category. Query filtering uses the `type` parameter alias.
         severity: { type: string }
         ip: { type: string, nullable: true }
         mac: { type: string, nullable: true }
         user_old: { type: string, nullable: true }
         user_new: { type: string, nullable: true }
-        source: { type: string, nullable: true }
+        source: { type: string }
         details: { type: string, nullable: true }
         detected_at: { type: string, format: date-time }
         resolved_at: { type: string, format: date-time, nullable: true }
         resolved_by: { type: string, nullable: true }
-        resolution_note: { type: string, nullable: true }
-    AlertRule:
+    StringCountMap:
+      type: object
+      additionalProperties: { type: integer }
+    ConflictStatsResponse:
       type: object
       properties:
-        id: { type: integer, nullable: true }
+        total_unresolved: { type: integer }
+        by_type: { $ref: '#/components/schemas/StringCountMap' }
+        by_severity: { $ref: '#/components/schemas/StringCountMap' }
+    PaginatedMeta:
+      type: object
+      properties:
+        total: { type: integer }
+        page: { type: integer }
+        limit: { type: integer }
+        total_pages: { type: integer }
+        next_cursor: { type: string, nullable: true }
+    PaginatedConflictResponse:
+      allOf:
+        - $ref: '#/components/schemas/PaginatedMeta'
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: '#/components/schemas/Conflict' }
+    RuleChannelInfo:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        channel_type: { type: string }
+    AlertRuleRecord:
+      type: object
+      properties:
+        id: { type: integer }
         name: { type: string }
         enabled: { type: boolean }
         rule_type: { type: string }
         severity: { type: string }
         conditions:
-          type: object
-          additionalProperties: true
+          type: string
+          nullable: true
+          description: JSON-encoded condition payload stored verbatim in the database.
         action_webhook_url: { type: string, nullable: true }
+        action_webhook_headers:
+          type: string
+          nullable: true
+          description: JSON-encoded extra webhook headers stored verbatim in the database.
         action_log: { type: boolean }
-        cooldown_seconds: { type: integer, nullable: true }
+        cooldown_seconds: { type: integer }
+        channels:
+          type: array
+          items: { $ref: '#/components/schemas/RuleChannelInfo' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CreateAlertRuleRequest:
+      type: object
+      required: [name, rule_type, severity, action_log, cooldown_seconds]
+      properties:
+        name: { type: string }
+        rule_type: { type: string }
+        severity: { type: string }
+        conditions: { type: string, nullable: true }
+        action_webhook_url: { type: string, nullable: true }
+        action_webhook_headers: { type: string, nullable: true }
+        action_log: { type: boolean }
+        cooldown_seconds: { type: integer }
+        channel_ids:
+          type: array
+          nullable: true
+          items: { type: integer }
+    UpdateAlertRuleRequest:
+      type: object
+      properties:
+        name: { type: string }
+        enabled: { type: boolean }
+        rule_type: { type: string }
+        severity: { type: string }
+        conditions: { type: string, nullable: true }
+        action_webhook_url: { type: string, nullable: true }
+        action_webhook_headers: { type: string, nullable: true }
+        action_log: { type: boolean }
+        cooldown_seconds: { type: integer }
+        channel_ids:
+          type: array
+          nullable: true
+          items: { type: integer }
+    AlertRulesResponse:
+      type: object
+      properties:
+        rules:
+          type: array
+          items: { $ref: '#/components/schemas/AlertRuleRecord' }
     AlertFiring:
       type: object
       properties:
         id: { type: integer }
+        rule_id: { type: integer }
         rule_name: { type: string }
         rule_type: { type: string }
         severity: { type: string }
         ip: { type: string, nullable: true }
+        mac: { type: string, nullable: true }
         user_name: { type: string, nullable: true }
+        source: { type: string, nullable: true }
         details: { type: string, nullable: true }
         webhook_status: { type: string, nullable: true }
+        webhook_response: { type: string, nullable: true }
         fired_at: { type: string, format: date-time }
+    PaginatedAlertHistoryResponse:
+      allOf:
+        - $ref: '#/components/schemas/PaginatedMeta'
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: '#/components/schemas/AlertFiring' }
+    AlertStatsResponse:
+      type: object
+      properties:
+        total_rules: { type: integer }
+        enabled_rules: { type: integer }
+        total_fired_24h: { type: integer }
+        by_severity_24h: { $ref: '#/components/schemas/StringCountMap' }
+        by_type_24h: { $ref: '#/components/schemas/StringCountMap' }
+        webhook_success_rate_24h: { type: number, format: double }
+    CurrentIpMapping:
+      type: object
+      properties:
+        user: { type: string }
+        mac: { type: string, nullable: true }
+        source: { type: string }
+        last_seen: { type: string, format: date-time }
+        confidence: { type: integer }
+        is_active: { type: boolean }
+        vendor: { type: string, nullable: true }
+    IpTimelineEvent:
+      type: object
+      properties:
+        id: { type: integer }
+        user: { type: string }
+        source: { type: string }
+        timestamp: { type: string, format: date-time }
+    UserChange:
+      type: object
+      properties:
+        from_user: { type: string }
+        to_user: { type: string }
+        changed_at: { type: string, format: date-time }
+        source: { type: string }
+    PaginatedIpTimelineEvents:
+      allOf:
+        - $ref: '#/components/schemas/PaginatedMeta'
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: '#/components/schemas/IpTimelineEvent' }
+    IpTimelineResponse:
+      type: object
+      properties:
+        ip: { type: string }
+        current_mapping:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/CurrentIpMapping'
+        events:
+          $ref: '#/components/schemas/PaginatedIpTimelineEvents'
+        user_changes:
+          type: array
+          items: { $ref: '#/components/schemas/UserChange' }
+        conflicts_count: { type: integer }
+    UserActiveMapping:
+      type: object
+      properties:
+        ip: { type: string }
+        mac: { type: string, nullable: true }
+        source: { type: string }
+        last_seen: { type: string, format: date-time }
+        vendor: { type: string, nullable: true }
+    UserTimelineEvent:
+      type: object
+      properties:
+        id: { type: integer }
+        ip: { type: string }
+        source: { type: string }
+        timestamp: { type: string, format: date-time }
+    PaginatedUserTimelineEvents:
+      allOf:
+        - $ref: '#/components/schemas/PaginatedMeta'
+        - type: object
+          properties:
+            data:
+              type: array
+              items: { $ref: '#/components/schemas/UserTimelineEvent' }
+    UserTimelineResponse:
+      type: object
+      properties:
+        user: { type: string }
+        active_mappings:
+          type: array
+          items: { $ref: '#/components/schemas/UserActiveMapping' }
+        events:
+          $ref: '#/components/schemas/PaginatedUserTimelineEvents'
+        ip_addresses_used:
+          type: array
+          items: { type: string }
+    MacCurrentMapping:
+      type: object
+      properties:
+        ip: { type: string }
+        user: { type: string }
+        source: { type: string }
+        last_seen: { type: string, format: date-time }
+        is_active: { type: boolean }
+    MacTimelineResponse:
+      type: object
+      properties:
+        mac: { type: string }
+        current_mappings:
+          type: array
+          items: { $ref: '#/components/schemas/MacCurrentMapping' }
+        current_mappings_total: { type: integer }
+        current_mappings_page: { type: integer }
+        current_mappings_limit: { type: integer }
+        current_mappings_next_cursor: { type: string, nullable: true }
+        ip_history:
+          type: array
+          items: { type: string }
+        ip_history_truncated: { type: boolean }
     Subnet:
       type: object
       properties:
@@ -2703,25 +2932,33 @@ components:
         user: { type: string }
         mac: { type: string, nullable: true }
         source: { type: string, nullable: true }
+    SearchSectionDeviceMapping:
+      type: object
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/DeviceMapping' }
+        total: { type: integer }
+    SearchSectionStoredEvent:
+      type: object
+      properties:
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/StoredEvent' }
+        total: { type: integer }
     SearchResponse:
       type: object
       properties:
         mappings:
-          type: object
-          properties:
-            data:
-              type: array
-              items: { $ref: '#/components/schemas/DeviceMapping' }
-            total: { type: integer }
+          description: Null when the requested scope excludes mappings, for example `scope=events`.
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/SearchSectionDeviceMapping'
         events:
-          type: object
-          properties:
-            data:
-              type: array
-              items:
-                type: object
-                additionalProperties: true
-            total: { type: integer }
+          description: Null when the requested scope excludes events, for example `scope=mappings`.
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/SearchSectionStoredEvent'
         page: { type: integer }
         limit: { type: integer }
         query_time_ms: { type: integer }

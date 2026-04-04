@@ -5531,7 +5531,11 @@ async fn build_test_app_with_strict_rate_limit() -> (Router, Arc<trueid_common::
     let db = Arc::new(init_db("sqlite::memory:").await.expect("init_db failed"));
 
     let user = db
-        .create_user("testadmin", "testpassword123", trueid_common::model::UserRole::Admin)
+        .create_user(
+            "testadmin",
+            "testpassword123",
+            trueid_common::model::UserRole::Admin,
+        )
         .await
         .expect("create_user failed");
     db.set_force_password_change(user.id, false)
@@ -5584,14 +5588,30 @@ async fn test_login_rate_limit_returns_429_after_exceeded() {
     let (app, _) = build_test_app_with_strict_rate_limit().await;
 
     // First 2 requests should succeed (limit = 2)
-    let resp1 = app.clone().oneshot(login_request("10.0.0.1")).await.unwrap();
+    let resp1 = app
+        .clone()
+        .oneshot(login_request("10.0.0.1"))
+        .await
+        .unwrap();
     assert_eq!(resp1.status(), StatusCode::OK, "first login should succeed");
 
-    let resp2 = app.clone().oneshot(login_request("10.0.0.1")).await.unwrap();
-    assert_eq!(resp2.status(), StatusCode::OK, "second login should succeed");
+    let resp2 = app
+        .clone()
+        .oneshot(login_request("10.0.0.1"))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp2.status(),
+        StatusCode::OK,
+        "second login should succeed"
+    );
 
     // Third request should be rate-limited
-    let resp3 = app.clone().oneshot(login_request("10.0.0.1")).await.unwrap();
+    let resp3 = app
+        .clone()
+        .oneshot(login_request("10.0.0.1"))
+        .await
+        .unwrap();
     assert_eq!(
         resp3.status(),
         StatusCode::TOO_MANY_REQUESTS,
@@ -5617,13 +5637,29 @@ async fn test_login_rate_limit_is_per_ip() {
     let (app, _) = build_test_app_with_strict_rate_limit().await;
 
     // Exhaust limit for 10.0.0.1
-    let _ = app.clone().oneshot(login_request("10.0.0.1")).await.unwrap();
-    let _ = app.clone().oneshot(login_request("10.0.0.1")).await.unwrap();
-    let resp_limited = app.clone().oneshot(login_request("10.0.0.1")).await.unwrap();
+    let _ = app
+        .clone()
+        .oneshot(login_request("10.0.0.1"))
+        .await
+        .unwrap();
+    let _ = app
+        .clone()
+        .oneshot(login_request("10.0.0.1"))
+        .await
+        .unwrap();
+    let resp_limited = app
+        .clone()
+        .oneshot(login_request("10.0.0.1"))
+        .await
+        .unwrap();
     assert_eq!(resp_limited.status(), StatusCode::TOO_MANY_REQUESTS);
 
     // Different IP should still succeed
-    let resp_other = app.clone().oneshot(login_request("10.0.0.2")).await.unwrap();
+    let resp_other = app
+        .clone()
+        .oneshot(login_request("10.0.0.2"))
+        .await
+        .unwrap();
     assert_eq!(
         resp_other.status(),
         StatusCode::OK,
@@ -5656,7 +5692,11 @@ async fn test_login_rate_limit_wrong_credentials_still_counts() {
     let _ = app.clone().oneshot(bad_login("10.0.0.3")).await.unwrap();
 
     // Third attempt should be rate-limited even with correct password
-    let resp = app.clone().oneshot(login_request("10.0.0.3")).await.unwrap();
+    let resp = app
+        .clone()
+        .oneshot(login_request("10.0.0.3"))
+        .await
+        .unwrap();
     assert_eq!(
         resp.status(),
         StatusCode::TOO_MANY_REQUESTS,
@@ -5678,26 +5718,57 @@ async fn test_contract_search_response_shape() {
     // Required top-level fields
     assert!(body["page"].is_number(), "page must be a number");
     assert!(body["limit"].is_number(), "limit must be a number");
-    assert!(body["query_time_ms"].is_number(), "query_time_ms must be present");
+    assert!(
+        body["query_time_ms"].is_number(),
+        "query_time_ms must be present"
+    );
 
     // Mappings section structure
     let mappings = &body["mappings"];
-    assert!(mappings["data"].is_array(), "mappings.data must be an array");
-    assert!(mappings["total"].is_number(), "mappings.total must be a number");
+    assert!(
+        mappings["data"].is_array(),
+        "mappings.data must be an array"
+    );
+    assert!(
+        mappings["total"].is_number(),
+        "mappings.total must be a number"
+    );
 
     // Mapping record required fields
     let m = &mappings["data"][0];
     assert!(m["ip"].is_string(), "mapping.ip must be a string");
     assert!(m["source"].is_string(), "mapping.source must be a string");
-    assert!(m["last_seen"].is_string(), "mapping.last_seen must be a string");
-    assert!(m["confidence_score"].is_number(), "mapping.confidence_score must be a number");
-    assert!(m["is_active"].is_boolean(), "mapping.is_active must be a boolean");
-    assert!(m["current_users"].is_array(), "mapping.current_users must be an array");
+    assert!(
+        m["last_seen"].is_string(),
+        "mapping.last_seen must be a string"
+    );
+    assert!(
+        m["confidence_score"].is_number(),
+        "mapping.confidence_score must be a number"
+    );
+    assert!(
+        m["is_active"].is_boolean(),
+        "mapping.is_active must be a boolean"
+    );
+    assert!(
+        m["current_users"].is_array(),
+        "mapping.current_users must be an array"
+    );
 
     // Events section structure
     let events = &body["events"];
     assert!(events["data"].is_array(), "events.data must be an array");
     assert!(events["total"].is_number(), "events.total must be a number");
+    let e = &events["data"][0];
+    assert!(e["id"].is_number(), "event.id must be a number");
+    assert!(e["ip"].is_string(), "event.ip must be a string");
+    assert!(e["user"].is_string(), "event.user must be a string");
+    assert!(e["source"].is_string(), "event.source must be a string");
+    assert!(
+        e["timestamp"].is_string(),
+        "event.timestamp must be a string"
+    );
+    assert!(e["raw_data"].is_string(), "event.raw_data must be a string");
 }
 
 #[tokio::test]
@@ -5708,13 +5779,17 @@ async fn test_contract_search_mappings_enrichment_fields() {
     assert_eq!(status, StatusCode::OK);
 
     let m = &body["mappings"]["data"][0];
-    // NOTE: validates implementation shape, not OpenAPI contract.
-    // OpenAPI DeviceMapping schema does not yet declare country_code, city, tags.
-    // These assertions guard against regression until the spec catches up.
     for field in &[
-        "vendor", "subnet_id", "subnet_name", "hostname",
-        "device_type", "multi_user", "groups", "country_code",
-        "city", "tags",
+        "vendor",
+        "subnet_id",
+        "subnet_name",
+        "hostname",
+        "device_type",
+        "multi_user",
+        "groups",
+        "country_code",
+        "city",
+        "tags",
     ] {
         assert!(
             !m[field].is_null() || m.get(field).is_some(),
@@ -5794,6 +5869,22 @@ async fn test_contract_alerts_history_response_shape() {
     assert!(h["rule_type"].is_string());
     assert!(h["severity"].is_string());
     assert!(h["fired_at"].is_string());
+}
+
+#[tokio::test]
+async fn test_contract_alerts_stats_shape() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/alerts/stats").await;
+    assert_eq!(status, StatusCode::OK);
+
+    assert!(body["total_rules"].is_number());
+    assert!(body["enabled_rules"].is_number());
+    assert!(body["total_fired_24h"].is_number());
+    assert!(body["by_severity_24h"].is_object());
+    assert!(body["by_type_24h"].is_object());
+    assert!(body["webhook_success_rate_24h"].is_number());
 }
 
 #[tokio::test]
@@ -5878,7 +5969,9 @@ async fn test_contract_cursor_pagination_chaining_conflicts() {
     assert_eq!(s1, StatusCode::OK);
     assert_eq!(p1["data"].as_array().unwrap().len(), 2);
     assert!(p1["total"].as_i64().unwrap() >= 5);
-    let cursor1 = p1["next_cursor"].as_str().expect("first page should have next_cursor");
+    let cursor1 = p1["next_cursor"]
+        .as_str()
+        .expect("first page should have next_cursor");
 
     // Page 2: use cursor from page 1
     let (s2, p2) = auth_get(
@@ -5957,7 +6050,7 @@ async fn test_contract_cursor_pagination_chaining_alerts() {
 }
 
 #[tokio::test]
-async fn test_contract_cursor_is_opaque_hex() {
+async fn test_contract_cursor_is_opaque_token() {
     let (app, db) = build_test_app().await;
     let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
 
@@ -5976,10 +6069,9 @@ async fn test_contract_cursor_is_opaque_hex() {
     let (_, body) = auth_get(&app, &cookie, "/api/v2/conflicts?limit=1").await;
     let cursor = body["next_cursor"].as_str().unwrap();
 
-    // Cursor must be hex-encoded (only hex chars, even length)
     assert!(
-        cursor.len() % 2 == 0 && cursor.chars().all(|c| c.is_ascii_hexdigit()),
-        "cursor must be hex-encoded: {cursor}"
+        !cursor.is_empty(),
+        "cursor must be a non-empty opaque token"
     );
 }
 
@@ -6080,16 +6172,27 @@ async fn test_contract_export_csv_header_row() {
     let (app, _) = build_test_app().await;
     let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
 
-    let (status, _, body) =
-        auth_get_raw(&app, &cookie, "/api/v2/export/mappings?format=csv").await;
+    let (status, _, body) = auth_get_raw(&app, &cookie, "/api/v2/export/mappings?format=csv").await;
     assert_eq!(status, StatusCode::OK);
 
     let csv = String::from_utf8(body).unwrap();
     let header_line = csv.lines().next().unwrap();
     let expected_columns = [
-        "ip", "user", "mac", "source", "last_seen", "confidence",
-        "is_active", "vendor", "subnet_id", "subnet_name", "hostname",
-        "device_type", "multi_user", "current_users", "groups",
+        "ip",
+        "user",
+        "mac",
+        "source",
+        "last_seen",
+        "confidence",
+        "is_active",
+        "vendor",
+        "subnet_id",
+        "subnet_name",
+        "hostname",
+        "device_type",
+        "multi_user",
+        "current_users",
+        "groups",
     ];
     for col in &expected_columns {
         assert!(
@@ -6106,8 +6209,7 @@ async fn test_contract_export_events_csv_header_row() {
     let (app, _) = build_test_app().await;
     let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
 
-    let (status, _, body) =
-        auth_get_raw(&app, &cookie, "/api/v2/export/events?format=csv").await;
+    let (status, _, body) = auth_get_raw(&app, &cookie, "/api/v2/export/events?format=csv").await;
     assert_eq!(status, StatusCode::OK);
 
     let csv = String::from_utf8(body).unwrap();
@@ -6159,16 +6261,17 @@ async fn test_contract_export_json_is_array() {
     let (app, _) = build_test_app().await;
     let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
 
-    let (_, _, body) =
-        auth_get_raw(&app, &cookie, "/api/v2/export/mappings?format=json").await;
+    let (_, _, body) = auth_get_raw(&app, &cookie, "/api/v2/export/mappings?format=json").await;
     let parsed: Value = serde_json::from_slice(&body).unwrap();
     assert!(parsed.is_array(), "JSON export must be a top-level array");
     assert!(parsed.as_array().unwrap().len() >= 5);
 
-    let (_, _, body) =
-        auth_get_raw(&app, &cookie, "/api/v2/export/events?format=json").await;
+    let (_, _, body) = auth_get_raw(&app, &cookie, "/api/v2/export/events?format=json").await;
     let parsed: Value = serde_json::from_slice(&body).unwrap();
-    assert!(parsed.is_array(), "events JSON export must be a top-level array");
+    assert!(
+        parsed.is_array(),
+        "events JSON export must be a top-level array"
+    );
 }
 
 #[tokio::test]
@@ -6176,8 +6279,7 @@ async fn test_contract_export_csv_row_count_matches_data() {
     let (app, _) = build_test_app().await;
     let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
 
-    let (_, _, body) =
-        auth_get_raw(&app, &cookie, "/api/v2/export/mappings?format=csv").await;
+    let (_, _, body) = auth_get_raw(&app, &cookie, "/api/v2/export/mappings?format=csv").await;
     let csv = String::from_utf8(body).unwrap();
     let lines: Vec<&str> = csv.lines().collect();
     // Header + 5 base mappings (at least)
@@ -6231,8 +6333,7 @@ async fn test_contract_search_invalid_datetime_rejected() {
     let (app, _) = build_test_app().await;
     let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
 
-    let (status, _) =
-        auth_get(&app, &cookie, "/api/v2/search?from=not-a-date&q=test").await;
+    let (status, _) = auth_get(&app, &cookie, "/api/v2/search?from=not-a-date&q=test").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
@@ -6335,12 +6436,7 @@ async fn test_contract_conflicts_filter_by_type() {
     .await
     .unwrap();
 
-    let (status, body) = auth_get(
-        &app,
-        &cookie,
-        "/api/v2/conflicts?type=duplicate_mac",
-    )
-    .await;
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/conflicts?type=duplicate_mac").await;
     assert_eq!(status, StatusCode::OK);
 
     let conflicts = body["data"].as_array().unwrap();
