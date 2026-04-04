@@ -114,7 +114,69 @@ check "GET /api/v2/map/flows" "200" "$STATUS"
 STATUS=$(curl -s -o /dev/null -w "%{http_code}" -b "$COOKIES" "$BASE/api/v2/analytics/sources")
 check "GET /api/v2/analytics/sources" "200" "$STATUS"
 
-# ── Section 3: Export Compliance ──
+# ── Section 3: Conflict & Alert Pipeline ──
+echo
+echo "--- Conflict & Alert Pipeline ---"
+
+# Create an alert rule
+CSRF=$(grep trueid_csrf_token "$COOKIES" 2>/dev/null | awk '{print $NF}')
+BODY=$(curl -s -w "\n%{http_code}" -b "$COOKIES" \
+    -X POST "$BASE/api/v2/alerts/rules" \
+    -H "Content-Type: application/json" \
+    -H "X-CSRF-Token: $CSRF" \
+    -d '{"name":"smoke-test-rule","rule_type":"ip_conflict","severity":"warning","action_log":true,"cooldown_seconds":60}')
+RULE_STATUS=$(echo "$BODY" | tail -1)
+RULE_BODY=$(echo "$BODY" | head -n -1)
+check "Create alert rule" "201" "$RULE_STATUS"
+
+# Extract rule ID
+RULE_ID=$(echo "$RULE_BODY" | grep -o '"id":[0-9]*' | head -1 | grep -o '[0-9]*')
+if [ -n "$RULE_ID" ]; then
+    green "Alert rule created with id=$RULE_ID"
+else
+    yellow "Could not extract rule ID, skipping rule cleanup"
+fi
+
+# List alert rules — should include our rule
+BODY=$(curl -s -b "$COOKIES" "$BASE/api/v2/alerts/rules")
+check_contains "Alert rules list contains smoke-test-rule" "smoke-test-rule" "$BODY"
+
+# Check alert stats endpoint
+STATUS=$(curl -s -o /dev/null -w "%{http_code}" -b "$COOKIES" "$BASE/api/v2/alerts/stats")
+check "GET /api/v2/alerts/stats" "200" "$STATUS"
+
+# Verify conflict stats shape
+BODY=$(curl -s -b "$COOKIES" "$BASE/api/v2/conflicts/stats")
+check_contains "Conflict stats has total_unresolved" '"total_unresolved"' "$BODY"
+check_contains "Conflict stats has by_type" '"by_type"' "$BODY"
+check_contains "Conflict stats has by_severity" '"by_severity"' "$BODY"
+
+# If there are conflicts, test resolve flow
+CONFLICTS=$(curl -s -b "$COOKIES" "$BASE/api/v2/conflicts?limit=1")
+CONFLICT_ID=$(echo "$CONFLICTS" | grep -o '"id":[0-9]*' | head -1 | grep -o '[0-9]*')
+if [ -n "$CONFLICT_ID" ]; then
+    CSRF=$(grep trueid_csrf_token "$COOKIES" 2>/dev/null | awk '{print $NF}')
+    STATUS=$(curl -s -o /dev/null -w "%{http_code}" -b "$COOKIES" \
+        -X POST "$BASE/api/v2/conflicts/$CONFLICT_ID/resolve" \
+        -H "Content-Type: application/json" \
+        -H "X-CSRF-Token: $CSRF" \
+        -d '{"note":"resolved by smoke test"}')
+    check "Resolve conflict $CONFLICT_ID" "200" "$STATUS"
+else
+    yellow "No conflicts to resolve (skip)"
+    SKIP=$((SKIP + 1))
+fi
+
+# Cleanup: delete the smoke-test rule
+if [ -n "$RULE_ID" ]; then
+    CSRF=$(grep trueid_csrf_token "$COOKIES" 2>/dev/null | awk '{print $NF}')
+    STATUS=$(curl -s -o /dev/null -w "%{http_code}" -b "$COOKIES" \
+        -X DELETE "$BASE/api/v2/alerts/rules/$RULE_ID" \
+        -H "X-CSRF-Token: $CSRF")
+    check "Delete alert rule $RULE_ID" "204" "$STATUS"
+fi
+
+# ── Section 4: Export Compliance ──
 echo
 echo "--- Export Compliance ---"
 
