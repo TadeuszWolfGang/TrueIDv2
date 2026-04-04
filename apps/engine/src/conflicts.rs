@@ -380,7 +380,9 @@ mod tests {
         .expect("conflict detection failed");
 
         assert!(
-            !conflicts.iter().any(|c| c.conflict_type == "ip_user_change"),
+            !conflicts
+                .iter()
+                .any(|c| c.conflict_type == "ip_user_change"),
             "same user should not trigger ip_user_change"
         );
     }
@@ -419,7 +421,9 @@ mod tests {
         .expect("conflict detection failed");
 
         assert!(
-            conflicts.iter().any(|c| c.conflict_type == "mac_ip_conflict"),
+            conflicts
+                .iter()
+                .any(|c| c.conflict_type == "mac_ip_conflict"),
             "expected mac_ip_conflict when MAC appears on different IP"
         );
         let info = conflicts
@@ -454,7 +458,9 @@ mod tests {
         .expect("conflict detection failed");
 
         assert!(
-            !conflicts.iter().any(|c| c.conflict_type == "mac_ip_conflict"),
+            !conflicts
+                .iter()
+                .any(|c| c.conflict_type == "mac_ip_conflict"),
             "same IP should not trigger mac_ip_conflict"
         );
         assert!(

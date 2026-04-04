@@ -967,8 +967,7 @@ mod tests {
         .unwrap();
 
         let rules = crate::alerts::load_rules(db.pool()).await.unwrap();
-        let firings =
-            crate::alerts::evaluate_event(db.pool(), &event, &detected, &rules).await;
+        let firings = crate::alerts::evaluate_event(db.pool(), &event, &detected, &rules).await;
 
         let firing_types: Vec<&str> = firings.iter().map(|f| f.rule_type.as_str()).collect();
         assert!(
@@ -989,11 +988,10 @@ mod tests {
             SourceType::Radius,
             "Radius (3) should replace AdLog (2)"
         );
-        let user: String =
-            sqlx::query_scalar("SELECT user FROM mappings WHERE ip = '10.0.0.1'")
-                .fetch_one(db.pool())
-                .await
-                .unwrap();
+        let user: String = sqlx::query_scalar("SELECT user FROM mappings WHERE ip = '10.0.0.1'")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
         assert_eq!(user, "bob");
     }
 
@@ -1026,7 +1024,9 @@ mod tests {
             "same MAC on different IP should trigger duplicate_mac"
         );
         assert!(
-            conflicts.iter().any(|c| c.conflict_type == "mac_ip_conflict"),
+            conflicts
+                .iter()
+                .any(|c| c.conflict_type == "mac_ip_conflict"),
             "MAC roaming should trigger mac_ip_conflict"
         );
 
@@ -1040,8 +1040,7 @@ mod tests {
         .unwrap();
 
         let rules = crate::alerts::load_rules(db.pool()).await.unwrap();
-        let firings =
-            crate::alerts::evaluate_event(db.pool(), &e2, &conflicts, &rules).await;
+        let firings = crate::alerts::evaluate_event(db.pool(), &e2, &conflicts, &rules).await;
         assert_eq!(firings.len(), 1);
         assert_eq!(firings[0].rule_type, "ip_conflict");
         assert_eq!(firings[0].severity, "critical");
@@ -1075,8 +1074,7 @@ mod tests {
         assert!(conflicts.is_empty(), "no prior data = no conflicts");
 
         let rules = crate::alerts::load_rules(db.pool()).await.unwrap();
-        let firings =
-            crate::alerts::evaluate_event(db.pool(), &event, &conflicts, &rules).await;
+        let firings = crate::alerts::evaluate_event(db.pool(), &event, &conflicts, &rules).await;
         assert_eq!(firings.len(), 1);
         assert_eq!(firings[0].rule_type, "new_mac");
 
@@ -1089,8 +1087,7 @@ mod tests {
             SourceType::AdLog,
             Some("FF:EE:DD:CC:BB:AA"),
         );
-        let firings2 =
-            crate::alerts::evaluate_event(db.pool(), &event2, &[], &rules).await;
+        let firings2 = crate::alerts::evaluate_event(db.pool(), &event2, &[], &rules).await;
         assert!(
             firings2.is_empty(),
             "MAC already active should not trigger new_mac"
@@ -1112,8 +1109,7 @@ mod tests {
         // First event in 172.16.1.0/24 subnet → new_subnet fires
         let event = pipeline_event("172.16.1.50", "alice", SourceType::Radius, None);
         let rules = crate::alerts::load_rules(db.pool()).await.unwrap();
-        let firings =
-            crate::alerts::evaluate_event(db.pool(), &event, &[], &rules).await;
+        let firings = crate::alerts::evaluate_event(db.pool(), &event, &[], &rules).await;
         assert_eq!(firings.len(), 1);
         assert_eq!(firings[0].rule_type, "new_subnet");
 
@@ -1121,8 +1117,7 @@ mod tests {
 
         // Second event in same /24 → new_subnet should NOT fire
         let event2 = pipeline_event("172.16.1.100", "bob", SourceType::AdLog, None);
-        let firings2 =
-            crate::alerts::evaluate_event(db.pool(), &event2, &[], &rules).await;
+        let firings2 = crate::alerts::evaluate_event(db.pool(), &event2, &[], &rules).await;
         assert!(
             firings2.is_empty(),
             "subnet already has mappings, new_subnet should not fire"
@@ -1134,7 +1129,12 @@ mod tests {
         let db = init_db("sqlite::memory:").await.expect("init db failed");
 
         // Radius event first (priority 3)
-        let e1 = pipeline_event("10.0.0.1", "alice", SourceType::Radius, Some("AA:BB:CC:DD:EE:01"));
+        let e1 = pipeline_event(
+            "10.0.0.1",
+            "alice",
+            SourceType::Radius,
+            Some("AA:BB:CC:DD:EE:01"),
+        );
         db.upsert_mapping(e1, None).await.unwrap();
 
         // DHCP event for same IP, different user (priority 1)
@@ -1145,17 +1145,18 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            conflicts.iter().any(|c| c.conflict_type == "ip_user_change"),
+            conflicts
+                .iter()
+                .any(|c| c.conflict_type == "ip_user_change"),
             "DHCP→Radius user mismatch should detect conflict"
         );
 
         // But upsert should NOT replace the higher-priority mapping
         db.upsert_mapping(e2, None).await.unwrap();
-        let user: String =
-            sqlx::query_scalar("SELECT user FROM mappings WHERE ip = '10.0.0.1'")
-                .fetch_one(db.pool())
-                .await
-                .unwrap();
+        let user: String = sqlx::query_scalar("SELECT user FROM mappings WHERE ip = '10.0.0.1'")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
         assert_eq!(
             user, "alice",
             "lower-priority DHCP should not overwrite Radius user"

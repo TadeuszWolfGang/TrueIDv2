@@ -982,9 +982,7 @@ mod tests {
     // ── Phase 4: SSE live event streaming ──
 
     /// Starts admin router on an OS-assigned port and returns the base URL.
-    async fn spawn_sse_server(
-        state: EngineAdminState,
-    ) -> (String, tokio::task::JoinHandle<()>) {
+    async fn spawn_sse_server(state: EngineAdminState) -> (String, tokio::task::JoinHandle<()>) {
         let app = admin_router(state);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -996,10 +994,7 @@ mod tests {
         (format!("http://{addr}"), handle)
     }
 
-    fn sse_admin_state(
-        db: Arc<Db>,
-        live_tx: broadcast::Sender<LiveEvent>,
-    ) -> EngineAdminState {
+    fn sse_admin_state(db: Arc<Db>, live_tx: broadcast::Sender<LiveEvent>) -> EngineAdminState {
         EngineAdminState {
             db,
             vendors: Arc::new(HashMap::new()),
@@ -1031,8 +1026,7 @@ mod tests {
         let (live_tx, _) = broadcast::channel::<LiveEvent>(16);
         let tx = live_tx.clone();
 
-        let (base_url, _server) =
-            spawn_sse_server(sse_admin_state(db, live_tx)).await;
+        let (base_url, _server) = spawn_sse_server(sse_admin_state(db, live_tx)).await;
 
         // Send event after a short delay so the SSE client can connect
         tokio::spawn(async move {
@@ -1096,8 +1090,7 @@ mod tests {
         let (live_tx, _) = broadcast::channel::<LiveEvent>(16);
         let tx = live_tx.clone();
 
-        let (base_url, _server) =
-            spawn_sse_server(sse_admin_state(db, live_tx)).await;
+        let (base_url, _server) = spawn_sse_server(sse_admin_state(db, live_tx)).await;
 
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;

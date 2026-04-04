@@ -1287,7 +1287,12 @@ mod tests {
     #[tokio::test]
     async fn test_upsert_new_ip_creates_mapping() {
         let db = init_db("sqlite::memory:").await.unwrap();
-        let event = make_event("10.0.0.1", "alice", SourceType::Radius, Some("AA:BB:CC:DD:EE:01"));
+        let event = make_event(
+            "10.0.0.1",
+            "alice",
+            SourceType::Radius,
+            Some("AA:BB:CC:DD:EE:01"),
+        );
         db.upsert_mapping(event, Some("Cisco")).await.unwrap();
 
         let mapping = db.get_mapping("10.0.0.1").await.unwrap().unwrap();
@@ -1303,7 +1308,12 @@ mod tests {
         let db = init_db("sqlite::memory:").await.unwrap();
         // DhcpLease (priority 1)
         db.upsert_mapping(
-            make_event("10.0.0.1", "dhcp-user", SourceType::DhcpLease, Some("AA:BB:CC:DD:EE:01")),
+            make_event(
+                "10.0.0.1",
+                "dhcp-user",
+                SourceType::DhcpLease,
+                Some("AA:BB:CC:DD:EE:01"),
+            ),
             None,
         )
         .await
@@ -1311,7 +1321,12 @@ mod tests {
 
         // Radius (priority 3) should replace
         db.upsert_mapping(
-            make_event("10.0.0.1", "radius-user", SourceType::Radius, Some("AA:BB:CC:DD:EE:01")),
+            make_event(
+                "10.0.0.1",
+                "radius-user",
+                SourceType::Radius,
+                Some("AA:BB:CC:DD:EE:01"),
+            ),
             None,
         )
         .await
@@ -1327,7 +1342,12 @@ mod tests {
         let db = init_db("sqlite::memory:").await.unwrap();
         // Radius (priority 3)
         db.upsert_mapping(
-            make_event("10.0.0.1", "radius-user", SourceType::Radius, Some("AA:BB:CC:DD:EE:01")),
+            make_event(
+                "10.0.0.1",
+                "radius-user",
+                SourceType::Radius,
+                Some("AA:BB:CC:DD:EE:01"),
+            ),
             None,
         )
         .await
@@ -1344,7 +1364,10 @@ mod tests {
         let mapping = db.get_mapping("10.0.0.1").await.unwrap().unwrap();
         assert_eq!(mapping.source, SourceType::Radius);
         assert_eq!(mapping_user(&db, "10.0.0.1").await, "radius-user");
-        assert!(mapping.is_active, "lower-priority event should still refresh is_active");
+        assert!(
+            mapping.is_active,
+            "lower-priority event should still refresh is_active"
+        );
     }
 
     #[tokio::test]
@@ -1352,7 +1375,12 @@ mod tests {
         let db = init_db("sqlite::memory:").await.unwrap();
         // AdLog (priority 2)
         db.upsert_mapping(
-            make_event("10.0.0.1", "ad-user", SourceType::AdLog, Some("AA:BB:CC:DD:EE:01")),
+            make_event(
+                "10.0.0.1",
+                "ad-user",
+                SourceType::AdLog,
+                Some("AA:BB:CC:DD:EE:01"),
+            ),
             None,
         )
         .await
@@ -1360,7 +1388,12 @@ mod tests {
 
         // VpnAnyConnect (priority 2) — equal, should replace (>= semantics)
         db.upsert_mapping(
-            make_event("10.0.0.1", "vpn-user", SourceType::VpnAnyConnect, Some("AA:BB:CC:DD:EE:01")),
+            make_event(
+                "10.0.0.1",
+                "vpn-user",
+                SourceType::VpnAnyConnect,
+                Some("AA:BB:CC:DD:EE:01"),
+            ),
             None,
         )
         .await
@@ -1375,7 +1408,12 @@ mod tests {
     async fn test_upsert_preserves_mac_when_new_is_none() {
         let db = init_db("sqlite::memory:").await.unwrap();
         db.upsert_mapping(
-            make_event("10.0.0.1", "alice", SourceType::Radius, Some("AA:BB:CC:DD:EE:01")),
+            make_event(
+                "10.0.0.1",
+                "alice",
+                SourceType::Radius,
+                Some("AA:BB:CC:DD:EE:01"),
+            ),
             Some("Cisco"),
         )
         .await
@@ -1406,7 +1444,12 @@ mod tests {
     async fn test_upsert_lower_priority_preserves_mac_via_coalesce() {
         let db = init_db("sqlite::memory:").await.unwrap();
         db.upsert_mapping(
-            make_event("10.0.0.1", "radius-user", SourceType::Radius, Some("AA:BB:CC:DD:EE:01")),
+            make_event(
+                "10.0.0.1",
+                "radius-user",
+                SourceType::Radius,
+                Some("AA:BB:CC:DD:EE:01"),
+            ),
             Some("Cisco"),
         )
         .await
@@ -1431,7 +1474,12 @@ mod tests {
     async fn test_upsert_multi_user_flag() {
         let db = init_db("sqlite::memory:").await.unwrap();
         db.upsert_mapping(
-            make_event("10.0.0.1", "alice", SourceType::AdLog, Some("AA:BB:CC:DD:EE:01")),
+            make_event(
+                "10.0.0.1",
+                "alice",
+                SourceType::AdLog,
+                Some("AA:BB:CC:DD:EE:01"),
+            ),
             None,
         )
         .await
@@ -1442,7 +1490,12 @@ mod tests {
 
         // Different user on same IP via different source
         db.upsert_mapping(
-            make_event("10.0.0.1", "bob", SourceType::Radius, Some("AA:BB:CC:DD:EE:01")),
+            make_event(
+                "10.0.0.1",
+                "bob",
+                SourceType::Radius,
+                Some("AA:BB:CC:DD:EE:01"),
+            ),
             None,
         )
         .await
@@ -1456,17 +1509,21 @@ mod tests {
     async fn test_upsert_records_event_in_events_table() {
         let db = init_db("sqlite::memory:").await.unwrap();
         db.upsert_mapping(
-            make_event("10.0.0.1", "alice", SourceType::Radius, Some("AA:BB:CC:DD:EE:01")),
+            make_event(
+                "10.0.0.1",
+                "alice",
+                SourceType::Radius,
+                Some("AA:BB:CC:DD:EE:01"),
+            ),
             None,
         )
         .await
         .unwrap();
 
-        let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM events WHERE ip = '10.0.0.1'")
-                .fetch_one(db.pool())
-                .await
-                .unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM events WHERE ip = '10.0.0.1'")
+            .fetch_one(db.pool())
+            .await
+            .unwrap();
         assert_eq!(count, 1, "upsert_mapping should insert an audit event");
     }
 
@@ -1478,39 +1535,58 @@ mod tests {
 
         // Manual (0) → DhcpLease (1) → AdLog (2) → Radius (3)
         // Each higher should replace the previous.
-        db.upsert_mapping(make_event("10.0.0.1", "manual-user", SourceType::Manual, None), None)
-            .await
-            .unwrap();
+        db.upsert_mapping(
+            make_event("10.0.0.1", "manual-user", SourceType::Manual, None),
+            None,
+        )
+        .await
+        .unwrap();
         let m = db.get_mapping("10.0.0.1").await.unwrap().unwrap();
         assert_eq!(m.source, SourceType::Manual);
 
-        db.upsert_mapping(make_event("10.0.0.1", "dhcp-user", SourceType::DhcpLease, None), None)
-            .await
-            .unwrap();
+        db.upsert_mapping(
+            make_event("10.0.0.1", "dhcp-user", SourceType::DhcpLease, None),
+            None,
+        )
+        .await
+        .unwrap();
         let m = db.get_mapping("10.0.0.1").await.unwrap().unwrap();
         assert_eq!(m.source, SourceType::DhcpLease);
         assert_eq!(mapping_user(&db, "10.0.0.1").await, "dhcp-user");
 
-        db.upsert_mapping(make_event("10.0.0.1", "ad-user", SourceType::AdLog, None), None)
-            .await
-            .unwrap();
+        db.upsert_mapping(
+            make_event("10.0.0.1", "ad-user", SourceType::AdLog, None),
+            None,
+        )
+        .await
+        .unwrap();
         let m = db.get_mapping("10.0.0.1").await.unwrap().unwrap();
         assert_eq!(m.source, SourceType::AdLog);
         assert_eq!(mapping_user(&db, "10.0.0.1").await, "ad-user");
 
-        db.upsert_mapping(make_event("10.0.0.1", "radius-user", SourceType::Radius, None), None)
-            .await
-            .unwrap();
+        db.upsert_mapping(
+            make_event("10.0.0.1", "radius-user", SourceType::Radius, None),
+            None,
+        )
+        .await
+        .unwrap();
         let m = db.get_mapping("10.0.0.1").await.unwrap().unwrap();
         assert_eq!(m.source, SourceType::Radius);
         assert_eq!(mapping_user(&db, "10.0.0.1").await, "radius-user");
 
         // Now lower priority should not replace
-        db.upsert_mapping(make_event("10.0.0.1", "manual-again", SourceType::Manual, None), None)
-            .await
-            .unwrap();
+        db.upsert_mapping(
+            make_event("10.0.0.1", "manual-again", SourceType::Manual, None),
+            None,
+        )
+        .await
+        .unwrap();
         let m = db.get_mapping("10.0.0.1").await.unwrap().unwrap();
-        assert_eq!(m.source, SourceType::Radius, "Manual should not replace Radius");
+        assert_eq!(
+            m.source,
+            SourceType::Radius,
+            "Manual should not replace Radius"
+        );
         assert_eq!(mapping_user(&db, "10.0.0.1").await, "radius-user");
     }
 }

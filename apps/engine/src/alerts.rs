@@ -738,7 +738,10 @@ mod tests {
 
         let firings = evaluate_event(db.pool(), &event, &[], &rules).await;
 
-        assert!(firings.is_empty(), "existing active MAC should not trigger new_mac");
+        assert!(
+            firings.is_empty(),
+            "existing active MAC should not trigger new_mac"
+        );
     }
 
     #[tokio::test]
@@ -749,7 +752,10 @@ mod tests {
 
         let firings = evaluate_event(db.pool(), &event, &[], &rules).await;
 
-        assert!(firings.is_empty(), "event without MAC should not trigger new_mac");
+        assert!(
+            firings.is_empty(),
+            "event without MAC should not trigger new_mac"
+        );
     }
 
     #[tokio::test]
@@ -869,7 +875,10 @@ mod tests {
 
         let firings = evaluate_event(db.pool(), &event, &[], &rules).await;
 
-        assert!(firings.is_empty(), "same user should not trigger user_change");
+        assert!(
+            firings.is_empty(),
+            "same user should not trigger user_change"
+        );
     }
 
     #[tokio::test]
@@ -977,7 +986,10 @@ mod tests {
         let firings = evaluate_event(db.pool(), &event, &conflicts, &rules).await;
 
         let types: Vec<&str> = firings.iter().map(|f| f.rule_type.as_str()).collect();
-        assert!(types.contains(&"new_mac"), "new_mac should fire for unseen MAC");
+        assert!(
+            types.contains(&"new_mac"),
+            "new_mac should fire for unseen MAC"
+        );
         assert!(
             types.contains(&"ip_conflict"),
             "ip_conflict should fire for ip_user_change"
@@ -1138,8 +1150,8 @@ mod tests {
 
     #[test]
     fn test_build_extra_headers_skips_non_string_values() {
-        let headers = build_extra_headers(Some(r#"{"X-Valid":"ok","X-Num":42}"#))
-            .expect("should parse");
+        let headers =
+            build_extra_headers(Some(r#"{"X-Valid":"ok","X-Num":42}"#)).expect("should parse");
         assert_eq!(headers.len(), 1);
         assert_eq!(headers[0].0.as_str(), "x-valid");
     }

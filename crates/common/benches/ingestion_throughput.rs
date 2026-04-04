@@ -41,15 +41,9 @@ fn seed_db_blocking(n: usize, source: SourceType) -> Db {
                             &format!("10.0.{}.{}", i / 256, i % 256),
                             &format!("user-{i}"),
                             source,
-                            Some(&format!(
-                                "AA:BB:CC:DD:{:02X}:{:02X}",
-                                i / 256,
-                                i % 256
-                            )),
+                            Some(&format!("AA:BB:CC:DD:{:02X}:{:02X}", i / 256, i % 256)),
                         );
-                        db.upsert_mapping(event, Some("BenchVendor"))
-                            .await
-                            .unwrap();
+                        db.upsert_mapping(event, Some("BenchVendor")).await.unwrap();
                     }
                     db
                 })
@@ -110,9 +104,7 @@ fn bench_upsert_existing_ip(c: &mut Criterion) {
                                             i % 256
                                         )),
                                     );
-                                    db.upsert_mapping(event, Some("BenchVendor"))
-                                        .await
-                                        .unwrap();
+                                    db.upsert_mapping(event, Some("BenchVendor")).await.unwrap();
                                 }
                                 start.elapsed()
                             })
@@ -159,18 +151,12 @@ fn bench_upsert_priority_resolution(c: &mut Criterion) {
                                         let start = std::time::Instant::now();
                                         for i in 0..100 {
                                             let event = make_event(
-                                                &format!(
-                                                    "10.0.{}.{}",
-                                                    i / 256,
-                                                    i % 256
-                                                ),
+                                                &format!("10.0.{}.{}", i / 256, i % 256),
                                                 &format!("user-{i}-new"),
                                                 src,
                                                 None,
                                             );
-                                            db.upsert_mapping(event, None)
-                                                .await
-                                                .unwrap();
+                                            db.upsert_mapping(event, None).await.unwrap();
                                         }
                                         start.elapsed()
                                     })
