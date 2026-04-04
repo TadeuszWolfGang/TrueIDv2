@@ -5522,3 +5522,144 @@ async fn test_login_page_has_matrix_canvas() {
     let html = String::from_utf8(body).expect("login html not utf8");
     assert!(html.contains("matrix-bg"));
 }
+
+// ── Phase 2: Rate limiting integration tests ──
+
+/// Builds a test app with a strict login rate limit (2 requests / 60s).
+async fn build_test_app_with_strict_rate_limit() -> (Router, Arc<trueid_common::db::Db>) {
+    ensure_test_encryption_key();
+    let db = Arc::new(init_db("sqlite::memory:").await.expect("init_db failed"));
+
+    let user = db
+        .create_user("testadmin", "testpassword123", trueid_common::model::UserRole::Admin)
+        .await
+        .expect("create_user failed");
+    db.set_force_password_change(user.id, false)
+        .await
+        .expect("set_force_password_change failed");
+
+    seed_test_data(&db).await;
+    let runtime_config = trueid_common::app_config::AppConfig::load(db.as_ref()).await;
+    let http_client = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .expect("build test http client failed");
+
+    let state = AppState {
+        db: Some(db.clone()),
+        config: Arc::new(tokio::sync::RwLock::new(runtime_config)),
+        engine_url: "http://127.0.0.1:8080".to_string(),
+        http_client,
+        jwt_config: auth::JwtConfig::from_env(true),
+        engine_service_token: None,
+        metrics_token: None,
+        login_limiter: Arc::new(rate_limit::RateLimiter::new(2, 60)),
+        per_key_limiter: Arc::new(rate_limit::PerKeyLimiter::new(1000, 1000)),
+        session_limiter: Arc::new(rate_limit::PerKeyLimiter::new(1000, 1000)),
+        auth_chain: Some(Arc::new(
+            trueid_common::auth_provider::AuthProviderChain::default_chain(db.clone()),
+        )),
+    };
+    (build_router(state), db)
+}
+
+fn login_request(forwarded_for: &str) -> Request<Body> {
+    Request::builder()
+        .method("POST")
+        .uri("/api/auth/login")
+        .header("content-type", "application/json")
+        .header("x-forwarded-for", forwarded_for)
+        .body(Body::from(
+            serde_json::to_string(&json!({
+                "username": "testadmin",
+                "password": "testpassword123"
+            }))
+            .expect("serialize login body"),
+        ))
+        .expect("build login request")
+}
+
+#[tokio::test]
+async fn test_login_rate_limit_returns_429_after_exceeded() {
+    let (app, _) = build_test_app_with_strict_rate_limit().await;
+
+    // First 2 requests should succeed (limit = 2)
+    let resp1 = app.clone().oneshot(login_request("10.0.0.1")).await.unwrap();
+    assert_eq!(resp1.status(), StatusCode::OK, "first login should succeed");
+
+    let resp2 = app.clone().oneshot(login_request("10.0.0.1")).await.unwrap();
+    assert_eq!(resp2.status(), StatusCode::OK, "second login should succeed");
+
+    // Third request should be rate-limited
+    let resp3 = app.clone().oneshot(login_request("10.0.0.1")).await.unwrap();
+    assert_eq!(
+        resp3.status(),
+        StatusCode::TOO_MANY_REQUESTS,
+        "third login from same IP should be rate-limited"
+    );
+
+    // Verify retry-after header
+    let retry_after = resp3
+        .headers()
+        .get("retry-after")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(retry_after, "60");
+
+    // Verify error body
+    let bytes = resp3.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["code"], "RATE_LIMITED");
+}
+
+#[tokio::test]
+async fn test_login_rate_limit_is_per_ip() {
+    let (app, _) = build_test_app_with_strict_rate_limit().await;
+
+    // Exhaust limit for 10.0.0.1
+    let _ = app.clone().oneshot(login_request("10.0.0.1")).await.unwrap();
+    let _ = app.clone().oneshot(login_request("10.0.0.1")).await.unwrap();
+    let resp_limited = app.clone().oneshot(login_request("10.0.0.1")).await.unwrap();
+    assert_eq!(resp_limited.status(), StatusCode::TOO_MANY_REQUESTS);
+
+    // Different IP should still succeed
+    let resp_other = app.clone().oneshot(login_request("10.0.0.2")).await.unwrap();
+    assert_eq!(
+        resp_other.status(),
+        StatusCode::OK,
+        "different IP should not be rate-limited"
+    );
+}
+
+#[tokio::test]
+async fn test_login_rate_limit_wrong_credentials_still_counts() {
+    let (app, _) = build_test_app_with_strict_rate_limit().await;
+
+    let bad_login = |ip: &str| {
+        Request::builder()
+            .method("POST")
+            .uri("/api/auth/login")
+            .header("content-type", "application/json")
+            .header("x-forwarded-for", ip)
+            .body(Body::from(
+                serde_json::to_string(&json!({
+                    "username": "testadmin",
+                    "password": "wrongpassword"
+                }))
+                .unwrap(),
+            ))
+            .unwrap()
+    };
+
+    // Failed logins still consume rate limit quota
+    let _ = app.clone().oneshot(bad_login("10.0.0.3")).await.unwrap();
+    let _ = app.clone().oneshot(bad_login("10.0.0.3")).await.unwrap();
+
+    // Third attempt should be rate-limited even with correct password
+    let resp = app.clone().oneshot(login_request("10.0.0.3")).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::TOO_MANY_REQUESTS,
+        "failed logins should consume rate limit quota"
+    );
+}

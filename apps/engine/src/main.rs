@@ -872,4 +872,293 @@ mod tests {
             std::env::remove_var("RADIUS_SECRET");
         }
     }
+
+    // ── Phase 2: pipeline integration tests ──
+
+    use chrono::Utc;
+    use std::net::IpAddr;
+    use trueid_common::db::init_db;
+    use trueid_common::model::{IdentityEvent, SourceType};
+
+    fn pipeline_event(
+        ip: &str,
+        user: &str,
+        source: SourceType,
+        mac: Option<&str>,
+    ) -> IdentityEvent {
+        IdentityEvent {
+            source,
+            ip: ip.parse::<IpAddr>().expect("ip parse failed"),
+            user: user.to_string(),
+            timestamp: Utc::now(),
+            raw_data: format!("pipeline test for {ip}"),
+            mac: mac.map(|m| m.to_string()),
+            confidence_score: 90,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_event_creates_mapping_and_event_log() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+        let event = pipeline_event(
+            "10.0.0.1",
+            "alice",
+            SourceType::Radius,
+            Some("AA:BB:CC:DD:EE:01"),
+        );
+        db.upsert_mapping(event, Some("Cisco")).await.unwrap();
+
+        let mapping = db.get_mapping("10.0.0.1").await.unwrap().unwrap();
+        assert_eq!(mapping.source, SourceType::Radius);
+        assert!(mapping.is_active);
+
+        let event_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM events WHERE ip = '10.0.0.1'")
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+        assert_eq!(event_count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_conflict_then_alert_then_mapping() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+
+        // Step 1: Seed initial mapping (simulates prior event)
+        let initial = pipeline_event(
+            "10.0.0.1",
+            "alice",
+            SourceType::AdLog,
+            Some("AA:BB:CC:DD:EE:01"),
+        );
+        db.upsert_mapping(initial, None).await.unwrap();
+
+        // Step 2: New event with different user → should trigger conflicts
+        let event = pipeline_event(
+            "10.0.0.1",
+            "bob",
+            SourceType::Radius,
+            Some("AA:BB:CC:DD:EE:01"),
+        );
+
+        // Phase 2a: Detect conflicts (runs BEFORE upsert in real pipeline)
+        let detected = crate::conflicts::detect_conflicts(db.pool(), &event)
+            .await
+            .unwrap();
+        assert!(
+            detected.iter().any(|c| c.conflict_type == "ip_user_change"),
+            "user change alice→bob should produce ip_user_change conflict"
+        );
+
+        // Phase 2b: Evaluate alert rules (needs seeded rules)
+        sqlx::query(
+            "INSERT INTO alert_rules (name, enabled, rule_type, severity, action_log, cooldown_seconds)
+             VALUES ('ip-conflict-rule', 1, 'ip_conflict', 'critical', 1, 300)",
+        )
+        .execute(db.pool())
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO alert_rules (name, enabled, rule_type, severity, action_log, cooldown_seconds)
+             VALUES ('user-change-rule', 1, 'user_change', 'warning', 1, 300)",
+        )
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+        let rules = crate::alerts::load_rules(db.pool()).await.unwrap();
+        let firings =
+            crate::alerts::evaluate_event(db.pool(), &event, &detected, &rules).await;
+
+        let firing_types: Vec<&str> = firings.iter().map(|f| f.rule_type.as_str()).collect();
+        assert!(
+            firing_types.contains(&"ip_conflict"),
+            "ip_conflict rule should fire on ip_user_change"
+        );
+        assert!(
+            firing_types.contains(&"user_change"),
+            "user_change rule should fire when user differs"
+        );
+
+        // Phase 2c: Upsert mapping (runs AFTER conflict+alert in real pipeline)
+        db.upsert_mapping(event, None).await.unwrap();
+
+        let mapping = db.get_mapping("10.0.0.1").await.unwrap().unwrap();
+        assert_eq!(
+            mapping.source,
+            SourceType::Radius,
+            "Radius (3) should replace AdLog (2)"
+        );
+        let user: String =
+            sqlx::query_scalar("SELECT user FROM mappings WHERE ip = '10.0.0.1'")
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+        assert_eq!(user, "bob");
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_mac_roaming_across_ips() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+
+        // MAC starts on IP1
+        let e1 = pipeline_event(
+            "10.0.0.1",
+            "alice",
+            SourceType::Radius,
+            Some("AA:BB:CC:DD:EE:01"),
+        );
+        db.upsert_mapping(e1, None).await.unwrap();
+
+        // Same MAC on IP2 → duplicate_mac + mac_ip_conflict
+        let e2 = pipeline_event(
+            "10.0.0.2",
+            "bob",
+            SourceType::AdLog,
+            Some("AA:BB:CC:DD:EE:01"),
+        );
+        let conflicts = crate::conflicts::detect_conflicts(db.pool(), &e2)
+            .await
+            .unwrap();
+
+        assert!(
+            conflicts.iter().any(|c| c.conflict_type == "duplicate_mac"),
+            "same MAC on different IP should trigger duplicate_mac"
+        );
+        assert!(
+            conflicts.iter().any(|c| c.conflict_type == "mac_ip_conflict"),
+            "MAC roaming should trigger mac_ip_conflict"
+        );
+
+        // Alert engine should fire ip_conflict for duplicate_mac
+        sqlx::query(
+            "INSERT INTO alert_rules (name, enabled, rule_type, severity, action_log, cooldown_seconds)
+             VALUES ('dup-mac-alert', 1, 'ip_conflict', 'critical', 1, 300)",
+        )
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+        let rules = crate::alerts::load_rules(db.pool()).await.unwrap();
+        let firings =
+            crate::alerts::evaluate_event(db.pool(), &e2, &conflicts, &rules).await;
+        assert_eq!(firings.len(), 1);
+        assert_eq!(firings[0].rule_type, "ip_conflict");
+        assert_eq!(firings[0].severity, "critical");
+
+        // Upsert creates second mapping
+        db.upsert_mapping(e2, None).await.unwrap();
+        assert!(db.get_mapping("10.0.0.2").await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_new_mac_alert_on_first_event() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+
+        sqlx::query(
+            "INSERT INTO alert_rules (name, enabled, rule_type, severity, action_log, cooldown_seconds)
+             VALUES ('new-mac-alert', 1, 'new_mac', 'info', 1, 60)",
+        )
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+        let event = pipeline_event(
+            "10.0.0.1",
+            "alice",
+            SourceType::Radius,
+            Some("FF:EE:DD:CC:BB:AA"),
+        );
+        let conflicts = crate::conflicts::detect_conflicts(db.pool(), &event)
+            .await
+            .unwrap();
+        assert!(conflicts.is_empty(), "no prior data = no conflicts");
+
+        let rules = crate::alerts::load_rules(db.pool()).await.unwrap();
+        let firings =
+            crate::alerts::evaluate_event(db.pool(), &event, &conflicts, &rules).await;
+        assert_eq!(firings.len(), 1);
+        assert_eq!(firings[0].rule_type, "new_mac");
+
+        db.upsert_mapping(event, None).await.unwrap();
+
+        // Second event with same MAC should NOT trigger new_mac
+        let event2 = pipeline_event(
+            "10.0.0.2",
+            "bob",
+            SourceType::AdLog,
+            Some("FF:EE:DD:CC:BB:AA"),
+        );
+        let firings2 =
+            crate::alerts::evaluate_event(db.pool(), &event2, &[], &rules).await;
+        assert!(
+            firings2.is_empty(),
+            "MAC already active should not trigger new_mac"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_new_subnet_alert() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+
+        sqlx::query(
+            "INSERT INTO alert_rules (name, enabled, rule_type, severity, action_log, cooldown_seconds)
+             VALUES ('new-subnet-alert', 1, 'new_subnet', 'warning', 1, 300)",
+        )
+        .execute(db.pool())
+        .await
+        .unwrap();
+
+        // First event in 172.16.1.0/24 subnet → new_subnet fires
+        let event = pipeline_event("172.16.1.50", "alice", SourceType::Radius, None);
+        let rules = crate::alerts::load_rules(db.pool()).await.unwrap();
+        let firings =
+            crate::alerts::evaluate_event(db.pool(), &event, &[], &rules).await;
+        assert_eq!(firings.len(), 1);
+        assert_eq!(firings[0].rule_type, "new_subnet");
+
+        db.upsert_mapping(event, None).await.unwrap();
+
+        // Second event in same /24 → new_subnet should NOT fire
+        let event2 = pipeline_event("172.16.1.100", "bob", SourceType::AdLog, None);
+        let firings2 =
+            crate::alerts::evaluate_event(db.pool(), &event2, &[], &rules).await;
+        assert!(
+            firings2.is_empty(),
+            "subnet already has mappings, new_subnet should not fire"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_lower_priority_does_not_overwrite_after_conflict() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+
+        // Radius event first (priority 3)
+        let e1 = pipeline_event("10.0.0.1", "alice", SourceType::Radius, Some("AA:BB:CC:DD:EE:01"));
+        db.upsert_mapping(e1, None).await.unwrap();
+
+        // DHCP event for same IP, different user (priority 1)
+        let e2 = pipeline_event("10.0.0.1", "dhcp-host", SourceType::DhcpLease, None);
+
+        // Conflict detection sees user mismatch
+        let conflicts = crate::conflicts::detect_conflicts(db.pool(), &e2)
+            .await
+            .unwrap();
+        assert!(
+            conflicts.iter().any(|c| c.conflict_type == "ip_user_change"),
+            "DHCP→Radius user mismatch should detect conflict"
+        );
+
+        // But upsert should NOT replace the higher-priority mapping
+        db.upsert_mapping(e2, None).await.unwrap();
+        let user: String =
+            sqlx::query_scalar("SELECT user FROM mappings WHERE ip = '10.0.0.1'")
+                .fetch_one(db.pool())
+                .await
+                .unwrap();
+        assert_eq!(
+            user, "alice",
+            "lower-priority DHCP should not overwrite Radius user"
+        );
+    }
 }
