@@ -80,9 +80,10 @@ jobs:
         run: |
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PWD/.trivyignore:/work/.trivyignore:ro" \
             aquasec/trivy:0.57.1 image \
             --severity HIGH,CRITICAL \
-            --ignorefile .trivyignore \
+            --ignorefile /work/.trivyignore \
             --exit-code 1 \
             trueidv2-engine:latest
 
@@ -90,9 +91,10 @@ jobs:
         run: |
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
+            -v "$PWD/.trivyignore:/work/.trivyignore:ro" \
             aquasec/trivy:0.57.1 image \
             --severity HIGH,CRITICAL \
-            --ignorefile .trivyignore \
+            --ignorefile /work/.trivyignore \
             --exit-code 1 \
             trueidv2-web:latest
 
