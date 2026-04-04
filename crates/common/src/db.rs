@@ -14,6 +14,7 @@ use crate::model::{AgentInfo, DeviceMapping, IdentityEvent, SourceType, StoredEv
 
 /// Config keys whose values are encrypted at rest when an encryption key is available.
 const SENSITIVE_CONFIG_KEYS: &[&str] = &["sycope_pass", "sycope_login"];
+const DEFAULT_RUNTIME_MIGRATIONS_DIR: &str = "/app/migrations";
 
 /// Canonical SELECT columns for mapping queries.
 ///
@@ -873,7 +874,7 @@ async fn auto_encrypt_sensitive_config(pool: &SqlitePool, key: &[u8; 32]) -> Res
 pub async fn init_db(db_url: &str) -> Result<Db> {
     ensure_sqlite_parent_dir(db_url)?;
     let pool = SqlitePool::connect(db_url).await?;
-    let migrations_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+    let migrations_dir = migrations_dir();
     sqlx::migrate::Migrator::new(migrations_dir.as_path())
         .await?
         .run(&pool)
@@ -890,6 +891,68 @@ pub async fn init_db(db_url: &str) -> Result<Db> {
     }
 
     Ok(Db::new(pool, pepper, encryption_key))
+}
+
+/// Verifies that the SQLite parent directory is writable by the current process.
+///
+/// Parameters: `db_url` - SQLite connection string.
+/// Returns: `Ok(())` when the directory is writable or not file-backed.
+pub fn verify_sqlite_writable(db_url: &str) -> Result<()> {
+    ensure_sqlite_parent_dir(db_url)?;
+    let Some(db_path) = sqlite_path_from_url(db_url) else {
+        return Ok(());
+    };
+    let Some(parent) = db_path.parent() else {
+        return Ok(());
+    };
+    if parent.as_os_str().is_empty() || parent == Path::new(".") {
+        return Ok(());
+    }
+
+    let probe_path = parent.join(format!(".trueid-write-test-{}", std::process::id()));
+    match std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&probe_path)
+    {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&probe_path);
+            Ok(())
+        }
+        Err(err) => Err(anyhow::anyhow!(
+            "database directory '{}' is not writable: {}. Ensure the mounted volume permissions allow writes for the container user.",
+            parent.display(),
+            err
+        )),
+    }
+}
+
+/// Resolves the migrations directory for the current runtime environment.
+///
+/// Prefers `TRUEID_MIGRATIONS_DIR` when set; otherwise uses the source-tree path
+/// in development/tests and falls back to the container runtime path.
+fn migrations_dir() -> PathBuf {
+    resolve_migrations_dir(std::env::var("TRUEID_MIGRATIONS_DIR").ok().as_deref())
+}
+
+fn resolve_migrations_dir(env_override: Option<&str>) -> PathBuf {
+    if let Some(path) = env_override.map(str::trim).filter(|path| !path.is_empty()) {
+        return PathBuf::from(path);
+    }
+    let source_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+    if source_dir.is_dir() {
+        source_dir
+    } else {
+        let runtime_dir = PathBuf::from(DEFAULT_RUNTIME_MIGRATIONS_DIR);
+        if !runtime_dir.is_dir() {
+            tracing::warn!(
+                path = %runtime_dir.display(),
+                "Runtime migrations directory does not exist; set TRUEID_MIGRATIONS_DIR explicitly if running outside the source tree"
+            );
+        }
+        runtime_dir
+    }
 }
 
 /// Extracts a local SQLite file path from a SQLite connection URL.
@@ -1052,6 +1115,31 @@ mod tests {
     #[test]
     fn ensure_parent_relative_no_parent_noop() {
         ensure_sqlite_parent_dir("sqlite:test.db").unwrap();
+    }
+
+    #[test]
+    fn migrations_dir_prefers_env_override() {
+        assert_eq!(
+            resolve_migrations_dir(Some("/tmp/custom-migrations")),
+            PathBuf::from("/tmp/custom-migrations")
+        );
+    }
+
+    #[test]
+    fn migrations_dir_ignores_empty_env_override() {
+        assert_eq!(
+            resolve_migrations_dir(Some("")),
+            resolve_migrations_dir(None)
+        );
+    }
+
+    #[test]
+    fn migrations_dir_without_override_points_to_migrations_dir() {
+        let path = resolve_migrations_dir(None);
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("migrations")
+        );
     }
 
     #[tokio::test]

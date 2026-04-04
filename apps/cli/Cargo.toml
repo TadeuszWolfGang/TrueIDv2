@@ -7,6 +7,10 @@ edition = "2021"
 name = "trueid"
 path = "src/main.rs"
 
+[[bin]]
+name = "trueid-probe"
+path = "src/bin/trueid-probe.rs"
+
 [dependencies]
 anyhow = { workspace = true }
 chrono = { workspace = true }
