@@ -2029,6 +2029,144 @@ async fn test_conflict_resolve_404_409_and_preserve_invalid_details() {
 }
 
 #[tokio::test]
+async fn test_conflicts_cursor_pagination() {
+    let (app, db) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    for idx in 0..5 {
+        let offset_minutes = 10 - idx;
+        sqlx::query(
+            "INSERT INTO conflicts (conflict_type, severity, ip, mac, user_old, user_new, source, details, detected_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', ?))",
+        )
+        .bind("duplicate_mac")
+        .bind("warning")
+        .bind("10.77.0.1")
+        .bind(format!("AA:BB:CC:DD:EE:{idx:02X}"))
+        .bind(format!("old{idx}"))
+        .bind(format!("new{idx}"))
+        .bind("Radius")
+        .bind(format!("{{\"seq\":{idx}}}"))
+        .bind(format!("-{offset_minutes} minutes"))
+        .execute(db.pool())
+        .await
+        .expect("insert paginated conflict failed");
+    }
+
+    let (status, first) = auth_get(&app, &cookie, "/api/v2/conflicts?ip=10.77.0.1&limit=2").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(first["page"], 1);
+
+    let first_rows = first["data"]
+        .as_array()
+        .expect("first conflicts page must be an array");
+    assert_eq!(first_rows.len(), 2);
+    let next_cursor = first["next_cursor"]
+        .as_str()
+        .expect("first conflicts page must expose next_cursor");
+    let first_ids: Vec<i64> = first_rows
+        .iter()
+        .map(|row| row["id"].as_i64().expect("conflict id missing"))
+        .collect();
+
+    let uri = format!(
+        "/api/v2/conflicts?ip=10.77.0.1&limit=2&cursor={}",
+        encode(next_cursor)
+    );
+    let (status, second) = auth_get(&app, &cookie, &uri).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let second_rows = second["data"]
+        .as_array()
+        .expect("second conflicts page must be an array");
+    assert_eq!(second_rows.len(), 2);
+    let second_ids: Vec<i64> = second_rows
+        .iter()
+        .map(|row| row["id"].as_i64().expect("conflict id missing"))
+        .collect();
+    assert!(first_ids.iter().all(|id| !second_ids.contains(id)));
+}
+
+#[tokio::test]
+async fn test_conflicts_deprecated_page_fallback() {
+    let (app, db) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    for idx in 0..4 {
+        let offset_minutes = 20 - idx;
+        sqlx::query(
+            "INSERT INTO conflicts (conflict_type, severity, ip, mac, user_old, user_new, source, details, detected_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', ?))",
+        )
+        .bind("user_flip")
+        .bind("critical")
+        .bind("10.88.0.8")
+        .bind(format!("FF:EE:DD:CC:BB:{idx:02X}"))
+        .bind(format!("alpha{idx}"))
+        .bind(format!("beta{idx}"))
+        .bind("AdLog")
+        .bind(format!("{{\"page\":{idx}}}"))
+        .bind(format!("-{offset_minutes} minutes"))
+        .execute(db.pool())
+        .await
+        .expect("insert deprecated-page conflict failed");
+    }
+
+    let (status, first) = auth_get(
+        &app,
+        &cookie,
+        "/api/v2/conflicts?ip=10.88.0.8&limit=2&page=1",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, second) = auth_get(
+        &app,
+        &cookie,
+        "/api/v2/conflicts?ip=10.88.0.8&limit=2&page=2",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let first_ids: Vec<i64> = first["data"]
+        .as_array()
+        .expect("first conflicts page must be an array")
+        .iter()
+        .map(|row| row["id"].as_i64().expect("conflict id missing"))
+        .collect();
+    let second_ids: Vec<i64> = second["data"]
+        .as_array()
+        .expect("second conflicts page must be an array")
+        .iter()
+        .map(|row| row["id"].as_i64().expect("conflict id missing"))
+        .collect();
+
+    assert_eq!(second["page"], 2);
+    assert!(first_ids.iter().all(|id| !second_ids.contains(id)));
+}
+
+#[tokio::test]
+async fn test_conflicts_reject_invalid_cursor() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/conflicts?cursor=broken").await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], "INVALID_INPUT");
+}
+
+#[tokio::test]
+async fn test_conflicts_reject_excessive_deprecated_offset() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/conflicts?page=500&limit=200").await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], "INVALID_INPUT");
+}
+
+#[tokio::test]
 async fn test_alerts_list_stats_and_history() {
     let (app, db) = build_test_app().await;
     let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
@@ -2122,6 +2260,185 @@ async fn test_alerts_list_stats_and_history() {
             .abs()
             < f64::EPSILON
     );
+}
+
+#[tokio::test]
+async fn test_alert_history_cursor_pagination() {
+    let (app, db) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/alerts/rules",
+        &json!({
+            "name": "cursor-history-rule",
+            "rule_type": "new_mac",
+            "severity": "warning",
+            "action_log": true,
+            "cooldown_seconds": 60
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let rule_id = created["id"].as_i64().expect("rule id missing");
+
+    for idx in 0..5 {
+        let offset_minutes = 10 - idx;
+        sqlx::query(
+            "INSERT INTO alert_history (
+                rule_id, rule_name, rule_type, severity, ip, mac, user_name, source, details, webhook_status, webhook_response, fired_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', ?))",
+        )
+        .bind(rule_id)
+        .bind("cursor-history-rule")
+        .bind("new_mac")
+        .bind("warning")
+        .bind("10.55.0.5")
+        .bind(format!("AA:55:00:00:00:{idx:02X}"))
+        .bind(format!("cursor_user_{idx}"))
+        .bind("Radius")
+        .bind(format!("{{\"seq\":{idx}}}"))
+        .bind("sent")
+        .bind("200")
+        .bind(format!("-{offset_minutes} minutes"))
+        .execute(db.pool())
+        .await
+        .expect("insert alert history page seed failed");
+    }
+
+    let (status, first) =
+        auth_get(&app, &cookie, "/api/v2/alerts/history?ip=10.55.0.5&limit=2").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(first["page"], 1);
+
+    let first_rows = first["data"]
+        .as_array()
+        .expect("first alert history page must be an array");
+    assert_eq!(first_rows.len(), 2);
+    let next_cursor = first["next_cursor"]
+        .as_str()
+        .expect("first alert history page must expose next_cursor");
+    let first_ids: Vec<i64> = first_rows
+        .iter()
+        .map(|row| row["id"].as_i64().expect("alert history id missing"))
+        .collect();
+
+    let uri = format!(
+        "/api/v2/alerts/history?ip=10.55.0.5&limit=2&cursor={}",
+        encode(next_cursor)
+    );
+    let (status, second) = auth_get(&app, &cookie, &uri).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let second_rows = second["data"]
+        .as_array()
+        .expect("second alert history page must be an array");
+    assert_eq!(second_rows.len(), 2);
+    let second_ids: Vec<i64> = second_rows
+        .iter()
+        .map(|row| row["id"].as_i64().expect("alert history id missing"))
+        .collect();
+    assert!(first_ids.iter().all(|id| !second_ids.contains(id)));
+}
+
+#[tokio::test]
+async fn test_alert_history_deprecated_page_fallback() {
+    let (app, db) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/alerts/rules",
+        &json!({
+            "name": "deprecated-history-rule",
+            "rule_type": "ip_conflict",
+            "severity": "critical",
+            "action_log": true,
+            "cooldown_seconds": 120
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let rule_id = created["id"].as_i64().expect("rule id missing");
+
+    for idx in 0..4 {
+        let offset_minutes = 20 - idx;
+        sqlx::query(
+            "INSERT INTO alert_history (
+                rule_id, rule_name, rule_type, severity, ip, mac, user_name, source, details, webhook_status, webhook_response, fired_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', ?))",
+        )
+        .bind(rule_id)
+        .bind("deprecated-history-rule")
+        .bind("ip_conflict")
+        .bind("critical")
+        .bind("10.56.0.6")
+        .bind(format!("AA:56:00:00:00:{idx:02X}"))
+        .bind(format!("deprecated_user_{idx}"))
+        .bind("AdLog")
+        .bind(format!("{{\"page\":{idx}}}"))
+        .bind("failed")
+        .bind("500")
+        .bind(format!("-{offset_minutes} minutes"))
+        .execute(db.pool())
+        .await
+        .expect("insert deprecated-page alert history failed");
+    }
+
+    let (status, first) = auth_get(
+        &app,
+        &cookie,
+        "/api/v2/alerts/history?ip=10.56.0.6&limit=2&page=1",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, second) = auth_get(
+        &app,
+        &cookie,
+        "/api/v2/alerts/history?ip=10.56.0.6&limit=2&page=2",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let first_ids: Vec<i64> = first["data"]
+        .as_array()
+        .expect("first alert history page must be an array")
+        .iter()
+        .map(|row| row["id"].as_i64().expect("alert history id missing"))
+        .collect();
+    let second_ids: Vec<i64> = second["data"]
+        .as_array()
+        .expect("second alert history page must be an array")
+        .iter()
+        .map(|row| row["id"].as_i64().expect("alert history id missing"))
+        .collect();
+
+    assert_eq!(second["page"], 2);
+    assert!(first_ids.iter().all(|id| !second_ids.contains(id)));
+}
+
+#[tokio::test]
+async fn test_alert_history_reject_invalid_cursor() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/alerts/history?cursor=broken").await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], "INVALID_INPUT");
+}
+
+#[tokio::test]
+async fn test_alert_history_reject_excessive_deprecated_offset() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, body) = auth_get(&app, &cookie, "/api/v2/alerts/history?page=500&limit=200").await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], "INVALID_INPUT");
 }
 
 #[tokio::test]
