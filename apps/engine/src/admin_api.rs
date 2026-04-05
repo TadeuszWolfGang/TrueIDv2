@@ -645,6 +645,7 @@ mod tests {
     use axum::body::Body;
     use axum::http::Request as HttpRequest;
     use http_body_util::BodyExt;
+    use serde_json::Value;
     use tower::util::ServiceExt;
     use trueid_common::db::init_db;
     use trueid_common::live_event::LiveEvent;
@@ -1020,6 +1021,67 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct ParsedSseEvent {
+        event: String,
+        data: Value,
+    }
+
+    fn parse_sse_block(block: &str) -> Option<ParsedSseEvent> {
+        let mut event = None;
+        let mut data = None;
+        for line in block.lines().filter(|line| !line.is_empty()) {
+            if let Some(value) = line.strip_prefix("event: ") {
+                event = Some(value.to_string());
+            } else if let Some(value) = line.strip_prefix("data: ") {
+                data = Some(value);
+            }
+        }
+
+        let event = event?;
+        let data = serde_json::from_str(data?).ok()?;
+        Some(ParsedSseEvent { event, data })
+    }
+
+    async fn collect_sse_events(
+        resp: &mut reqwest::Response,
+        expected_events: usize,
+        timeout: std::time::Duration,
+    ) -> Vec<ParsedSseEvent> {
+        let mut buffer = String::new();
+        let mut parsed = Vec::with_capacity(expected_events);
+
+        let result = tokio::time::timeout(timeout, async {
+            while parsed.len() < expected_events {
+                let Some(chunk) = resp.chunk().await.expect("chunk read error") else {
+                    panic!(
+                        "SSE stream closed before collecting {expected_events} events; parsed={parsed:#?}"
+                    );
+                };
+                buffer.push_str(&String::from_utf8_lossy(&chunk));
+                buffer = buffer.replace("\r\n", "\n");
+
+                while let Some(separator) = buffer.find("\n\n") {
+                    let block = buffer[..separator].to_string();
+                    buffer.drain(..separator + 2);
+                    if let Some(event) = parse_sse_block(&block) {
+                        parsed.push(event);
+                        if parsed.len() == expected_events {
+                            return;
+                        }
+                    }
+                }
+            }
+        })
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "timed out waiting for {expected_events} SSE events; parsed={parsed:#?}; buffer={buffer}"
+        );
+        parsed
+    }
+
     #[tokio::test]
     async fn test_sse_stream_receives_mapping_event() {
         let db = Arc::new(init_db("sqlite::memory:").await.unwrap());
@@ -1060,28 +1122,15 @@ mod tests {
             "expected text/event-stream, got: {ct}"
         );
 
-        // Accumulate chunks until we see the event data or timeout
-        let mut collected = String::new();
-        let deadline = std::time::Duration::from_secs(3);
-        let result = tokio::time::timeout(deadline, async {
-            while let Some(chunk) = resp.chunk().await.transpose() {
-                let chunk = chunk.expect("chunk read error");
-                collected.push_str(&String::from_utf8_lossy(&chunk));
-                if collected.contains("10.0.0.1") && collected.contains("alice") {
-                    return;
-                }
-            }
-        })
-        .await;
-
-        assert!(
-            result.is_ok(),
-            "timed out waiting for mapping event in SSE stream, got:\n{collected}"
-        );
-        assert!(
-            collected.contains("10.0.0.1") && collected.contains("alice"),
-            "SSE body must contain the broadcast mapping event data, got:\n{collected}"
-        );
+        let events = collect_sse_events(&mut resp, 1, std::time::Duration::from_secs(3)).await;
+        let event = &events[0];
+        assert_eq!(event.event, "mapping");
+        assert_eq!(event.data["type"], "mapping_update");
+        assert_eq!(event.data["ip"], "10.0.0.1");
+        assert_eq!(event.data["user"], "alice");
+        assert_eq!(event.data["source"], "Radius");
+        assert_eq!(event.data["mac"], "AA:BB:CC:DD:EE:FF");
+        assert!(event.data["timestamp"].is_string());
     }
 
     #[tokio::test]
@@ -1132,38 +1181,22 @@ mod tests {
 
         assert_eq!(resp.status(), 200);
 
-        // Accumulate chunks until all three event types arrive
-        let mut collected = String::new();
-        let deadline = std::time::Duration::from_secs(3);
-        let result = tokio::time::timeout(deadline, async {
-            while let Some(chunk) = resp.chunk().await.transpose() {
-                let chunk = chunk.expect("chunk read error");
-                collected.push_str(&String::from_utf8_lossy(&chunk));
-                if collected.contains("event: mapping")
-                    && collected.contains("event: conflict")
-                    && collected.contains("event: alert")
-                {
-                    return;
-                }
-            }
-        })
-        .await;
+        let events = collect_sse_events(&mut resp, 3, std::time::Duration::from_secs(3)).await;
+        assert_eq!(events[0].event, "mapping");
+        assert_eq!(events[0].data["type"], "mapping_update");
+        assert_eq!(events[0].data["ip"], "10.0.0.1");
 
-        assert!(
-            result.is_ok(),
-            "timed out waiting for all event types in SSE stream, got:\n{collected}"
-        );
-        assert!(
-            collected.contains("event: mapping"),
-            "missing mapping event tag in SSE body:\n{collected}"
-        );
-        assert!(
-            collected.contains("event: conflict"),
-            "missing conflict event tag in SSE body:\n{collected}"
-        );
-        assert!(
-            collected.contains("event: alert"),
-            "missing alert event tag in SSE body:\n{collected}"
-        );
+        assert_eq!(events[1].event, "conflict");
+        assert_eq!(events[1].data["type"], "conflict_detected");
+        assert_eq!(events[1].data["conflict_type"], "ip_user_change");
+        assert_eq!(events[1].data["severity"], "warning");
+        assert_eq!(events[1].data["ip"], "10.0.0.1");
+
+        assert_eq!(events[2].event, "alert");
+        assert_eq!(events[2].data["type"], "alert_fired");
+        assert_eq!(events[2].data["rule_type"], "ip_conflict");
+        assert_eq!(events[2].data["severity"], "critical");
+        assert_eq!(events[2].data["ip"], "10.0.0.1");
+        assert_eq!(events[2].data["user"], "alice");
     }
 }
