@@ -10,6 +10,7 @@ use axum::Router;
 use chrono::{Duration, Utc};
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
+use std::fs;
 use std::net::IpAddr;
 use std::sync::{Arc, Once};
 use tower::ServiceExt;
@@ -6492,4 +6493,210 @@ async fn test_contract_conflicts_stats_shape() {
         body["total_unresolved"].as_i64().unwrap() >= 1,
         "seeded conflict should be counted"
     );
+}
+
+fn openapi_text() -> String {
+    let path = format!("{}/../../docs/openapi.yaml", env!("CARGO_MANIFEST_DIR"));
+    fs::read_to_string(path).expect("read docs/openapi.yaml")
+}
+
+fn yaml_block(doc: &str, anchor: &str, indent: usize) -> String {
+    let marker = format!("{}{}:", " ".repeat(indent), anchor);
+    let same_indent = " ".repeat(indent);
+    let deeper_indent = " ".repeat(indent + 1);
+
+    let mut collecting = false;
+    let mut lines = Vec::new();
+    for line in doc.lines() {
+        if !collecting {
+            if line == marker {
+                collecting = true;
+            }
+            continue;
+        }
+
+        if line.starts_with(&same_indent)
+            && !line.starts_with(&deeper_indent)
+            && line.trim_end().ends_with(':')
+        {
+            break;
+        }
+
+        lines.push(line);
+    }
+
+    assert!(collecting, "missing YAML block for {anchor}");
+    lines.join("\n")
+}
+
+#[test]
+fn test_openapi_device_mapping_schema_guardrail() {
+    let doc = openapi_text();
+    let block = yaml_block(&doc, "DeviceMapping", 4);
+
+    for needle in &["current_users:", "country_code:", "city:", "tags:"] {
+        assert!(
+            block.contains(needle),
+            "DeviceMapping schema must contain '{needle}'"
+        );
+    }
+    assert!(
+        !block.contains("\n        user:"),
+        "DeviceMapping schema must not expose stale top-level user field"
+    );
+}
+
+#[test]
+fn test_openapi_alert_history_and_stats_guardrails() {
+    let doc = openapi_text();
+    let alert_firing = yaml_block(&doc, "AlertFiring", 4);
+    for needle in &["rule_id:", "mac:", "source:", "webhook_response:"] {
+        assert!(
+            alert_firing.contains(needle),
+            "AlertFiring schema must contain '{needle}'"
+        );
+    }
+
+    let alert_stats = yaml_block(&doc, "AlertStatsResponse", 4);
+    for needle in &[
+        "total_rules:",
+        "enabled_rules:",
+        "total_fired_24h:",
+        "by_severity_24h:",
+        "by_type_24h:",
+        "webhook_success_rate_24h:",
+    ] {
+        assert!(
+            alert_stats.contains(needle),
+            "AlertStatsResponse schema must contain '{needle}'"
+        );
+    }
+}
+
+#[test]
+fn test_openapi_conflicts_guardrails() {
+    let doc = openapi_text();
+    let conflict = yaml_block(&doc, "Conflict", 4);
+    assert!(
+        conflict.contains("conflict_type:"),
+        "Conflict schema must expose conflict_type"
+    );
+    let conflict_type = yaml_block(&conflict, "conflict_type", 8);
+    assert!(
+        conflict_type.contains("description:"),
+        "Conflict.conflict_type should document the response field semantics"
+    );
+
+    let stats = yaml_block(&doc, "ConflictStatsResponse", 4);
+    assert!(
+        stats.contains("by_severity:"),
+        "ConflictStatsResponse schema must include by_severity"
+    );
+}
+
+#[test]
+fn test_openapi_timeline_guardrails() {
+    let doc = openapi_text();
+
+    let ip_path = yaml_block(&doc, "/api/v2/timeline/ip/{ip}", 2);
+    assert!(
+        ip_path.contains("$ref: '#/components/schemas/IpTimelineResponse'"),
+        "IP timeline path must use typed response schema"
+    );
+    assert!(
+        !ip_path.contains("additionalProperties: true"),
+        "IP timeline path must not fall back to untyped additionalProperties"
+    );
+
+    let user_path = yaml_block(&doc, "/api/v2/timeline/user/{user}", 2);
+    assert!(
+        user_path.contains("$ref: '#/components/schemas/UserTimelineResponse'"),
+        "User timeline path must use typed response schema"
+    );
+    let mac_path = yaml_block(&doc, "/api/v2/timeline/mac/{mac}", 2);
+    assert!(
+        mac_path.contains("$ref: '#/components/schemas/MacTimelineResponse'"),
+        "MAC timeline path must use typed response schema"
+    );
+
+    let ip_response = yaml_block(&doc, "IpTimelineResponse", 4);
+    for needle in &[
+        "current_mapping:",
+        "events:",
+        "user_changes:",
+        "conflicts_count:",
+    ] {
+        assert!(
+            ip_response.contains(needle),
+            "IpTimelineResponse schema must contain '{needle}'"
+        );
+    }
+
+    let user_response = yaml_block(&doc, "UserTimelineResponse", 4);
+    for needle in &["user:", "active_mappings:", "events:", "ip_addresses_used:"] {
+        assert!(
+            user_response.contains(needle),
+            "UserTimelineResponse schema must contain '{needle}'"
+        );
+    }
+
+    let mac_response = yaml_block(&doc, "MacTimelineResponse", 4);
+    for needle in &[
+        "current_mappings_total:",
+        "current_mappings_next_cursor:",
+        "ip_history:",
+        "ip_history_truncated:",
+    ] {
+        assert!(
+            mac_response.contains(needle),
+            "MacTimelineResponse schema must contain '{needle}'"
+        );
+    }
+
+    let paginated_meta = yaml_block(&doc, "PaginatedMeta", 4);
+    for needle in &[
+        "total:",
+        "page:",
+        "limit:",
+        "total_pages:",
+        "next_cursor:",
+    ] {
+        assert!(
+            paginated_meta.contains(needle),
+            "PaginatedMeta schema must contain '{needle}'"
+        );
+    }
+    assert!(
+        paginated_meta.contains("total_pages: { type: integer }"),
+        "PaginatedMeta.total_pages must stay non-nullable"
+    );
+}
+
+#[test]
+fn test_openapi_search_and_export_guardrails() {
+    let doc = openapi_text();
+
+    let search_response = yaml_block(&doc, "SearchResponse", 4);
+    assert!(
+        search_response.contains("Null when the requested scope excludes mappings"),
+        "SearchResponse should explain when mappings is null"
+    );
+    assert!(
+        search_response.contains("Null when the requested scope excludes events"),
+        "SearchResponse should explain when events is null"
+    );
+
+    let export_events = yaml_block(&doc, "/api/v2/export/events", 2);
+    assert!(
+        export_events.contains("$ref: '#/components/schemas/StoredEvent'"),
+        "events export must use StoredEvent schema"
+    );
+
+    let export_mappings = yaml_block(&doc, "/api/v2/export/mappings", 2);
+    for needle in &["x-trueid-truncated:", "Content-Disposition:"] {
+        assert!(
+            export_mappings.contains(needle),
+            "mappings export must document '{needle}'"
+        );
+    }
 }
