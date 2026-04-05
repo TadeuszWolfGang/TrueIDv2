@@ -3,6 +3,7 @@
 //! The binary crate (`main.rs`) handles startup and server binding.
 
 pub mod auth;
+pub mod cursor;
 pub mod error;
 pub mod helpers;
 pub mod middleware;

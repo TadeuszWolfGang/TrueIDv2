@@ -9,9 +9,9 @@ use axum::{
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
-use std::fmt::Write as _;
 use tracing::warn;
 
+use crate::cursor::{decode_cursor_payload, encode_cursor_payload, invalid_cursor};
 use crate::error::{self, ApiError};
 use crate::helpers;
 use crate::middleware::AuthUser;
@@ -248,37 +248,6 @@ fn auxiliary_limit(limit: u32, max: u32) -> i64 {
             .saturating_mul(AUXILIARY_TIMELINE_MULTIPLIER)
             .clamp(1, max),
     )
-}
-
-/// Builds a uniform validation error for malformed timeline cursors.
-fn invalid_cursor(request_id: &str, message: &str) -> ApiError {
-    ApiError::new(StatusCode::BAD_REQUEST, error::INVALID_INPUT, message)
-        .with_request_id(request_id)
-}
-
-/// Hex-encodes cursor payload into a query-safe opaque token.
-fn encode_cursor_payload(payload: &str) -> String {
-    let mut out = String::with_capacity(payload.len() * 2);
-    for byte in payload.bytes() {
-        let _ = write!(&mut out, "{byte:02x}");
-    }
-    out
-}
-
-/// Decodes an opaque hex cursor payload into UTF-8 string content.
-fn decode_cursor_payload(raw: &str, request_id: &str, message: &str) -> Result<String, ApiError> {
-    if raw.is_empty() || raw.len() % 2 != 0 || !raw.is_ascii() {
-        return Err(invalid_cursor(request_id, message));
-    }
-
-    let mut bytes = Vec::with_capacity(raw.len() / 2);
-    for chunk in raw.as_bytes().chunks_exact(2) {
-        let pair = std::str::from_utf8(chunk).map_err(|_| invalid_cursor(request_id, message))?;
-        let byte = u8::from_str_radix(pair, 16).map_err(|_| invalid_cursor(request_id, message))?;
-        bytes.push(byte);
-    }
-
-    String::from_utf8(bytes).map_err(|_| invalid_cursor(request_id, message))
 }
 
 /// Resolves deprecated page-based offset and rejects pathological scans.
