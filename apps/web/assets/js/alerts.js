@@ -1,5 +1,107 @@
 /* Alerts module. */
 
+var SOURCE_DOWN_DEFAULT_SILENCE_SECONDS = 300;
+var SOURCE_DOWN_MIN_SILENCE_SECONDS = 60;
+var SOURCE_DOWN_MAX_SILENCE_SECONDS = 3600;
+var alertRulesCache = [];
+
+function isSourceDownRuleType(ruleType) {
+  return ruleType === 'source_down';
+}
+
+function updateAlertRuleConditionalFields() {
+  var ruleType = document.getElementById('rule-type').value;
+  var sourceDownFields = document.getElementById('source-down-fields');
+  var silenceInput = document.getElementById('rule-source-down-silence');
+
+  if (isSourceDownRuleType(ruleType)) {
+    sourceDownFields.style.display = 'flex';
+    if (!silenceInput.value) {
+      silenceInput.value = String(SOURCE_DOWN_DEFAULT_SILENCE_SECONDS);
+    }
+    return;
+  }
+
+  sourceDownFields.style.display = 'none';
+}
+
+function setAlertRuleFormMode(isEditing) {
+  document.getElementById('alert-rule-form-title').textContent = isEditing
+    ? 'Edit alert rule'
+    : 'Create alert rule';
+  document.getElementById('alert-rule-save-btn').textContent = isEditing ? 'Update' : 'Create';
+}
+
+function resetAlertRuleForm() {
+  document.getElementById('rule-name').value = '';
+  document.getElementById('rule-type').value = 'new_mac';
+  document.getElementById('rule-severity').value = 'warning';
+  document.getElementById('rule-cooldown').value = '300';
+  document.getElementById('rule-webhook').value = '';
+  document.getElementById('rule-source-down-source').value = 'RADIUS';
+  document.getElementById('rule-source-down-silence').value = String(SOURCE_DOWN_DEFAULT_SILENCE_SECONDS);
+  document.getElementById('rule-channel-list').innerHTML = '<span class="muted">Loading channels...</span>';
+  setAlertRuleFormMode(false);
+  updateAlertRuleConditionalFields();
+}
+
+function parseSourceDownConditions(raw) {
+  if (!raw) return null;
+  try {
+    var parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    return {
+      source: parsed.source || 'RADIUS',
+      silence_seconds: parsed.silence_seconds != null
+        ? parseInt(parsed.silence_seconds, 10)
+        : SOURCE_DOWN_DEFAULT_SILENCE_SECONDS
+    };
+  } catch (err) {
+    return null;
+  }
+}
+
+function formatAlertRuleTypeCell(rule) {
+  var html = escapeHtml(rule.rule_type);
+  if (!isSourceDownRuleType(rule.rule_type)) return html;
+
+  var conditions = parseSourceDownConditions(rule.conditions);
+  if (!conditions) {
+    return html + '<div class="muted" style="margin-top:4px;">invalid conditions</div>';
+  }
+
+  return html +
+    '<div class="muted" style="margin-top:4px;">' +
+    escapeHtml(conditions.source) + ' · ' + escapeHtml(String(conditions.silence_seconds)) + 's' +
+    '</div>';
+}
+
+function buildAlertRuleConditionsPayload(ruleType) {
+  if (!isSourceDownRuleType(ruleType)) return null;
+
+  var source = document.getElementById('rule-source-down-source').value;
+  var silenceSeconds = parseInt(
+    document.getElementById('rule-source-down-silence').value || String(SOURCE_DOWN_DEFAULT_SILENCE_SECONDS),
+    10
+  );
+
+  if (!source) {
+    throw new Error('Source adapter is required for Source Down rules.');
+  }
+  if (
+    isNaN(silenceSeconds) ||
+    silenceSeconds < SOURCE_DOWN_MIN_SILENCE_SECONDS ||
+    silenceSeconds > SOURCE_DOWN_MAX_SILENCE_SECONDS
+  ) {
+    throw new Error('Silence window must be between 60 and 3600 seconds.');
+  }
+
+  return JSON.stringify({
+    source: source,
+    silence_seconds: silenceSeconds
+  });
+}
+
 async function loadAlertStats() {
         try {
           var res = await fetch('/api/v2/alerts/stats', { credentials: 'include' });
@@ -41,12 +143,14 @@ async function loadAlertStats() {
 
       function showAddRuleForm() {
         editingRuleId = null;
+        resetAlertRuleForm();
         document.getElementById('alert-rule-form').style.display = '';
         loadRuleChannelOptions([]);
       }
 
       function hideRuleForm() {
         editingRuleId = null;
+        resetAlertRuleForm();
         document.getElementById('alert-rule-form').style.display = 'none';
       }
 
@@ -78,6 +182,7 @@ async function loadAlertStats() {
           var res = await fetch('/api/v2/alerts/rules', { credentials: 'include' });
           if (!res.ok) throw new Error('HTTP ' + res.status);
           var data = await res.json();
+          alertRulesCache = data.rules || [];
           var rules = sortRowsByState('alertRules', data.rules || []);
           var body = document.getElementById('rules-body');
           if (!rules.length) {
@@ -89,37 +194,79 @@ async function loadAlertStats() {
             return '<tr>' +
               '<td><label class="toggle"><input type="checkbox" ' + (r.enabled ? 'checked' : '') + ' onchange="toggleRuleEnabled(' + r.id + ', this.checked)"><span class="toggle-slider"></span></label></td>' +
               '<td>' + escapeHtml(r.name) + '</td>' +
-              '<td>' + escapeHtml(r.rule_type) + '</td>' +
+              '<td>' + formatAlertRuleTypeCell(r) + '</td>' +
               '<td><span class="' + badgeClass(r.severity) + '">' + escapeHtml(r.severity) + '</span></td>' +
               '<td>' + (r.action_webhook_url ? '<span class="muted">configured</span>' : '<span class="muted">none</span>') +
                 (channels ? '<div class="muted" style="margin-top:4px;">' + escapeHtml(channels) + '</div>' : '') + '</td>' +
               '<td>' + escapeHtml(r.cooldown_seconds) + 's</td>' +
-              '<td><button class="btn btn-sm" onclick="deleteAlertRule(' + r.id + ')">Delete</button></td>' +
+              '<td>' +
+                '<button class="btn btn-sm" onclick="editAlertRule(' + r.id + ')">Edit</button> ' +
+                '<button class="btn btn-sm" onclick="deleteAlertRule(' + r.id + ')">Delete</button>' +
+              '</td>' +
               '</tr>';
           }).join('');
           applySortHeaders('alerts-rules-table', 'alertRules', null, loadAlertRules);
         } catch (err) {
+          alertRulesCache = [];
           document.getElementById('rules-body').innerHTML =
             '<tr><td colspan="7" class="muted">No data available.</td></tr>';
         }
+      }
+
+      async function editAlertRule(id) {
+        var rule = alertRulesCache.find(function (item) { return item.id === id; });
+        if (!rule) {
+          await loadAlertRules();
+          rule = alertRulesCache.find(function (item) { return item.id === id; });
+        }
+        if (!rule) {
+          alert('Edit failed: rule not found.');
+          return;
+        }
+
+        editingRuleId = id;
+        resetAlertRuleForm();
+        setAlertRuleFormMode(true);
+        document.getElementById('rule-name').value = rule.name || '';
+        document.getElementById('rule-type').value = rule.rule_type || 'new_mac';
+        document.getElementById('rule-severity').value = rule.severity || 'warning';
+        document.getElementById('rule-cooldown').value = String(rule.cooldown_seconds != null ? rule.cooldown_seconds : 300);
+        document.getElementById('rule-webhook').value = rule.action_webhook_url || '';
+        updateAlertRuleConditionalFields();
+
+        if (isSourceDownRuleType(rule.rule_type)) {
+          var conditions = parseSourceDownConditions(rule.conditions);
+          if (conditions) {
+            document.getElementById('rule-source-down-source').value = conditions.source;
+            document.getElementById('rule-source-down-silence').value = String(conditions.silence_seconds);
+          }
+        }
+
+        loadRuleChannelOptions(
+          Array.isArray(rule.channels)
+            ? rule.channels.map(function (channel) { return channel.id; })
+            : []
+        );
+        document.getElementById('alert-rule-form').style.display = '';
       }
 
       async function saveAlertRule() {
         var selectedChannelIds = Array.from(document.querySelectorAll('.rule-channel-cb:checked'))
           .map(function (el) { return parseInt(el.value, 10); })
           .filter(function (v) { return !isNaN(v); });
-        var payload = {
-          name: document.getElementById('rule-name').value.trim(),
-          rule_type: document.getElementById('rule-type').value,
-          severity: document.getElementById('rule-severity').value,
-          conditions: null,
-          action_webhook_url: document.getElementById('rule-webhook').value.trim() || null,
-          action_webhook_headers: null,
-          action_log: true,
-          cooldown_seconds: parseInt(document.getElementById('rule-cooldown').value || '300', 10),
-          channel_ids: selectedChannelIds
-        };
+        var ruleType = document.getElementById('rule-type').value;
         try {
+          var payload = {
+            name: document.getElementById('rule-name').value.trim(),
+            rule_type: ruleType,
+            severity: document.getElementById('rule-severity').value,
+            conditions: buildAlertRuleConditionsPayload(ruleType),
+            action_webhook_url: document.getElementById('rule-webhook').value.trim() || null,
+            action_webhook_headers: null,
+            action_log: true,
+            cooldown_seconds: parseInt(document.getElementById('rule-cooldown').value || '300', 10),
+            channel_ids: selectedChannelIds
+          };
           var url = '/api/v2/alerts/rules';
           var method = 'POST';
           if (editingRuleId) {
@@ -134,10 +281,6 @@ async function loadAlertStats() {
           });
           if (!res.ok) throw new Error('HTTP ' + res.status);
           hideRuleForm();
-          document.getElementById('rule-name').value = '';
-          document.getElementById('rule-webhook').value = '';
-          document.getElementById('rule-cooldown').value = '300';
-          document.getElementById('rule-channel-list').innerHTML = '<span class="muted">Loading channels...</span>';
           loadAlertRules();
           loadAlertStats();
         } catch (err) {
@@ -236,13 +379,16 @@ async function loadAlertStats() {
 (function () {
   window.TrueID = window.TrueID || {};
   if (typeof window.deleteAlertRule === 'function') window.TrueID.deleteAlertRule = window.deleteAlertRule;
+  if (typeof window.editAlertRule === 'function') window.TrueID.editAlertRule = window.editAlertRule;
   if (typeof window.hideRuleForm === 'function') window.TrueID.hideRuleForm = window.hideRuleForm;
   if (typeof window.loadAlertHistory === 'function') window.TrueID.loadAlertHistory = window.loadAlertHistory;
   if (typeof window.loadAlertRules === 'function') window.TrueID.loadAlertRules = window.loadAlertRules;
   if (typeof window.loadAlertStats === 'function') window.TrueID.loadAlertStats = window.loadAlertStats;
   if (typeof window.loadRuleChannelOptions === 'function') window.TrueID.loadRuleChannelOptions = window.loadRuleChannelOptions;
   if (typeof window.renderAlertHistoryPaging === 'function') window.TrueID.renderAlertHistoryPaging = window.renderAlertHistoryPaging;
+  if (typeof window.resetAlertRuleForm === 'function') window.TrueID.resetAlertRuleForm = window.resetAlertRuleForm;
   if (typeof window.saveAlertRule === 'function') window.TrueID.saveAlertRule = window.saveAlertRule;
   if (typeof window.showAddRuleForm === 'function') window.TrueID.showAddRuleForm = window.showAddRuleForm;
+  if (typeof window.updateAlertRuleConditionalFields === 'function') window.TrueID.updateAlertRuleConditionalFields = window.updateAlertRuleConditionalFields;
   if (typeof window.toggleRuleEnabled === 'function') window.TrueID.toggleRuleEnabled = window.toggleRuleEnabled;
 })();

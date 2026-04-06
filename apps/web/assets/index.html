@@ -752,9 +752,10 @@
             <button class="btn btn-sm" style="margin-left:12px;" onclick="showAddRuleForm()">+ Add Rule</button>
           </h2>
           <div id="alert-rule-form" style="display:none;margin-bottom:16px;padding:12px;border:1px solid var(--border-dim);border-radius:4px;">
+            <div id="alert-rule-form-title" class="muted" style="margin-bottom:8px;">Create alert rule</div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
               <input type="text" id="rule-name" class="setting-input" style="width:200px;" placeholder="Rule name">
-              <select id="rule-type" class="setting-input" style="width:160px;">
+              <select id="rule-type" class="setting-input" style="width:160px;" onchange="updateAlertRuleConditionalFields()">
                 <option value="new_mac">New MAC</option>
                 <option value="ip_conflict">IP Conflict</option>
                 <option value="user_change">User Change</option>
@@ -768,6 +769,27 @@
               </select>
               <input type="number" id="rule-cooldown" class="setting-input" style="width:140px;" placeholder="Cooldown (s)" value="300">
             </div>
+            <div id="source-down-fields" style="display:none;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+              <select id="rule-source-down-source" class="setting-input" style="width:180px;">
+                <option value="RADIUS">RADIUS</option>
+                <option value="AD Syslog">AD Syslog</option>
+                <option value="DHCP Syslog">DHCP Syslog</option>
+                <option value="VPN Syslog">VPN Syslog</option>
+                <option value="AD TLS">AD TLS</option>
+                <option value="DHCP TLS">DHCP TLS</option>
+              </select>
+              <input
+                type="number"
+                id="rule-source-down-silence"
+                class="setting-input"
+                style="width:180px;"
+                min="60"
+                max="3600"
+                step="1"
+                value="300"
+                placeholder="Silence window (s)"
+              >
+            </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
               <input type="text" id="rule-webhook" class="setting-input" style="width:400px;" placeholder="Webhook URL (optional)">
             </div>
@@ -776,7 +798,7 @@
               <div id="rule-channel-list" class="sync-status-box">Loading channels...</div>
             </div>
             <div style="display:flex;gap:8px;">
-              <button class="btn btn-sm" onclick="saveAlertRule()">Save</button>
+              <button id="alert-rule-save-btn" class="btn btn-sm" onclick="saveAlertRule()">Create</button>
               <button class="btn btn-sm" onclick="hideRuleForm()">Cancel</button>
             </div>
           </div>
