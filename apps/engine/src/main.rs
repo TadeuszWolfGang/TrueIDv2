@@ -36,13 +36,14 @@ use chrono::Utc;
 use net_identity_adapter_ad_logs::AdLogsAdapter;
 use net_identity_adapter_dhcp_logs::DhcpLogsAdapter;
 use net_identity_adapter_radius::RadiusAdapter;
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{self, Receiver, Sender};
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
@@ -68,6 +69,7 @@ const DEFAULT_TLS_CA: &str = "./certs/ca.pem";
 const DEFAULT_TLS_CERT: &str = "./certs/server.pem";
 const DEFAULT_TLS_KEY: &str = "./certs/server-key.pem";
 const DEFAULT_ADMIN_HTTP_ADDR: &str = "127.0.0.1:8080";
+const SOURCE_DOWN_CHECK_INTERVAL_SECS: u64 = 30;
 static SHUTDOWN: AtomicBool = AtomicBool::new(false);
 
 /// Loads the RADIUS shared secret and rejects insecure defaults.
@@ -96,6 +98,43 @@ struct EventLoopCtx {
     notification_dispatcher: Arc<notifications::NotificationDispatcher>,
     geo_resolver: Arc<geo_resolver::GeoResolver>,
     subnet_discovery: Arc<subnet_discovery::SubnetDiscovery>,
+}
+
+fn is_tls_agent_event(event: &IdentityEvent) -> bool {
+    event.raw_data.contains("TrueID-Agent:")
+}
+
+fn publish_alert_side_effects(
+    firing: &alerts::AlertFiring,
+    siem_sender: &Sender<siem_forwarder::SiemEvent>,
+) {
+    let _ = siem_sender.try_send(siem_forwarder::SiemEvent::Alert {
+        rule_name: firing.rule_name.clone(),
+        severity: firing.severity.clone(),
+        ip: firing.ip.clone(),
+        user: firing.user_name.clone(),
+        message: firing.details.clone(),
+        timestamp: Utc::now(),
+    });
+    live_bus::send(LiveEvent::AlertFired {
+        rule_name: firing.rule_name.clone(),
+        rule_type: firing.rule_type.clone(),
+        severity: firing.severity.clone(),
+        ip: firing.ip.clone(),
+        user: firing.user_name.clone(),
+        fired_at: Utc::now(),
+    });
+}
+
+fn spawn_alert_delivery(
+    db: Arc<Db>,
+    http_client: reqwest::Client,
+    notification_dispatcher: Arc<notifications::NotificationDispatcher>,
+    firing: alerts::AlertFiring,
+) {
+    tokio::spawn(async move {
+        alerts::fire_alert(&db, &http_client, &notification_dispatcher, &firing).await;
+    });
 }
 
 /// Runs the event processing loop, persisting each event to the database.
@@ -153,11 +192,12 @@ async fn run_event_loop(mut receiver: Receiver<IdentityEvent>, ctx: EventLoopCtx
             | trueid_common::model::SourceType::VpnFortinet => "VPN Syslog",
             trueid_common::model::SourceType::Manual => "Manual",
         };
-        {
+        if !is_tls_agent_event(&event) {
             let mut stats = adapter_stats.write().await;
             if let Some(a) = stats.iter_mut().find(|a| a.name == source_name) {
                 a.events_total += 1;
                 a.last_event_at = Some(Utc::now());
+                a.status = "active".to_string();
             }
         }
 
@@ -207,34 +247,13 @@ async fn run_event_loop(mut receiver: Receiver<IdentityEvent>, ctx: EventLoopCtx
             let firings =
                 alerts::evaluate_event(db.pool(), &event, &detected_conflicts, &rules).await;
             for firing in firings {
-                let _ = siem_sender.try_send(siem_forwarder::SiemEvent::Alert {
-                    rule_name: firing.rule_name.clone(),
-                    severity: firing.severity.clone(),
-                    ip: firing.ip.clone(),
-                    user: firing.user_name.clone(),
-                    message: firing.details.clone(),
-                    timestamp: Utc::now(),
-                });
-                let db_for_alert = db.clone();
-                let client = http_client.clone();
-                let dispatcher = notification_dispatcher.clone();
-                live_bus::send(LiveEvent::AlertFired {
-                    rule_name: firing.rule_name.clone(),
-                    rule_type: firing.rule_type.clone(),
-                    severity: firing.severity.clone(),
-                    ip: firing.ip.clone(),
-                    user: firing.user_name.clone(),
-                    fired_at: Utc::now(),
-                });
-                tokio::spawn(async move {
-                    alerts::fire_alert(
-                        db_for_alert.as_ref(),
-                        &client,
-                        dispatcher.as_ref(),
-                        &firing,
-                    )
-                    .await;
-                });
+                publish_alert_side_effects(&firing, &siem_sender);
+                spawn_alert_delivery(
+                    db.clone(),
+                    http_client.clone(),
+                    notification_dispatcher.clone(),
+                    firing,
+                );
             }
         }
 
@@ -588,6 +607,8 @@ async fn main() -> Result<()> {
         db.clone(),
         http_client.clone(),
     ));
+    let source_down_state: Arc<Mutex<HashMap<i64, alerts::SourceDownRuleState>>> =
+        Arc::new(Mutex::new(HashMap::new()));
     let siem_forwarder_handle = {
         let siem_pool = db.pool().clone();
         tokio::spawn(async move {
@@ -613,7 +634,7 @@ async fn main() -> Result<()> {
         alert_rules: event_alert_rules,
         http_client: event_http_client,
         siem_sender: event_siem_sender,
-        notification_dispatcher,
+        notification_dispatcher: notification_dispatcher.clone(),
         geo_resolver: geo_resolver.clone(),
         subnet_discovery: subnet_discovery.clone(),
     };
@@ -676,6 +697,48 @@ async fn main() -> Result<()> {
                 });
             })
         });
+        let source_down_db = db.clone();
+        let source_down_adapter_stats = adapter_stats.clone();
+        let source_down_rules = alert_rules.clone();
+        let source_down_http_client = http_client.clone();
+        let source_down_dispatcher = notification_dispatcher.clone();
+        let source_down_siem_sender = siem_sender.clone();
+        let source_down_state = source_down_state.clone();
+        background_scheduler.add(
+            "source_down",
+            Duration::from_secs(SOURCE_DOWN_CHECK_INTERVAL_SECS),
+            move || {
+                let source_down_db = source_down_db.clone();
+                let source_down_adapter_stats = source_down_adapter_stats.clone();
+                let source_down_rules = source_down_rules.clone();
+                let source_down_http_client = source_down_http_client.clone();
+                let source_down_dispatcher = source_down_dispatcher.clone();
+                let source_down_siem_sender = source_down_siem_sender.clone();
+                let source_down_state = source_down_state.clone();
+                Box::pin(async move {
+                    let adapters = source_down_adapter_stats.read().await.clone();
+                    let rules = source_down_rules.read().await.clone();
+                    let firings = {
+                        let mut state = source_down_state.lock().await;
+                        alerts::evaluate_source_down_rules(
+                            &adapters,
+                            &rules,
+                            &mut *state,
+                            Utc::now(),
+                        )
+                    };
+                    for firing in firings {
+                        publish_alert_side_effects(&firing, &source_down_siem_sender);
+                        spawn_alert_delivery(
+                            source_down_db.clone(),
+                            source_down_http_client.clone(),
+                            source_down_dispatcher.clone(),
+                            firing,
+                        );
+                    }
+                })
+            },
+        );
         tokio::spawn(background_scheduler.run());
     }
     {
@@ -699,19 +762,26 @@ async fn main() -> Result<()> {
                 // AD TLS listener — feeds into the same sender as UDP AD adapter.
                 let ad_sender = sender.clone();
                 let ad_db = db.clone();
+                let ad_adapter_stats = adapter_stats.clone();
                 let ad_acceptor = acceptor.clone();
                 let ad_handler: tls_listener::MessageHandler =
                     Arc::new(move |msg: &str, _peer: SocketAddr| {
                         // Check for heartbeat first.
                         let hb_db = ad_db.clone();
+                        let hb_adapter_stats = ad_adapter_stats.clone();
                         let hb_msg = msg.to_string();
                         tokio::spawn(async move {
-                            tls_parsers::handle_heartbeat(&hb_msg, &hb_db).await
+                            if tls_parsers::handle_heartbeat(&hb_msg, &hb_db).await {
+                                adapter_status::record_activity(&hb_adapter_stats, "AD TLS", false)
+                                    .await;
+                            }
                         });
 
                         if let Ok(Some(event)) = tls_parsers::parse_tls_syslog_ad(msg) {
                             let s = ad_sender.clone();
+                            let stats = ad_adapter_stats.clone();
                             tokio::spawn(async move {
+                                adapter_status::record_activity(&stats, "AD TLS", true).await;
                                 if let Err(err) = s.send(event).await {
                                     warn!(error = %err, "Failed to send TLS AD event");
                                 }
@@ -719,7 +789,9 @@ async fn main() -> Result<()> {
                         }
                         if let Ok(Some(event)) = tls_parsers::parse_tls_syslog_vpn(msg) {
                             let s = ad_sender.clone();
+                            let stats = ad_adapter_stats.clone();
                             tokio::spawn(async move {
+                                adapter_status::record_activity(&stats, "AD TLS", true).await;
                                 if let Err(err) = s.send(event).await {
                                     warn!(error = %err, "Failed to send TLS VPN event");
                                 }
@@ -742,19 +814,30 @@ async fn main() -> Result<()> {
                 // DHCP TLS listener.
                 let dhcp_sender = sender.clone();
                 let dhcp_db = db.clone();
+                let dhcp_adapter_stats = adapter_stats.clone();
                 let dhcp_handler: tls_listener::MessageHandler =
                     Arc::new(move |msg: &str, _peer: SocketAddr| {
                         let hb_db = dhcp_db.clone();
+                        let hb_adapter_stats = dhcp_adapter_stats.clone();
                         let hb_msg = msg.to_string();
                         tokio::spawn(async move {
-                            tls_parsers::handle_heartbeat(&hb_msg, &hb_db).await
+                            if tls_parsers::handle_heartbeat(&hb_msg, &hb_db).await {
+                                adapter_status::record_activity(
+                                    &hb_adapter_stats,
+                                    "DHCP TLS",
+                                    false,
+                                )
+                                .await;
+                            }
                         });
 
                         if let Ok(Some((event, _options55))) =
                             tls_parsers::parse_tls_syslog_dhcp(msg)
                         {
                             let s = dhcp_sender.clone();
+                            let stats = dhcp_adapter_stats.clone();
                             tokio::spawn(async move {
+                                adapter_status::record_activity(&stats, "DHCP TLS", true).await;
                                 if let Err(err) = s.send(event).await {
                                     warn!(error = %err, "Failed to send TLS DHCP event");
                                 }
@@ -762,7 +845,9 @@ async fn main() -> Result<()> {
                         }
                         if let Ok(Some(event)) = tls_parsers::parse_tls_syslog_vpn(msg) {
                             let s = dhcp_sender.clone();
+                            let stats = dhcp_adapter_stats.clone();
                             tokio::spawn(async move {
+                                adapter_status::record_activity(&stats, "DHCP TLS", true).await;
                                 if let Err(err) = s.send(event).await {
                                     warn!(error = %err, "Failed to send TLS VPN event");
                                 }
