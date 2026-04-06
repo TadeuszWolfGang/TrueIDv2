@@ -95,3 +95,92 @@ pub(crate) fn start_adapter_status_updater(adapter_stats: Arc<RwLock<Vec<Adapter
         }
     });
 }
+
+/// Records adapter activity at the current time.
+///
+/// Parameters: `adapter_stats` - shared adapter status list, `adapter_name` - monitored adapter
+/// name, `count_event` - whether to increment the processed events counter.
+pub(crate) async fn record_activity(
+    adapter_stats: &Arc<RwLock<Vec<AdapterStatus>>>,
+    adapter_name: &str,
+    count_event: bool,
+) {
+    record_activity_at(adapter_stats, adapter_name, count_event, Utc::now()).await;
+}
+
+/// Records adapter activity at a specific timestamp.
+///
+/// This helper exists so tests can drive deterministic timestamps.
+pub(crate) async fn record_activity_at(
+    adapter_stats: &Arc<RwLock<Vec<AdapterStatus>>>,
+    adapter_name: &str,
+    count_event: bool,
+    observed_at: chrono::DateTime<Utc>,
+) {
+    let mut stats = adapter_stats.write().await;
+    if let Some(adapter) = stats
+        .iter_mut()
+        .find(|adapter| adapter.name == adapter_name)
+    {
+        if count_event {
+            adapter.events_total += 1;
+        }
+        adapter.last_event_at = Some(observed_at);
+        adapter.status = "active".to_string();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_record_activity_updates_status_without_counting_heartbeat() {
+        let stats = Arc::new(RwLock::new(build_initial_adapter_stats(
+            "0.0.0.0:1813",
+            "0.0.0.0:5514",
+            "0.0.0.0:5516",
+            "0.0.0.0:5518",
+            "0.0.0.0:5615",
+            "0.0.0.0:5617",
+            true,
+        )));
+        let observed_at = Utc::now();
+
+        record_activity_at(&stats, "AD TLS", false, observed_at).await;
+
+        let stats = stats.read().await;
+        let adapter = stats
+            .iter()
+            .find(|adapter| adapter.name == "AD TLS")
+            .unwrap();
+        assert_eq!(adapter.events_total, 0);
+        assert_eq!(adapter.last_event_at, Some(observed_at));
+        assert_eq!(adapter.status, "active");
+    }
+
+    #[tokio::test]
+    async fn test_record_activity_increments_events_for_real_traffic() {
+        let stats = Arc::new(RwLock::new(build_initial_adapter_stats(
+            "0.0.0.0:1813",
+            "0.0.0.0:5514",
+            "0.0.0.0:5516",
+            "0.0.0.0:5518",
+            "0.0.0.0:5615",
+            "0.0.0.0:5617",
+            true,
+        )));
+
+        record_activity(&stats, "RADIUS", true).await;
+        record_activity(&stats, "RADIUS", true).await;
+
+        let stats = stats.read().await;
+        let adapter = stats
+            .iter()
+            .find(|adapter| adapter.name == "RADIUS")
+            .unwrap();
+        assert_eq!(adapter.events_total, 2);
+        assert_eq!(adapter.status, "active");
+        assert!(adapter.last_event_at.is_some());
+    }
+}

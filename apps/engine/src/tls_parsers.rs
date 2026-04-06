@@ -134,11 +134,11 @@ pub(crate) fn parse_tls_syslog_vpn(msg: &str) -> Result<Option<IdentityEvent>> {
 /// Parses and persists agent heartbeat from TLS payload.
 ///
 /// Parameters: `msg` - raw syslog payload, `db` - database handle.
-/// Returns: nothing.
-pub(crate) async fn handle_heartbeat(msg: &str, db: &Db) {
+/// Returns: `true` when the payload was a valid heartbeat.
+pub(crate) async fn handle_heartbeat(msg: &str, db: &Db) -> bool {
     let payload = match msg.split("TrueID-Agent: ").nth(1) {
         Some(p) if p.starts_with("HEARTBEAT") => p,
-        _ => return,
+        _ => return false,
     };
     let get = |key: &str| -> Option<String> {
         payload
@@ -149,7 +149,7 @@ pub(crate) async fn handle_heartbeat(msg: &str, db: &Db) {
     };
     let hostname = match get("hostname") {
         Some(h) if !h.is_empty() => h,
-        _ => return,
+        _ => return false,
     };
     let uptime = get("uptime").and_then(|v| v.parse().ok()).unwrap_or(0);
     let sent = get("events_sent").and_then(|v| v.parse().ok()).unwrap_or(0);
@@ -162,5 +162,41 @@ pub(crate) async fn handle_heartbeat(msg: &str, db: &Db) {
         .await
     {
         warn!(error = %err, hostname = %hostname, "Failed to upsert agent heartbeat");
+        return false;
+    }
+
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use trueid_common::db::init_db;
+
+    #[tokio::test]
+    async fn test_handle_heartbeat_persists_agent_and_returns_true() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+        let msg = "<14>1 2026-04-06T12:00:00Z dc01 TrueID-Agent - - - TrueID-Agent: HEARTBEAT hostname=DC01 uptime=60 events_sent=12 events_dropped=1";
+
+        let handled = handle_heartbeat(msg, &db).await;
+
+        assert!(handled);
+        let rows = db.get_agents().await.expect("list agents failed");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].hostname, "DC01");
+        assert_eq!(rows[0].events_sent, 12);
+        assert_eq!(rows[0].events_dropped, 1);
+    }
+
+    #[tokio::test]
+    async fn test_handle_heartbeat_rejects_non_heartbeat_payload() {
+        let db = init_db("sqlite::memory:").await.expect("init db failed");
+        let msg = "<14>1 2026-04-06T12:00:00Z dc01 TrueID-Agent - - - TrueID-Agent: AD_LOGON user=alice ip=10.0.0.5";
+
+        let handled = handle_heartbeat(msg, &db).await;
+
+        assert!(!handled);
+        let rows = db.get_agents().await.expect("list agents failed");
+        assert!(rows.is_empty());
     }
 }

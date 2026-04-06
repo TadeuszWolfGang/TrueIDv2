@@ -1,18 +1,19 @@
 //! Alert rule evaluation and webhook delivery.
 
 use anyhow::Result;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE, HOST};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::{Row, SqlitePool};
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 use tokio::net::lookup_host;
 use tokio::time::{timeout, Duration};
-use tracing::warn;
+use tracing::{info, warn};
 use trueid_common::db::Db;
-use trueid_common::model::IdentityEvent;
+use trueid_common::model::{AdapterStatus, IdentityEvent};
 
 use crate::conflicts::ConflictRecord;
 use crate::notifications::{AlertPayload, NotificationDispatcher};
@@ -71,6 +72,192 @@ struct ResolvedWebhookTarget {
     host: String,
     addrs: Vec<SocketAddr>,
     requires_dns_pinning: bool,
+}
+
+const SOURCE_DOWN_ADAPTERS: [&str; 6] = [
+    "RADIUS",
+    "AD Syslog",
+    "DHCP Syslog",
+    "VPN Syslog",
+    "AD TLS",
+    "DHCP TLS",
+];
+const DEFAULT_SOURCE_DOWN_SILENCE_SECONDS: i64 = 300;
+const MIN_SOURCE_DOWN_SILENCE_SECONDS: i64 = 60;
+const MAX_SOURCE_DOWN_SILENCE_SECONDS: i64 = 3600;
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct SourceDownConditions {
+    source: String,
+    #[serde(default = "default_source_down_silence_seconds")]
+    silence_seconds: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SourceDownRuleState {
+    adapter_name: String,
+    state: SourceDownState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SourceDownState {
+    Unknown,
+    Up,
+    Down,
+}
+
+fn default_source_down_silence_seconds() -> i64 {
+    DEFAULT_SOURCE_DOWN_SILENCE_SECONDS
+}
+
+fn parse_source_down_conditions(raw: Option<&str>) -> Result<SourceDownConditions, String> {
+    let value = raw
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "source_down rule requires JSON conditions".to_string())?;
+    let mut parsed: SourceDownConditions = serde_json::from_str(value)
+        .map_err(|_| "source_down conditions must be valid JSON".to_string())?;
+    parsed.source = parsed.source.trim().to_string();
+    if !SOURCE_DOWN_ADAPTERS.contains(&parsed.source.as_str()) {
+        return Err("source_down conditions.source must be a supported adapter name".to_string());
+    }
+    if !(MIN_SOURCE_DOWN_SILENCE_SECONDS..=MAX_SOURCE_DOWN_SILENCE_SECONDS)
+        .contains(&parsed.silence_seconds)
+    {
+        return Err("source_down conditions.silence_seconds must be in 60..=3600".to_string());
+    }
+    Ok(parsed)
+}
+
+fn build_source_down_details(
+    adapter: &AdapterStatus,
+    silence_seconds: i64,
+    observed_silence_seconds: i64,
+    now: DateTime<Utc>,
+) -> String {
+    json!({
+        "adapter_name": adapter.name,
+        "adapter_protocol": adapter.protocol,
+        "adapter_bind": adapter.bind,
+        "adapter_status": adapter.status,
+        "last_event_at": adapter.last_event_at.map(|ts| ts.to_rfc3339()),
+        "silence_seconds": silence_seconds,
+        "observed_silence_seconds": observed_silence_seconds,
+        "evaluated_at": now.to_rfc3339(),
+    })
+    .to_string()
+}
+
+/// Evaluates source_down rules against adapter activity snapshots.
+///
+/// Rules are edge-triggered per rule ID. The first observed stale transition after activity
+/// generates one alert. Recovery only resets state and logs an info line in v1.
+pub(crate) fn evaluate_source_down_rules(
+    adapter_stats: &[AdapterStatus],
+    rules: &[AlertRule],
+    state: &mut HashMap<i64, SourceDownRuleState>,
+    now: DateTime<Utc>,
+) -> Vec<AlertFiring> {
+    let active_rule_ids = rules
+        .iter()
+        .filter(|rule| rule.rule_type == "source_down")
+        .map(|rule| rule.id)
+        .collect::<HashSet<_>>();
+    state.retain(|rule_id, _| active_rule_ids.contains(rule_id));
+
+    let mut firings = Vec::new();
+
+    for rule in rules.iter().filter(|rule| rule.rule_type == "source_down") {
+        let conditions = match parse_source_down_conditions(rule.conditions.as_deref()) {
+            Ok(parsed) => parsed,
+            Err(err) => {
+                warn!(rule_id = rule.id, error = %err, "Skipping invalid source_down rule");
+                state.remove(&rule.id);
+                continue;
+            }
+        };
+
+        let Some(adapter) = adapter_stats
+            .iter()
+            .find(|adapter| adapter.name == conditions.source)
+        else {
+            warn!(
+                rule_id = rule.id,
+                source = %conditions.source,
+                "Skipping source_down rule for unknown adapter"
+            );
+            state.remove(&rule.id);
+            continue;
+        };
+
+        let entry = state.entry(rule.id).or_insert_with(|| SourceDownRuleState {
+            adapter_name: conditions.source.clone(),
+            state: SourceDownState::Unknown,
+        });
+        if entry.adapter_name != conditions.source {
+            *entry = SourceDownRuleState {
+                adapter_name: conditions.source.clone(),
+                state: SourceDownState::Unknown,
+            };
+        }
+
+        let Some(last_event_at) = adapter.last_event_at else {
+            entry.state = SourceDownState::Unknown;
+            continue;
+        };
+
+        let observed_silence_seconds = (now - last_event_at).num_seconds().max(0);
+        let next_state = if observed_silence_seconds >= conditions.silence_seconds {
+            SourceDownState::Down
+        } else {
+            SourceDownState::Up
+        };
+
+        match (entry.state, next_state) {
+            (SourceDownState::Unknown, SourceDownState::Up)
+            | (SourceDownState::Up, SourceDownState::Up) => {
+                entry.state = SourceDownState::Up;
+            }
+            (SourceDownState::Unknown, SourceDownState::Down)
+            | (SourceDownState::Up, SourceDownState::Down) => {
+                entry.state = SourceDownState::Down;
+                firings.push(AlertFiring {
+                    rule_id: rule.id,
+                    rule_name: rule.name.clone(),
+                    rule_type: rule.rule_type.clone(),
+                    severity: rule.severity.clone(),
+                    ip: None,
+                    mac: None,
+                    user_name: None,
+                    source: adapter.name.clone(),
+                    details: build_source_down_details(
+                        adapter,
+                        conditions.silence_seconds,
+                        observed_silence_seconds,
+                        now,
+                    ),
+                    webhook_url: rule.action_webhook_url.clone(),
+                    webhook_headers: rule.action_webhook_headers.clone(),
+                    action_log: rule.action_log,
+                    cooldown_seconds: rule.cooldown_seconds.clamp(0, 86_400),
+                });
+            }
+            (SourceDownState::Down, SourceDownState::Down) => {}
+            (SourceDownState::Down, SourceDownState::Up) => {
+                entry.state = SourceDownState::Up;
+                info!(
+                    rule_id = rule.id,
+                    source = %adapter.name,
+                    last_event_at = %last_event_at.to_rfc3339(),
+                    "source_down recovery detected"
+                );
+            }
+            (_, SourceDownState::Unknown) => {}
+        }
+    }
+
+    firings
 }
 
 /// Loads enabled alert rules from the database.
@@ -716,6 +903,38 @@ mod tests {
         }
     }
 
+    fn make_source_down_rule(
+        id: i64,
+        name: &str,
+        adapter_name: &str,
+        silence_seconds: i64,
+    ) -> AlertRule {
+        let mut rule = make_rule(id, name, "source_down");
+        rule.conditions = Some(
+            json!({
+                "source": adapter_name,
+                "silence_seconds": silence_seconds,
+            })
+            .to_string(),
+        );
+        rule
+    }
+
+    fn adapter_status(
+        name: &str,
+        last_event_at: Option<DateTime<Utc>>,
+        status: &str,
+    ) -> AdapterStatus {
+        AdapterStatus {
+            name: name.to_string(),
+            protocol: "UDP".to_string(),
+            bind: "0.0.0.0:0".to_string(),
+            status: status.to_string(),
+            last_event_at,
+            events_total: 0,
+        }
+    }
+
     #[tokio::test]
     async fn test_new_mac_fires_when_mac_unseen() {
         let db = init_db("sqlite::memory:").await.expect("init db failed");
@@ -934,15 +1153,169 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn test_source_down_never_fires() {
-        let db = init_db("sqlite::memory:").await.expect("init db failed");
-        let event = test_event("10.0.0.1", "alice", Some("AA:BB:CC:DD:EE:01"));
-        let rules = vec![make_rule(1, "source-down-rule", "source_down")];
+    #[test]
+    fn test_source_down_never_fires_for_never_seen_adapter() {
+        let now = Utc::now();
+        let rules = vec![make_source_down_rule(1, "source-down-rule", "AD TLS", 300)];
+        let adapters = vec![adapter_status("AD TLS", None, "idle")];
+        let mut state = HashMap::new();
 
-        let firings = evaluate_event(db.pool(), &event, &[], &rules).await;
+        let firings = evaluate_source_down_rules(&adapters, &rules, &mut state, now);
 
-        assert!(firings.is_empty(), "source_down is not yet implemented");
+        assert!(firings.is_empty());
+        assert_eq!(state.get(&1).unwrap().state, SourceDownState::Unknown);
+    }
+
+    #[test]
+    fn test_source_down_fires_once_after_silence_threshold() {
+        let now = Utc::now();
+        let rules = vec![make_source_down_rule(1, "source-down-rule", "AD TLS", 300)];
+        let adapters = vec![adapter_status(
+            "AD TLS",
+            Some(now - chrono::Duration::seconds(301)),
+            "idle",
+        )];
+        let mut state = HashMap::new();
+
+        let first = evaluate_source_down_rules(&adapters, &rules, &mut state, now);
+        let second = evaluate_source_down_rules(&adapters, &rules, &mut state, now);
+
+        assert_eq!(first.len(), 1);
+        assert_eq!(first[0].source, "AD TLS");
+        assert_eq!(first[0].rule_type, "source_down");
+        assert!(first[0].ip.is_none());
+        assert_eq!(state.get(&1).unwrap().state, SourceDownState::Down);
+        assert!(
+            second.is_empty(),
+            "down adapter should not retrigger without recovery"
+        );
+    }
+
+    #[test]
+    fn test_source_down_recovers_and_rearms_after_new_activity() {
+        let now = Utc::now();
+        let rules = vec![make_source_down_rule(
+            1,
+            "source-down-rule",
+            "DHCP TLS",
+            300,
+        )];
+        let mut state = HashMap::new();
+
+        let down_snapshot = vec![adapter_status(
+            "DHCP TLS",
+            Some(now - chrono::Duration::seconds(305)),
+            "idle",
+        )];
+        let recovery_snapshot = vec![adapter_status(
+            "DHCP TLS",
+            Some(now - chrono::Duration::seconds(5)),
+            "active",
+        )];
+        let down_again_snapshot = vec![adapter_status(
+            "DHCP TLS",
+            Some(now - chrono::Duration::seconds(400)),
+            "idle",
+        )];
+
+        let first = evaluate_source_down_rules(&down_snapshot, &rules, &mut state, now);
+        let recovery = evaluate_source_down_rules(
+            &recovery_snapshot,
+            &rules,
+            &mut state,
+            now + chrono::Duration::seconds(10),
+        );
+        let second = evaluate_source_down_rules(
+            &down_again_snapshot,
+            &rules,
+            &mut state,
+            now + chrono::Duration::seconds(500),
+        );
+
+        assert_eq!(first.len(), 1);
+        assert!(recovery.is_empty(), "recovery only resets state in v1");
+        assert_eq!(state.get(&1).unwrap().state, SourceDownState::Down);
+        assert_eq!(second.len(), 1, "adapter should rearm after recovery");
+    }
+
+    #[test]
+    fn test_source_down_rule_source_change_resets_state_for_new_adapter() {
+        let now = Utc::now();
+        let stale_ad_snapshot = vec![
+            adapter_status("AD TLS", Some(now - chrono::Duration::seconds(305)), "idle"),
+            adapter_status(
+                "DHCP TLS",
+                Some(now - chrono::Duration::seconds(5)),
+                "active",
+            ),
+        ];
+        let stale_dhcp_snapshot = vec![
+            adapter_status("AD TLS", Some(now - chrono::Duration::seconds(305)), "idle"),
+            adapter_status(
+                "DHCP TLS",
+                Some(now - chrono::Duration::seconds(400)),
+                "idle",
+            ),
+        ];
+        let mut state = HashMap::new();
+
+        let initial_rule = vec![make_source_down_rule(1, "source-down-rule", "AD TLS", 300)];
+        let initial =
+            evaluate_source_down_rules(&stale_ad_snapshot, &initial_rule, &mut state, now);
+
+        let switched_rule = vec![make_source_down_rule(
+            1,
+            "source-down-rule",
+            "DHCP TLS",
+            300,
+        )];
+        let after_switch = evaluate_source_down_rules(
+            &stale_ad_snapshot,
+            &switched_rule,
+            &mut state,
+            now + chrono::Duration::seconds(10),
+        );
+
+        assert_eq!(initial.len(), 1, "initial stale adapter should fire once");
+        assert!(
+            after_switch.is_empty(),
+            "switch to active adapter should reset state"
+        );
+        assert_eq!(state.get(&1).unwrap().adapter_name, "DHCP TLS");
+        assert_eq!(state.get(&1).unwrap().state, SourceDownState::Up);
+
+        let after_new_silence = evaluate_source_down_rules(
+            &stale_dhcp_snapshot,
+            &switched_rule,
+            &mut state,
+            now + chrono::Duration::seconds(500),
+        );
+
+        assert_eq!(
+            after_new_silence.len(),
+            1,
+            "new adapter should be able to fire after becoming stale"
+        );
+        assert_eq!(after_new_silence[0].source, "DHCP TLS");
+        assert_eq!(state.get(&1).unwrap().state, SourceDownState::Down);
+    }
+
+    #[test]
+    fn test_source_down_invalid_conditions_are_skipped() {
+        let now = Utc::now();
+        let mut bad_rule = make_rule(1, "bad-source-down", "source_down");
+        bad_rule.conditions = Some("{\"source\":\"Unknown Adapter\"}".to_string());
+        let adapters = vec![adapter_status(
+            "AD TLS",
+            Some(now - chrono::Duration::seconds(600)),
+            "idle",
+        )];
+        let mut state = HashMap::new();
+
+        let firings = evaluate_source_down_rules(&adapters, &[bad_rule], &mut state, now);
+
+        assert!(firings.is_empty());
+        assert!(state.is_empty());
     }
 
     #[tokio::test]
