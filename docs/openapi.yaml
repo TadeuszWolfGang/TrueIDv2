@@ -2602,12 +2602,19 @@ components:
         id: { type: integer }
         name: { type: string }
         enabled: { type: boolean }
-        rule_type: { type: string }
+        rule_type:
+          type: string
+          description: Supported values are new_mac, ip_conflict, user_change, new_subnet, and source_down.
         severity: { type: string }
         conditions:
           type: string
           nullable: true
-          description: JSON-encoded condition payload stored verbatim in the database.
+          description: |
+            JSON-encoded condition payload stored verbatim in the database.
+            For source_down rules, this must be a JSON object like
+            {"source":"AD TLS","silence_seconds":300}, where source is one of
+            RADIUS, AD Syslog, DHCP Syslog, VPN Syslog, AD TLS, DHCP TLS and
+            silence_seconds defaults to 300 and must stay within 60..=3600.
         action_webhook_url: { type: string, nullable: true }
         action_webhook_headers:
           type: string
@@ -2625,9 +2632,18 @@ components:
       required: [name, rule_type, severity, action_log, cooldown_seconds]
       properties:
         name: { type: string }
-        rule_type: { type: string }
+        rule_type:
+          type: string
+          description: Supported values are new_mac, ip_conflict, user_change, new_subnet, and source_down.
         severity: { type: string }
-        conditions: { type: string, nullable: true }
+        conditions:
+          type: string
+          nullable: true
+          description: |
+            Optional JSON-encoded condition payload.
+            For source_down rules, this field is required and must be a JSON
+            object like {"source":"AD TLS","silence_seconds":300}. The
+            silence_seconds field is optional and defaults to 300.
         action_webhook_url: { type: string, nullable: true }
         action_webhook_headers: { type: string, nullable: true }
         action_log: { type: boolean }
@@ -2641,9 +2657,17 @@ components:
       properties:
         name: { type: string }
         enabled: { type: boolean }
-        rule_type: { type: string }
+        rule_type:
+          type: string
+          description: Supported values are new_mac, ip_conflict, user_change, new_subnet, and source_down.
         severity: { type: string }
-        conditions: { type: string, nullable: true }
+        conditions:
+          type: string
+          nullable: true
+          description: |
+            Optional JSON-encoded condition payload.
+            For source_down rules, the effective conditions must be a valid JSON
+            object like {"source":"AD TLS","silence_seconds":300}.
         action_webhook_url: { type: string, nullable: true }
         action_webhook_headers: { type: string, nullable: true }
         action_log: { type: boolean }

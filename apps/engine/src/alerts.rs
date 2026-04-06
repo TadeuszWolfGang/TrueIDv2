@@ -98,9 +98,15 @@ pub async fn load_rules(pool: &SqlitePool) -> Result<Vec<AlertRule>> {
             severity: row
                 .try_get("severity")
                 .unwrap_or_else(|_| "warning".to_string()),
-            conditions: row.try_get("conditions").ok(),
-            action_webhook_url: row.try_get("action_webhook_url").ok(),
-            action_webhook_headers: row.try_get("action_webhook_headers").ok(),
+            conditions: row
+                .try_get::<Option<String>, _>("conditions")
+                .unwrap_or(None),
+            action_webhook_url: row
+                .try_get::<Option<String>, _>("action_webhook_url")
+                .unwrap_or(None),
+            action_webhook_headers: row
+                .try_get::<Option<String>, _>("action_webhook_headers")
+                .unwrap_or(None),
             action_log: row.try_get("action_log").unwrap_or(true),
             cooldown_seconds: row.try_get("cooldown_seconds").unwrap_or(300),
         });

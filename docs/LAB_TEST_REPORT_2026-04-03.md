@@ -1,6 +1,6 @@
 # TrueID Lab Validation Report — 2026-04-03
 
-## Scope
+ ## Scope
 
 This report summarizes the end-to-end lab validation performed against the following path:
 
