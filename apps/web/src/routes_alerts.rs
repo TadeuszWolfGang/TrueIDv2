@@ -8,6 +8,7 @@ use axum::{
 };
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use sqlx::Row;
 use std::collections::{HashMap, HashSet};
 use tracing::warn;
@@ -22,6 +23,9 @@ use trueid_common::pagination::PaginatedResponse;
 const DEFAULT_ALERT_HISTORY_LIMIT: u32 = 50;
 const MAX_ALERT_HISTORY_LIMIT: u32 = 200;
 const MAX_DEPRECATED_OFFSET: u64 = 50_000;
+const DEFAULT_SOURCE_DOWN_SILENCE_SECONDS: i64 = 300;
+const MIN_SOURCE_DOWN_SILENCE_SECONDS: i64 = 60;
+const MAX_SOURCE_DOWN_SILENCE_SECONDS: i64 = 3600;
 
 /// Alert rule database record.
 #[derive(Debug, Clone, Serialize)]
@@ -133,6 +137,7 @@ struct AlertStatsResponse {
 #[derive(Debug, Clone)]
 enum BindParam {
     Text(String),
+    NullableText(Option<String>),
     I64(i64),
     Bool(bool),
     DateTime(DateTime<Utc>),
@@ -159,6 +164,26 @@ const RULE_TYPES: [&str; 5] = [
     "source_down",
 ];
 const SEVERITIES: [&str; 3] = ["info", "warning", "critical"];
+const SOURCE_DOWN_ADAPTERS: [&str; 6] = [
+    "RADIUS",
+    "AD Syslog",
+    "DHCP Syslog",
+    "VPN Syslog",
+    "AD TLS",
+    "DHCP TLS",
+];
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SourceDownConditions {
+    source: String,
+    #[serde(default = "default_source_down_silence_seconds")]
+    silence_seconds: i64,
+}
+
+fn default_source_down_silence_seconds() -> i64 {
+    DEFAULT_SOURCE_DOWN_SILENCE_SECONDS
+}
 
 /// Parses RFC3339 or naive datetime string into UTC timestamp.
 ///
@@ -261,6 +286,7 @@ fn apply_binds<'q>(
     for bind in binds {
         query = match bind {
             BindParam::Text(v) => query.bind(v),
+            BindParam::NullableText(v) => query.bind(v),
             BindParam::I64(v) => query.bind(v),
             BindParam::Bool(v) => query.bind(v),
             BindParam::DateTime(v) => query.bind(v),
@@ -326,6 +352,101 @@ fn validate_rule_values(
     Ok(())
 }
 
+/// Validates and normalizes alert rule conditions.
+///
+/// For `source_down`, conditions must be a JSON object:
+/// `{ "source": "AD TLS", "silence_seconds": 300 }`.
+/// The `silence_seconds` field is optional and defaults to 300.
+fn normalize_rule_conditions(
+    rule_type: &str,
+    conditions: Option<&str>,
+    request_id: &str,
+) -> Result<Option<String>, ApiError> {
+    if rule_type != "source_down" {
+        return Ok(conditions.map(ToOwned::to_owned));
+    }
+
+    let raw = conditions
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::BAD_REQUEST,
+                error::INVALID_INPUT,
+                "source_down requires JSON conditions with source and optional silence_seconds",
+            )
+            .with_request_id(request_id)
+        })?;
+
+    let mut parsed: SourceDownConditions = serde_json::from_str(raw).map_err(|_| {
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            error::INVALID_INPUT,
+            "source_down conditions must be valid JSON",
+        )
+        .with_request_id(request_id)
+    })?;
+
+    parsed.source = parsed.source.trim().to_string();
+    if !SOURCE_DOWN_ADAPTERS.contains(&parsed.source.as_str()) {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            error::INVALID_INPUT,
+            "source_down conditions.source must be a supported adapter name",
+        )
+        .with_request_id(request_id));
+    }
+    if !(MIN_SOURCE_DOWN_SILENCE_SECONDS..=MAX_SOURCE_DOWN_SILENCE_SECONDS)
+        .contains(&parsed.silence_seconds)
+    {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            error::INVALID_INPUT,
+            "source_down conditions.silence_seconds must be in 60..=3600",
+        )
+        .with_request_id(request_id));
+    }
+
+    Ok(Some(
+        serde_json::to_string(&json!({
+            "source": parsed.source,
+            "silence_seconds": parsed.silence_seconds,
+        }))
+        .expect("serialize normalized source_down conditions"),
+    ))
+}
+
+/// Resolves the effective rule conditions for update semantics.
+///
+/// For source_down, conditions must stay valid and normalized.
+/// Switching away from source_down without explicit replacement clears stale JSON.
+fn resolve_updated_rule_conditions(
+    current_rule_type: &str,
+    next_rule_type: &str,
+    current_conditions: Option<&str>,
+    requested_conditions: Option<&str>,
+    request_id: &str,
+) -> Result<Option<String>, ApiError> {
+    if next_rule_type == "source_down" {
+        return normalize_rule_conditions(
+            next_rule_type,
+            requested_conditions.or(current_conditions),
+            request_id,
+        );
+    }
+
+    if current_rule_type == "source_down"
+        && current_rule_type != next_rule_type
+        && requested_conditions.is_none()
+    {
+        return Ok(None);
+    }
+
+    Ok(requested_conditions
+        .map(ToOwned::to_owned)
+        .or_else(|| current_conditions.map(ToOwned::to_owned)))
+}
+
 /// Maps DB row into alert rule DTO.
 ///
 /// Parameters: `row` - SQLx row.
@@ -339,9 +460,15 @@ fn map_rule_row(row: &sqlx::sqlite::SqliteRow) -> AlertRuleRecord {
         severity: row
             .try_get("severity")
             .unwrap_or_else(|_| "warning".to_string()),
-        conditions: row.try_get("conditions").ok(),
-        action_webhook_url: row.try_get("action_webhook_url").ok(),
-        action_webhook_headers: row.try_get("action_webhook_headers").ok(),
+        conditions: row
+            .try_get::<Option<String>, _>("conditions")
+            .unwrap_or(None),
+        action_webhook_url: row
+            .try_get::<Option<String>, _>("action_webhook_url")
+            .unwrap_or(None),
+        action_webhook_headers: row
+            .try_get::<Option<String>, _>("action_webhook_headers")
+            .unwrap_or(None),
         action_log: row.try_get("action_log").unwrap_or(true),
         cooldown_seconds: row.try_get("cooldown_seconds").unwrap_or(300),
         channels: Vec::new(),
@@ -540,6 +667,11 @@ pub async fn create_rule(
         body.action_webhook_url.as_deref(),
         &auth.request_id,
     )?;
+    let normalized_conditions = normalize_rule_conditions(
+        &body.rule_type,
+        body.conditions.as_deref(),
+        &auth.request_id,
+    )?;
 
     let insert = sqlx::query(
         "INSERT INTO alert_rules (
@@ -550,7 +682,7 @@ pub async fn create_rule(
     .bind(body.name.trim())
     .bind(&body.rule_type)
     .bind(&body.severity)
-    .bind(body.conditions.clone())
+    .bind(normalized_conditions)
     .bind(body.action_webhook_url.clone())
     .bind(body.action_webhook_headers.clone())
     .bind(body.action_log)
@@ -683,7 +815,9 @@ pub async fn update_rule(
         .try_get("severity")
         .unwrap_or_else(|_| "warning".to_string());
     let current_cooldown: i64 = existing_row.try_get("cooldown_seconds").unwrap_or(300);
-    let current_webhook: Option<String> = existing_row.try_get("action_webhook_url").ok();
+    let current_webhook: Option<String> = existing_row
+        .try_get::<Option<String>, _>("action_webhook_url")
+        .unwrap_or(None);
 
     let next_name = body
         .name
@@ -706,6 +840,9 @@ pub async fn update_rule(
         .as_deref()
         .map(|v| v.to_string())
         .or(current_webhook.clone());
+    let current_conditions: Option<String> = existing_row
+        .try_get::<Option<String>, _>("conditions")
+        .unwrap_or(None);
 
     validate_rule_values(
         &next_name,
@@ -713,6 +850,13 @@ pub async fn update_rule(
         &next_severity,
         next_cooldown,
         next_webhook.as_deref(),
+        &auth.request_id,
+    )?;
+    let next_conditions = resolve_updated_rule_conditions(
+        &current_rule_type,
+        &next_rule_type,
+        current_conditions.as_deref(),
+        body.conditions.as_deref(),
         &auth.request_id,
     )?;
 
@@ -735,9 +879,9 @@ pub async fn update_rule(
         sets.push("severity = ?".to_string());
         binds.push(BindParam::Text(v));
     }
-    if let Some(v) = body.conditions {
+    if body.conditions.is_some() || current_rule_type != next_rule_type {
         sets.push("conditions = ?".to_string());
-        binds.push(BindParam::Text(v));
+        binds.push(BindParam::NullableText(next_conditions));
     }
     if let Some(v) = body.action_webhook_url {
         sets.push("action_webhook_url = ?".to_string());

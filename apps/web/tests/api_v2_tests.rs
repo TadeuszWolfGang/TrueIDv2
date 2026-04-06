@@ -2564,6 +2564,212 @@ async fn test_alert_rule_update_delete_and_validation() {
 }
 
 #[tokio::test]
+async fn test_source_down_rule_conditions_validation_and_normalization() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/alerts/rules",
+        &json!({
+            "name": "source-down-default",
+            "rule_type": "source_down",
+            "severity": "critical",
+            "conditions": "{\"source\":\"AD TLS\"}",
+            "action_log": true,
+            "cooldown_seconds": 300
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "create body: {created}");
+    assert_eq!(
+        serde_json::from_str::<Value>(created["conditions"].as_str().unwrap()).unwrap(),
+        json!({"source":"AD TLS","silence_seconds":300})
+    );
+    let rule_id = created["id"].as_i64().expect("rule id missing");
+
+    let (status, updated) = auth_put(
+        &app,
+        &cookie,
+        &format!("/api/v2/alerts/rules/{rule_id}"),
+        &json!({
+            "conditions": "{\"source\":\"DHCP TLS\",\"silence_seconds\":600}"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "update body: {updated}");
+    assert_eq!(
+        serde_json::from_str::<Value>(updated["conditions"].as_str().unwrap()).unwrap(),
+        json!({"source":"DHCP TLS","silence_seconds":600})
+    );
+
+    let (status, missing_conditions) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/alerts/rules",
+        &json!({
+            "name": "source-down-missing",
+            "rule_type": "source_down",
+            "severity": "warning",
+            "action_log": true,
+            "cooldown_seconds": 300
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(missing_conditions["code"], "INVALID_INPUT");
+
+    let (status, invalid_source) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/alerts/rules",
+        &json!({
+            "name": "source-down-invalid-source",
+            "rule_type": "source_down",
+            "severity": "warning",
+            "conditions": "{\"source\":\"Unknown Adapter\",\"silence_seconds\":300}",
+            "action_log": true,
+            "cooldown_seconds": 300
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(invalid_source["code"], "INVALID_INPUT");
+
+    let (status, invalid_silence) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/alerts/rules",
+        &json!({
+            "name": "source-down-invalid-silence",
+            "rule_type": "source_down",
+            "severity": "warning",
+            "conditions": "{\"source\":\"AD TLS\",\"silence_seconds\":30}",
+            "action_log": true,
+            "cooldown_seconds": 300
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(invalid_silence["code"], "INVALID_INPUT");
+
+    let (status, boundary_silence) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/alerts/rules",
+        &json!({
+            "name": "source-down-boundary-silence",
+            "rule_type": "source_down",
+            "severity": "warning",
+            "conditions": "{\"source\":\"AD TLS\",\"silence_seconds\":3600}",
+            "action_log": true,
+            "cooldown_seconds": 300
+        }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "boundary body: {boundary_silence}"
+    );
+
+    let (status, invalid_high_silence) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/alerts/rules",
+        &json!({
+            "name": "source-down-invalid-high-silence",
+            "rule_type": "source_down",
+            "severity": "warning",
+            "conditions": "{\"source\":\"AD TLS\",\"silence_seconds\":3601}",
+            "action_log": true,
+            "cooldown_seconds": 300
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(invalid_high_silence["code"], "INVALID_INPUT");
+
+    let (status, unknown_field) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/alerts/rules",
+        &json!({
+            "name": "source-down-unknown-field",
+            "rule_type": "source_down",
+            "severity": "warning",
+            "conditions": "{\"source\":\"AD TLS\",\"silence_seconds\":300,\"extra_field\":true}",
+            "action_log": true,
+            "cooldown_seconds": 300
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(unknown_field["code"], "INVALID_INPUT");
+
+    let (status, invalid_json) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/alerts/rules",
+        &json!({
+            "name": "source-down-invalid-json",
+            "rule_type": "source_down",
+            "severity": "warning",
+            "conditions": "not-json",
+            "action_log": true,
+            "cooldown_seconds": 300
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(invalid_json["code"], "INVALID_INPUT");
+
+    let (status, plain_rule) = auth_post(
+        &app,
+        &cookie,
+        "/api/v2/alerts/rules",
+        &json!({
+            "name": "plain-rule",
+            "rule_type": "new_mac",
+            "severity": "warning",
+            "action_log": true,
+            "cooldown_seconds": 120
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED);
+    let plain_rule_id = plain_rule["id"].as_i64().expect("plain rule id missing");
+
+    let (status, switch_without_conditions) = auth_put(
+        &app,
+        &cookie,
+        &format!("/api/v2/alerts/rules/{plain_rule_id}"),
+        &json!({
+            "rule_type": "source_down"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(switch_without_conditions["code"], "INVALID_INPUT");
+
+    let (status, switched_away) = auth_put(
+        &app,
+        &cookie,
+        &format!("/api/v2/alerts/rules/{rule_id}"),
+        &json!({
+            "rule_type": "new_mac"
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "switch-away body: {switched_away}");
+    assert!(
+        switched_away["conditions"].is_null(),
+        "switch-away body: {switched_away}"
+    );
+}
+
+#[tokio::test]
 async fn test_phase4_viewer_can_read_timeline_conflicts_and_alerts() {
     let (app, db) = build_test_app().await;
     create_test_user(
@@ -6654,13 +6860,7 @@ fn test_openapi_timeline_guardrails() {
     }
 
     let paginated_meta = yaml_block(&doc, "PaginatedMeta", 4);
-    for needle in &[
-        "total:",
-        "page:",
-        "limit:",
-        "total_pages:",
-        "next_cursor:",
-    ] {
+    for needle in &["total:", "page:", "limit:", "total_pages:", "next_cursor:"] {
         assert!(
             paginated_meta.contains(needle),
             "PaginatedMeta schema must contain '{needle}'"
