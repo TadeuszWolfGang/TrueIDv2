@@ -125,21 +125,56 @@ BODY=$(curl -s -w "\n%{http_code}" -b "$COOKIES" \
     -H "Content-Type: application/json" \
     -H "X-CSRF-Token: $CSRF" \
     -d '{"name":"smoke-test-rule","rule_type":"ip_conflict","severity":"warning","action_log":true,"cooldown_seconds":60}')
-RULE_STATUS=$(echo "$BODY" | tail -1)
-RULE_BODY=$(echo "$BODY" | head -n -1)
+RULE_STATUS=$(printf '%s\n' "$BODY" | awk 'END { print }')
+RULE_BODY=$(printf '%s\n' "$BODY" | sed '$d')
 check "Create alert rule" "201" "$RULE_STATUS"
 
 # Extract rule ID
-RULE_ID=$(echo "$RULE_BODY" | grep -o '"id":[0-9]*' | head -1 | grep -o '[0-9]*')
+RULE_ID=$(echo "$RULE_BODY" | grep -o '"id":[0-9]*' | head -1 | grep -o '[0-9]*' || true)
 if [ -n "$RULE_ID" ]; then
     green "Alert rule created with id=$RULE_ID"
 else
     yellow "Could not extract rule ID, skipping rule cleanup"
 fi
 
+# Create a source_down alert rule
+BODY=$(curl -s -w "\n%{http_code}" -b "$COOKIES" \
+    -X POST "$BASE/api/v2/alerts/rules" \
+    -H "Content-Type: application/json" \
+    -H "X-CSRF-Token: $CSRF" \
+    -d '{"name":"source-down-smoke","rule_type":"source_down","severity":"critical","conditions":"{\"source\":\"AD TLS\"}","action_log":true,"cooldown_seconds":300}')
+SOURCE_RULE_STATUS=$(printf '%s\n' "$BODY" | awk 'END { print }')
+SOURCE_RULE_BODY=$(printf '%s\n' "$BODY" | sed '$d')
+check "Create source_down alert rule" "201" "$SOURCE_RULE_STATUS"
+check_contains "source_down response includes AD TLS" "AD TLS" "$SOURCE_RULE_BODY"
+check_contains "source_down response includes silence_seconds" "silence_seconds" "$SOURCE_RULE_BODY"
+
+SOURCE_RULE_ID=$(echo "$SOURCE_RULE_BODY" | grep -o '"id":[0-9]*' | head -1 | grep -o '[0-9]*' || true)
+if [ -n "$SOURCE_RULE_ID" ]; then
+    green "Source Down rule created with id=$SOURCE_RULE_ID"
+else
+    yellow "Could not extract source_down rule ID, skipping source_down cleanup"
+fi
+
 # List alert rules — should include our rule
 BODY=$(curl -s -b "$COOKIES" "$BASE/api/v2/alerts/rules")
 check_contains "Alert rules list contains smoke-test-rule" "smoke-test-rule" "$BODY"
+check_contains "Alert rules list contains source-down-smoke" "source-down-smoke" "$BODY"
+check_contains "Alert rules list shows AD TLS" "AD TLS" "$BODY"
+
+# Update the source_down rule
+if [ -n "$SOURCE_RULE_ID" ]; then
+    BODY=$(curl -s -w "\n%{http_code}" -b "$COOKIES" \
+        -X PUT "$BASE/api/v2/alerts/rules/$SOURCE_RULE_ID" \
+        -H "Content-Type: application/json" \
+        -H "X-CSRF-Token: $CSRF" \
+        -d '{"conditions":"{\"source\":\"DHCP TLS\",\"silence_seconds\":600}"}')
+    SOURCE_UPDATE_STATUS=$(printf '%s\n' "$BODY" | awk 'END { print }')
+    SOURCE_UPDATE_BODY=$(printf '%s\n' "$BODY" | sed '$d')
+    check "Update source_down alert rule" "200" "$SOURCE_UPDATE_STATUS"
+    check_contains "source_down update includes DHCP TLS" "DHCP TLS" "$SOURCE_UPDATE_BODY"
+    check_contains "source_down update includes 600 seconds" "600" "$SOURCE_UPDATE_BODY"
+fi
 
 # Check alert stats endpoint
 STATUS=$(curl -s -o /dev/null -w "%{http_code}" -b "$COOKIES" "$BASE/api/v2/alerts/stats")
@@ -153,7 +188,7 @@ check_contains "Conflict stats has by_severity" '"by_severity"' "$BODY"
 
 # If there are conflicts, test resolve flow
 CONFLICTS=$(curl -s -b "$COOKIES" "$BASE/api/v2/conflicts?limit=1")
-CONFLICT_ID=$(echo "$CONFLICTS" | grep -o '"id":[0-9]*' | head -1 | grep -o '[0-9]*')
+CONFLICT_ID=$(echo "$CONFLICTS" | grep -o '"id":[0-9]*' | head -1 | grep -o '[0-9]*' || true)
 if [ -n "$CONFLICT_ID" ]; then
     CSRF=$(grep trueid_csrf_token "$COOKIES" 2>/dev/null | awk '{print $NF}')
     STATUS=$(curl -s -o /dev/null -w "%{http_code}" -b "$COOKIES" \
@@ -174,6 +209,13 @@ if [ -n "$RULE_ID" ]; then
         -X DELETE "$BASE/api/v2/alerts/rules/$RULE_ID" \
         -H "X-CSRF-Token: $CSRF")
     check "Delete alert rule $RULE_ID" "204" "$STATUS"
+fi
+if [ -n "$SOURCE_RULE_ID" ]; then
+    CSRF=$(grep trueid_csrf_token "$COOKIES" 2>/dev/null | awk '{print $NF}')
+    STATUS=$(curl -s -o /dev/null -w "%{http_code}" -b "$COOKIES" \
+        -X DELETE "$BASE/api/v2/alerts/rules/$SOURCE_RULE_ID" \
+        -H "X-CSRF-Token: $CSRF")
+    check "Delete source_down alert rule $SOURCE_RULE_ID" "204" "$STATUS"
 fi
 
 # ── Section 4: Export Compliance ──
