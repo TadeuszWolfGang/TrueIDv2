@@ -93,7 +93,9 @@ async fn main() -> Result<()> {
                             .await
                         {
                             Ok(user) => {
-                                let _ = d.set_force_password_change(user.id, true).await;
+                                if !dev_mode {
+                                    let _ = d.set_force_password_change(user.id, true).await;
+                                }
                                 helpers::audit_principal(
                                     &d,
                                     Some(user.id),
