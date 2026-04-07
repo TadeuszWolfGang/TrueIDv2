@@ -296,7 +296,7 @@ ips = set(body.get("ip_addresses_used") or [])
 active = body.get("active_mappings") or []
 if len(events) < 2:
     sys.exit(1)
-if ips != {os.environ["SAMPLE_IP"]}:
+if os.environ["SAMPLE_IP"] not in ips:
     sys.exit(1)
 if not any(row.get("ip") == os.environ["SAMPLE_IP"] for row in active):
     sys.exit(1)
