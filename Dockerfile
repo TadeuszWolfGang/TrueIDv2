@@ -32,13 +32,15 @@ RUN set -eux; \
     mkdir -p \
       crates/common/src crates/ingest/src crates/adapter-radius/src \
       crates/adapter-ad-logs/src crates/adapter-dhcp-logs/src crates/utils/src \
-      crates/agent/src apps/engine/src apps/cli/src apps/web/src tests/src; \
+      crates/agent/src crates/common/benches apps/engine/src apps/cli/src apps/cli/src/bin apps/web/src tests/src; \
     for d in crates/common crates/ingest crates/adapter-radius crates/adapter-ad-logs \
              crates/adapter-dhcp-logs crates/utils crates/agent tests; do \
       printf '%s\n' "pub fn _dummy() {}" > "$d/src/lib.rs"; \
     done; \
     printf '%s\n' "fn main() {}" > apps/engine/src/main.rs; \
     printf '%s\n' "fn main() {}" > apps/cli/src/main.rs; \
+    printf '%s\n' "fn main() {}" > apps/cli/src/bin/trueid-probe.rs; \
+    printf '%s\n' "fn main() {}" > crates/common/benches/ingestion_throughput.rs; \
     printf '%s\n' "fn main() {}" > apps/web/src/main.rs
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
