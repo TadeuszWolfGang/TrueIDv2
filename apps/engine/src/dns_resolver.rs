@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use hickory_resolver::{Resolver, TokioResolver};
+use hickory_resolver::{proto::rr::RData, Resolver, TokioResolver};
 use once_cell::sync::OnceCell;
 use sqlx::{Row, SqlitePool};
 use std::iter::repeat_n;
@@ -233,7 +233,11 @@ fn dns_resolver() -> std::result::Result<&'static TokioResolver, String> {
     DNS_RESOLVER.get_or_try_init(|| {
         Resolver::builder_tokio()
             .map_err(|e| format!("failed to load system DNS config: {e}"))
-            .map(|builder| builder.build())
+            .and_then(|builder| {
+                builder
+                    .build()
+                    .map_err(|e| format!("failed to build DNS resolver: {e}"))
+            })
     })
 }
 
@@ -249,8 +253,12 @@ async fn reverse_lookup(addr: IpAddr) -> std::result::Result<String, String> {
         .map_err(|e| format!("reverse lookup failed: {e}"))?;
 
     lookup
+        .answers()
         .iter()
-        .find_map(|name| normalize_ptr_hostname(&name.to_utf8()))
+        .find_map(|record| match &record.data {
+            RData::PTR(name) => normalize_ptr_hostname(&name.to_utf8()),
+            _ => None,
+        })
         .ok_or_else(|| "PTR record not found".to_string())
 }
 
