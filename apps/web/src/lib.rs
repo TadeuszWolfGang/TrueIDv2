@@ -123,18 +123,20 @@ pub(crate) async fn login_rate_limit(
 
 /// Middleware that adds security headers to every response.
 ///
-/// Sets CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy,
-/// and Permissions-Policy on all outgoing responses.
+/// Sets CSP, framing, MIME sniffing, referrer, permissions, and cross-origin
+/// isolation policies on all outgoing responses.
 pub async fn security_headers_layer(req: Request, next: axum_mw::Next) -> Response {
     let mut resp = next.run(req).await;
     let h = resp.headers_mut();
-    // TODO: migrate to nonce-based CSP when dashboard moves to external JS files
     h.insert(
         "content-security-policy",
         axum::http::HeaderValue::from_static(
-            "default-src 'self'; script-src 'self' 'unsafe-inline'; \
-             style-src 'self' 'unsafe-inline'; img-src 'self' data:; \
-             connect-src 'self'; frame-ancestors 'none'",
+            "default-src 'self'; base-uri 'none'; form-action 'self'; \
+             object-src 'none'; frame-src 'none'; frame-ancestors 'none'; \
+             script-src 'self'; script-src-attr 'none'; \
+             style-src 'self'; style-src-attr 'none'; \
+             img-src 'self' data:; font-src 'self'; connect-src 'self'; \
+             media-src 'self'; manifest-src 'self'; worker-src 'self'",
         ),
     );
     h.insert(
@@ -152,6 +154,18 @@ pub async fn security_headers_layer(req: Request, next: axum_mw::Next) -> Respon
     h.insert(
         "permissions-policy",
         axum::http::HeaderValue::from_static("camera=(), microphone=(), geolocation=()"),
+    );
+    h.insert(
+        "cross-origin-opener-policy",
+        axum::http::HeaderValue::from_static("same-origin"),
+    );
+    h.insert(
+        "cross-origin-embedder-policy",
+        axum::http::HeaderValue::from_static("require-corp"),
+    );
+    h.insert(
+        "cross-origin-resource-policy",
+        axum::http::HeaderValue::from_static("same-origin"),
     );
     resp
 }

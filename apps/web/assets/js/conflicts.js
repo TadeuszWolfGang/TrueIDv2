@@ -1,5 +1,3 @@
-/* Conflicts module. */
-
 async function loadConflictsStats() {
         try {
           var res = await fetch('/api/v2/conflicts/stats', { credentials: 'include' });
@@ -19,8 +17,8 @@ async function loadConflictsStats() {
         var totalPages = Math.ceil(total / perPage) || 1;
         var el = document.getElementById('conflicts-paging');
         var html = 'Page ' + page + ' of ' + totalPages + ' (' + total + ' conflicts) &nbsp;';
-        if (page > 1) html += '<button class="btn btn-sm" onclick="loadConflicts(' + (page - 1) + ')">← Prev</button> ';
-        if (page < totalPages) html += '<button class="btn btn-sm" onclick="loadConflicts(' + (page + 1) + ')">Next →</button>';
+        if (page > 1) html += '<button class="btn btn-sm" data-conflict-action="load-page" data-page="' + (page - 1) + '">← Prev</button> ';
+        if (page < totalPages) html += '<button class="btn btn-sm" data-conflict-action="load-page" data-page="' + (page + 1) + '">Next →</button>';
         el.innerHTML = html;
       }
 
@@ -56,12 +54,12 @@ async function loadConflictsStats() {
               var userPair = (c.user_old || '-') + ' → ' + (c.user_new || '-');
               var canResolve = currentUser && currentUser.role !== 'Viewer' && !c.resolved_at;
               var action = canResolve
-                ? '<button class="btn btn-sm" onclick="resolveConflict(' + c.id + ')">Resolve</button>'
+                ? '<button class="btn btn-sm" data-conflict-action="resolve" data-id="' + escapeHtml(String(c.id)) + '">Resolve</button>'
                 : '<span class="muted">' + (c.resolved_at ? 'Resolved' : '-') + '</span>';
               return '<tr>' +
                 '<td><span class="' + badgeClass(c.severity) + '">' + escapeHtml(c.severity) + '</span></td>' +
                 '<td>' + escapeHtml(c.conflict_type || '-') + '</td>' +
-                '<td>' + (c.ip ? '<a href="#" class="ip-link" onclick="openTimeline(\'ip\', \'' + escJs(c.ip) + '\');return false;">' + escapeHtml(c.ip) + '</a>' : '-') + '</td>' +
+                '<td>' + (c.ip ? '<a href="#" class="ip-link" data-conflict-action="open-ip-timeline" data-ip="' + escapeHtml(c.ip) + '">' + escapeHtml(c.ip) + '</a>' : '-') + '</td>' +
                 '<td>' + escapeHtml(userPair) + '</td>' +
                 '<td>' + escapeHtml(c.mac || '-') + '</td>' +
                 '<td>' + escapeHtml(c.source || '-') + '</td>' +
@@ -97,6 +95,28 @@ async function loadConflictsStats() {
       }
 
 (function () {
+  function dataInteger(el, name) {
+    var value = el.dataset[name];
+    if (!/^[1-9][0-9]*$/.test(value || '')) return null;
+    var parsed = Number(value);
+    return Number.isSafeInteger(parsed) ? parsed : null;
+  }
+
+  var actionHandlers = {
+    'load-page': function (el) { var page = dataInteger(el, 'page'); if (page !== null) return loadConflicts(page); },
+    'open-ip-timeline': function (el) { return openTimeline('ip', el.dataset.ip || ''); },
+    'resolve': function (el) { var id = dataInteger(el, 'id'); if (id !== null) return resolveConflict(id); }
+  };
+
+  document.addEventListener('click', function (event) {
+    var target = event.target.closest('[data-conflict-action]');
+    if (!target) return;
+    var handler = actionHandlers[target.dataset.conflictAction];
+    if (!handler) return;
+    event.preventDefault();
+    handler(target);
+  });
+
   window.TrueID = window.TrueID || {};
   if (typeof window.loadConflicts === 'function') window.TrueID.loadConflicts = window.loadConflicts;
   if (typeof window.loadConflictsStats === 'function') window.TrueID.loadConflictsStats = window.loadConflictsStats;

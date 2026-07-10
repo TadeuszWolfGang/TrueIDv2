@@ -1,4 +1,3 @@
-/* Analytics module. */
 var editingReportScheduleId = null;
 
 function renderBarChart(containerId, data, color) {
@@ -61,17 +60,24 @@ function renderBarChart(containerId, data, color) {
         svg += '<text x="90" y="92" fill="' + themeColor('--text-primary') + '" font-size="12" text-anchor="middle">' + total + '</text>';
         svg += '<text x="90" y="107" fill="' + themeColor('--text-secondary') + '" font-size="10" text-anchor="middle">events</text>';
         svg += '</svg>';
-        var legend = '<div style="display:flex;flex-direction:column;gap:4px;">' + rows.map(function (r, idx) {
-          return '<div><span style="display:inline-block;width:10px;height:10px;background:' + colors[idx % colors.length] + ';margin-right:6px;border-radius:2px;"></span>' +
+        var legend = '<div class="generated-chart-legend">' + rows.map(function (r, idx) {
+          return '<div><svg class="generated-legend-swatch" viewBox="0 0 10 10" aria-hidden="true"><rect width="10" height="10" rx="2" fill="' + escapeHtml(colors[idx % colors.length]) + '"></rect></svg>' +
             escapeHtml(r.source || '-') + ': <strong>' + (r.count || 0) + '</strong> (' + (r.percentage || 0) + '%)</div>';
         }).join('') + '</div>';
-        el.innerHTML = '<div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap;">' + svg + legend + '</div>';
+        el.innerHTML = '<div class="generated-chart-layout">' + svg + legend + '</div>';
       }
 
       function complianceCard(label, value, color) {
-        return '<div class="stat-card" style="min-width:180px;">' +
-          '<div class="muted" style="font-size:11px;">' + escapeHtml(label) + '</div>' +
-          '<div style="font-size:20px;color:' + color + ';font-weight:700;">' + escapeHtml(value) + '</div>' +
+        var tones = {
+          'var(--status-error)': 'generated-status-error',
+          'var(--status-ok)': 'generated-status-ok',
+          'var(--status-warn)': 'generated-status-warn',
+          'var(--text-primary)': 'generated-status-neutral'
+        };
+        var tone = tones[color] || 'generated-status-neutral';
+        return '<div class="stat-card generated-compliance-card">' +
+          '<div class="muted generated-compliance-label">' + escapeHtml(label) + '</div>' +
+          '<div class="generated-compliance-value ' + tone + '">' + escapeHtml(value) + '</div>' +
           '</div>';
       }
 
@@ -98,7 +104,7 @@ function renderBarChart(containerId, data, color) {
             var data = await res.json();
             renderBarChart(cfg.id, data.data || [], cfg.color);
           } catch (e) {
-            document.getElementById(cfg.id).innerHTML = '<span style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</span>';
+            document.getElementById(cfg.id).innerHTML = '<span class="generated-error">Failed: ' + escapeHtml(e.message) + '</span>';
           }
         }));
       }
@@ -110,7 +116,7 @@ function renderBarChart(containerId, data, color) {
           var data = await res.json();
           renderDonutChart('analytics-sources-chart', data.sources || []);
         } catch (e) {
-          document.getElementById('analytics-sources-chart').innerHTML = '<span style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</span>';
+          document.getElementById('analytics-sources-chart').innerHTML = '<span class="generated-error">Failed: ' + escapeHtml(e.message) + '</span>';
         }
       }
 
@@ -132,7 +138,7 @@ function renderBarChart(containerId, data, color) {
             complianceCard('LDAP Status', ldapOk ? 'OK' : 'Issue', ldapOk ? 'var(--status-ok)' : 'var(--status-error)');
           document.getElementById('analytics-compliance-cards').innerHTML = cards;
         } catch (e) {
-          document.getElementById('analytics-compliance-cards').innerHTML = '<span style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</span>';
+          document.getElementById('analytics-compliance-cards').innerHTML = '<span class="generated-error">Failed: ' + escapeHtml(e.message) + '</span>';
         }
       }
 
@@ -149,7 +155,7 @@ function renderBarChart(containerId, data, color) {
           }
           body.innerHTML = rows.map(function (r) {
             var period = (r.period_start || '').slice(0, 10) + ' → ' + (r.period_end || '').slice(0, 10);
-            return '<tr class="expand-row" onclick="openAnalyticsReport(' + r.id + ')">' +
+            return '<tr class="expand-row" tabindex="0" data-analytics-action="open-report" data-id="' + escapeHtml(String(r.id)) + '">' +
               '<td>' + escapeHtml((r.generated_at || '').replace('T', ' ').replace('Z', '')) + '</td>' +
               '<td>' + escapeHtml(r.report_type || '-') + '</td>' +
               '<td>' + escapeHtml(period) + '</td>' +
@@ -158,7 +164,7 @@ function renderBarChart(containerId, data, color) {
           }).join('');
         } catch (e) {
           document.getElementById('analytics-reports-body').innerHTML =
-            '<tr><td colspan="4" style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+            '<tr><td colspan="4" class="generated-error">Failed: ' + escapeHtml(e.message) + '</td></tr>';
         }
       }
 
@@ -168,14 +174,14 @@ function renderBarChart(containerId, data, color) {
           if (!res.ok) throw new Error('HTTP ' + res.status);
           var data = await res.json();
           document.getElementById('analytics-report-json').textContent = JSON.stringify(data.data || data, null, 2);
-          document.getElementById('analytics-report-modal').style.display = '';
+          document.getElementById('analytics-report-modal').hidden = false;
         } catch (e) {
           alert('Failed to load report: ' + e.message);
         }
       }
 
       function closeAnalyticsReportModal() {
-        document.getElementById('analytics-report-modal').style.display = 'none';
+        document.getElementById('analytics-report-modal').hidden = true;
       }
 
       async function generateAnalyticsReport() {
@@ -208,7 +214,7 @@ function renderBarChart(containerId, data, color) {
           return channels;
         } catch (e) {
           var hostErr = document.getElementById('report-schedule-channels');
-          if (hostErr) hostErr.innerHTML = '<span style="color:var(--status-error);">Failed to load channels</span>';
+          if (hostErr) hostErr.innerHTML = '<span class="generated-error">Failed to load channels</span>';
           return [];
         }
       }
@@ -245,17 +251,18 @@ function renderBarChart(containerId, data, color) {
               '<td>' + escapeHtml(channels || '-') + '</td>' +
               '<td>' + escapeHtml(r.last_sent_at ? String(r.last_sent_at).replace('T', ' ').replace('Z', '') : '-') + '</td>' +
               '<td>' +
-              '<button class="btn btn-sm role-admin" onclick="editReportSchedule(' + r.id + ')">Edit</button> ' +
-              '<button class="btn btn-sm role-admin" onclick="sendReportScheduleNow(' + r.id + ')">Send now</button> ' +
-              '<button class="btn btn-sm btn-danger role-admin" onclick="deleteReportSchedule(' + r.id + ')">Delete</button>' +
+              '<button class="btn btn-sm role-admin" data-analytics-action="edit-schedule" data-id="' + escapeHtml(String(r.id)) + '">Edit</button> ' +
+              '<button class="btn btn-sm role-admin" data-analytics-action="send-schedule" data-id="' + escapeHtml(String(r.id)) + '">Send now</button> ' +
+              '<button class="btn btn-sm btn-danger role-admin" data-analytics-action="delete-schedule" data-id="' + escapeHtml(String(r.id)) + '">Delete</button>' +
               '</td>' +
               '</tr>';
           }).join('');
+          if (currentUser) applyRoleVisibility(currentUser.role);
           window.TrueID = window.TrueID || {};
           window.TrueID.reportSchedules = rows;
         } catch (e) {
           var bodyErr = document.getElementById('report-schedules-body');
-          if (bodyErr) bodyErr.innerHTML = '<tr><td colspan="6" style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+          if (bodyErr) bodyErr.innerHTML = '<tr><td colspan="6" class="generated-error">Failed: ' + escapeHtml(e.message) + '</td></tr>';
         }
       }
 
@@ -326,6 +333,36 @@ function renderBarChart(containerId, data, color) {
       }
 
 (function () {
+  function dataInteger(el, name) {
+    var value = el.dataset[name];
+    if (!/^[1-9][0-9]*$/.test(value || '')) return null;
+    var parsed = Number(value);
+    return Number.isSafeInteger(parsed) ? parsed : null;
+  }
+
+  var actionHandlers = {
+    'delete-schedule': function (el) { var id = dataInteger(el, 'id'); if (id !== null) return deleteReportSchedule(id); },
+    'edit-schedule': function (el) { var id = dataInteger(el, 'id'); if (id !== null) return editReportSchedule(id); },
+    'open-report': function (el) { var id = dataInteger(el, 'id'); if (id !== null) return openAnalyticsReport(id); },
+    'send-schedule': function (el) { var id = dataInteger(el, 'id'); if (id !== null) return sendReportScheduleNow(id); }
+  };
+
+  function handleActionEvent(event) {
+    var target = event.target.closest('[data-analytics-action]');
+    if (!target) return;
+    var handler = actionHandlers[target.dataset.analyticsAction];
+    if (!handler) return;
+    event.preventDefault();
+    handler(target);
+  }
+
+  document.addEventListener('click', handleActionEvent);
+  document.addEventListener('keydown', function (event) {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    if (!event.target.matches('.expand-row[data-analytics-action]')) return;
+    handleActionEvent(event);
+  });
+
   window.TrueID = window.TrueID || {};
   if (typeof window.closeAnalyticsReportModal === 'function') window.TrueID.closeAnalyticsReportModal = window.closeAnalyticsReportModal;
   if (typeof window.complianceCard === 'function') window.TrueID.complianceCard = window.complianceCard;
