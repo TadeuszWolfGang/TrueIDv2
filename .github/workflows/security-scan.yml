@@ -43,6 +43,11 @@ jobs:
       - name: Rust fmt check
         run: cargo fmt --all -- --check
 
+      - name: ZAP report policy tests
+        run: |
+          python3 -m unittest scripts/test_check_zap_report.py
+          python3 scripts/check-csp-assets.py
+
       - name: Rust clippy (security-focused lints)
         run: cargo clippy --workspace --all-targets -- -D clippy::correctness -D clippy::suspicious -D clippy::perf
 
@@ -145,6 +150,16 @@ jobs:
           [ -n "$trueid_admin_pass" ] || trueid_admin_pass="$(gen_password)"
           [ -n "$metrics_token" ] || metrics_token="$(gen_hex_secret)"
 
+          for secret_value in \
+            "$jwt_secret" \
+            "$engine_service_token" \
+            "$config_encryption_key" \
+            "$radius_secret" \
+            "$trueid_admin_pass" \
+            "$metrics_token"; do
+            echo "::add-mask::$secret_value"
+          done
+
           {
             echo "JWT_SECRET=$jwt_secret"
             echo "ENGINE_SERVICE_TOKEN=$engine_service_token"
@@ -227,13 +242,16 @@ jobs:
           [ "$got_429" = "1" ]
 
       - name: Run ZAP baseline
-        continue-on-error: true
         run: |
           mkdir -p security-reports
+          cp zap-baseline.conf security-reports/zap-baseline.conf
+          chmod 0777 security-reports
           docker run --rm --network host \
             -v "$PWD/security-reports:/zap/wrk/:rw" \
             ghcr.io/zaproxy/zaproxy:stable \
-            zap-baseline.py -I -t http://127.0.0.1:3000 -r zap-report.html -J zap-report.json -m 5
+            zap-baseline.py -c zap-baseline.conf -t http://127.0.0.1:3000 \
+              -r zap-report.html -J zap-report.json -m 5
+          python3 scripts/check-zap-report.py security-reports/zap-report.json
 
       - name: Run Nuclei
         run: |
@@ -298,6 +316,7 @@ jobs:
 
           api_key="$(python3 -c 'import json,sys; print(json.load(open("/tmp/trueid-api-key.json"))["key"])')"
           [ -n "$api_key" ]
+          echo "::add-mask::$api_key"
           echo "SCHEMATHESIS_API_KEY=$api_key" >> "$GITHUB_ENV"
 
       - name: API property-based fuzzing (Schemathesis)

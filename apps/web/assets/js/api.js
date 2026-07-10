@@ -1,5 +1,3 @@
-/* API helpers extracted from dashboard monolith. */
-
 function getCsrfToken() {
         var match = document.cookie.match(/trueid_csrf_token=([^;]+)/);
         return match ? match[1] : '';

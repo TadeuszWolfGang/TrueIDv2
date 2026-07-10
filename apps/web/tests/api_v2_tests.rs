@@ -5,6 +5,7 @@
 
 use axum::body::Body;
 use axum::http::{HeaderMap, Request, StatusCode};
+use axum::middleware as axum_mw;
 use axum::routing::get;
 use axum::Router;
 use chrono::{Duration, Utc};
@@ -17,7 +18,7 @@ use tower::ServiceExt;
 use tower_http::services::ServeDir;
 use trueid_common::db::init_db;
 use trueid_common::model::{IdentityEvent, SourceType, UserRole};
-use trueid_web::{auth, build_router, rate_limit, AppState};
+use trueid_web::{auth, build_router, rate_limit, security_headers_layer, AppState};
 use urlencoding::encode;
 
 /// Builds an isolated in-memory test app and seeds deterministic data.
@@ -36,7 +37,8 @@ async fn build_test_app_with_static() -> (Router, Arc<trueid_common::db::Db>) {
     let (app, db) = build_test_app().await;
     let assets_dir = format!("{}/assets", env!("CARGO_MANIFEST_DIR"));
     (
-        app.fallback_service(ServeDir::new(assets_dir).append_index_html_on_directories(true)),
+        app.fallback_service(ServeDir::new(assets_dir).append_index_html_on_directories(true))
+            .layer(axum_mw::from_fn(security_headers_layer)),
         db,
     )
 }
@@ -5705,8 +5707,64 @@ async fn test_static_js_files_served() {
     assert!(app_js_ct.contains("javascript"));
     let (utils_status, _, _) = auth_get_raw(&app, &cookie, "/js/utils.js").await;
     assert_eq!(utils_status, StatusCode::OK);
+    let (events_status, _, _) = auth_get_raw(&app, &cookie, "/js/static-events.js").await;
+    assert_eq!(events_status, StatusCode::OK);
+    let (login_js_status, _, _) = auth_get_raw(&app, &cookie, "/js/login.js").await;
+    assert_eq!(login_js_status, StatusCode::OK);
+    let (css_status, css_headers, _) = auth_get_raw(&app, &cookie, "/css/dashboard.css").await;
+    assert_eq!(css_status, StatusCode::OK);
+    let css_ct = css_headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(css_ct.contains("css"));
     let (missing_status, _, _) = auth_get_raw(&app, &cookie, "/js/nonexistent.js").await;
     assert_eq!(missing_status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn test_static_responses_have_cross_origin_isolation_headers() {
+    let (app, _) = build_test_app_with_static().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, headers, _) = auth_get_raw(&app, &cookie, "/").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        headers.get("cross-origin-opener-policy").unwrap(),
+        "same-origin"
+    );
+    assert_eq!(
+        headers.get("cross-origin-embedder-policy").unwrap(),
+        "require-corp"
+    );
+    assert_eq!(
+        headers.get("cross-origin-resource-policy").unwrap(),
+        "same-origin"
+    );
+    let csp = headers
+        .get("content-security-policy")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    for directive in [
+        "base-uri 'none'",
+        "form-action 'self'",
+        "object-src 'none'",
+        "frame-src 'none'",
+        "frame-ancestors 'none'",
+        "script-src-attr 'none'",
+        "style-src-attr 'none'",
+        "font-src 'self'",
+        "media-src 'self'",
+        "manifest-src 'self'",
+        "worker-src 'self'",
+    ] {
+        assert!(
+            csp.contains(directive),
+            "missing CSP directive: {directive}"
+        );
+    }
+    assert!(!csp.contains("'unsafe-"));
+    assert!(!csp.split_ascii_whitespace().any(|token| token == "*"));
 }
 
 #[tokio::test]
@@ -5716,8 +5774,18 @@ async fn test_dashboard_html_has_css_vars() {
     let (status, _, body) = auth_get_raw(&app, &cookie, "/").await;
     assert_eq!(status, StatusCode::OK);
     let html = String::from_utf8(body).expect("dashboard html not utf8");
-    assert!(html.contains("--green-bright"));
-    assert!(html.contains("--bg-deep"));
+    assert!(html.contains("css/dashboard.css"));
+    assert!(html.contains("css/generated-a.css"));
+    assert!(html.contains("css/generated-b.css"));
+    assert!(html.contains("js/static-events.js"));
+    assert!(html.contains("e.g. https://sycope.example.com"));
+    assert!(!html.contains("192.168.1.14"));
+
+    let (css_status, _, css_body) = auth_get_raw(&app, &cookie, "/css/dashboard.css").await;
+    assert_eq!(css_status, StatusCode::OK);
+    let css = String::from_utf8(css_body).expect("dashboard css not utf8");
+    assert!(css.contains("--green-bright"));
+    assert!(css.contains("--bg-deep"));
 }
 
 #[tokio::test]
@@ -5728,6 +5796,8 @@ async fn test_login_page_has_matrix_canvas() {
     assert_eq!(status, StatusCode::OK);
     let html = String::from_utf8(body).expect("login html not utf8");
     assert!(html.contains("matrix-bg"));
+    assert!(html.contains("css/login.css"));
+    assert!(html.contains("js/login.js"));
 }
 
 // ── Phase 2: Rate limiting integration tests ──

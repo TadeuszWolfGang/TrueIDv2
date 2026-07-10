@@ -1,5 +1,3 @@
-/* Mappings and search module. */
-
 function parseSearchToFilter(search) {
         var out = {};
         if (!search) return out;
@@ -68,9 +66,9 @@ function parseSearchToFilter(search) {
           var confidence = item.confidence_score != null ? item.confidence_score : '-';
           return '<tr class="' + cls + '">' +
             '<td><span class="dot ' + dotCls + '"></span></td>' +
-            '<td><a href="#" class="ip-link" onclick="openTimeline(\'ip\', \'' + escJs(ip) + '\');return false;">' + escapeHtml(ip) + '</a></td>' +
+            '<td><a href="#" class="ip-link" data-mappings-action="timeline" data-timeline-type="ip" data-timeline-value="' + escapeHtml(ip) + '">' + escapeHtml(ip) + '</a></td>' +
             '<td>' + escapeHtml(mac) + vendor + '</td>' +
-            '<td><a href="#" class="ip-link" onclick="openTimeline(\'user\', \'' + escJs(userPrimary) + '\');return false;">' + escapeHtml(user) + '</a>' + multiBadge + '</td>' +
+            '<td><a href="#" class="ip-link" data-mappings-action="timeline" data-timeline-type="user" data-timeline-value="' + escapeHtml(userPrimary) + '">' + escapeHtml(user) + '</a>' + multiBadge + '</td>' +
             '<td>' + groups + '</td>' +
             '<td>' + escapeHtml(location) + '</td>' +
             '<td>' + tags + '</td>' +
@@ -79,6 +77,7 @@ function parseSearchToFilter(search) {
             '<td>' + escapeHtml(confidence) + '</td>' +
             '</tr>';
         }).join('');
+        applyGeneratedTagColors(body);
         applySortHeaders('mappings-table', 'mappings', null, loadMappings);
       }
 
@@ -86,8 +85,8 @@ function parseSearchToFilter(search) {
         var totalPages = Math.ceil(total / perPage) || 1;
         var el = document.getElementById('mappings-paging');
         var html = 'Page ' + page + ' of ' + totalPages + ' (' + total + ' mappings) &nbsp;';
-        if (page > 1) html += '<button class="btn btn-sm" onclick="loadMappings(' + (page - 1) + ')">← Prev</button> ';
-        if (page < totalPages) html += '<button class="btn btn-sm" onclick="loadMappings(' + (page + 1) + ')">Next →</button>';
+        if (page > 1) html += '<button class="btn btn-sm" data-mappings-action="page" data-page="' + (page - 1) + '">← Prev</button> ';
+        if (page < totalPages) html += '<button class="btn btn-sm" data-mappings-action="page" data-page="' + (page + 1) + '">Next →</button>';
         el.innerHTML = html;
       }
 
@@ -126,7 +125,7 @@ function parseSearchToFilter(search) {
           loadMappingsStats();
         } catch (err) {
           document.getElementById('mappings-body').innerHTML =
-            '<tr><td colspan="10" style="color:var(--status-error);">Failed: ' + escapeHtml(err.message) + '</td></tr>';
+            '<tr><td colspan="10" class="generated-error">Failed: ' + escapeHtml(err.message) + '</td></tr>';
           status.textContent = 'Last update failed';
         }
       }
@@ -161,8 +160,8 @@ function parseSearchToFilter(search) {
         var totalPages = Math.ceil(total / perPage) || 1;
         var el = document.getElementById('search-paging');
         var html = 'Page ' + page + ' of ' + totalPages + ' (' + total + ' results) &nbsp;';
-        if (page > 1) html += '<button class="btn btn-sm" onclick="doSearch(' + (page - 1) + ')">← Prev</button> ';
-        if (page < totalPages) html += '<button class="btn btn-sm" onclick="doSearch(' + (page + 1) + ')">Next →</button>';
+        if (page > 1) html += '<button class="btn btn-sm" data-mappings-action="search-page" data-page="' + (page - 1) + '">← Prev</button> ';
+        if (page < totalPages) html += '<button class="btn btn-sm" data-mappings-action="search-page" data-page="' + (page + 1) + '">Next →</button>';
         el.innerHTML = html;
       }
 
@@ -210,7 +209,7 @@ function parseSearchToFilter(search) {
           var maxTotal = Math.max(mappingsTotal, eventsTotal);
 
           if (mappings) {
-            mappingsSection.style.display = '';
+            mappingsSection.hidden = false;
             document.getElementById('search-mappings-count').textContent = '(' + mappingsTotal + ')';
             var list = mappings.data || [];
             mappingsBody.innerHTML = list.length ? list.map(function (item) {
@@ -222,9 +221,9 @@ function parseSearchToFilter(search) {
               var multiBadge = item.multi_user ? '<span class="multi-badge">🖥 multi</span>' : '';
               return '<tr>' +
                 '<td><span class="dot ' + (item.is_active === false ? 'offline' : 'online') + '"></span></td>' +
-                '<td><a href="#" class="ip-link" onclick="openTimeline(\'ip\', \'' + escJs(ipVal) + '\');return false;">' + escapeHtml(ipVal) + '</a></td>' +
+                '<td><a href="#" class="ip-link" data-mappings-action="timeline" data-timeline-type="ip" data-timeline-value="' + escapeHtml(ipVal) + '">' + escapeHtml(ipVal) + '</a></td>' +
                 '<td>' + escapeHtml(item.mac || '-') + '</td>' +
-                '<td><a href="#" class="ip-link" onclick="openTimeline(\'user\', \'' + escJs(userPrimary) + '\');return false;">' + escapeHtml(userVal) + '</a>' + multiBadge + '</td>' +
+                '<td><a href="#" class="ip-link" data-mappings-action="timeline" data-timeline-type="user" data-timeline-value="' + escapeHtml(userPrimary) + '">' + escapeHtml(userVal) + '</a>' + multiBadge + '</td>' +
                 '<td>' + groups + '</td>' +
                 '<td>' + escapeHtml(timeAgo(item.last_seen)) + '</td>' +
                 '<td>' + escapeHtml(item.source || '-') + '</td>' +
@@ -233,34 +232,34 @@ function parseSearchToFilter(search) {
             }).join('') : '<tr><td colspan="8" class="muted">No mappings found.</td></tr>';
             applySortHeaders('search-mappings-table', 'search', null, doSearch);
           } else {
-            mappingsSection.style.display = 'none';
+            mappingsSection.hidden = true;
           }
 
           if (events) {
-            eventsSection.style.display = '';
+            eventsSection.hidden = false;
             document.getElementById('search-events-count').textContent = '(' + eventsTotal + ')';
             var elist = events.data || [];
             eventsBody.innerHTML = elist.length ? elist.map(function (e) {
               return '<tr>' +
                 '<td>' + escapeHtml(e.id || '-') + '</td>' +
-                '<td><a href="#" class="ip-link" onclick="openTimeline(\'ip\', \'' + escJs(e.ip || '') + '\');return false;">' + escapeHtml(e.ip || '-') + '</a></td>' +
-                '<td><a href="#" class="ip-link" onclick="openTimeline(\'user\', \'' + escJs(e.user || '') + '\');return false;">' + escapeHtml(e.user || '-') + '</a></td>' +
+                '<td><a href="#" class="ip-link" data-mappings-action="timeline" data-timeline-type="ip" data-timeline-value="' + escapeHtml(e.ip || '') + '">' + escapeHtml(e.ip || '-') + '</a></td>' +
+                '<td><a href="#" class="ip-link" data-mappings-action="timeline" data-timeline-type="user" data-timeline-value="' + escapeHtml(e.user || '') + '">' + escapeHtml(e.user || '-') + '</a></td>' +
                 '<td>' + escapeHtml(e.source || '-') + '</td>' +
                 '<td>' + escapeHtml(new Date(e.timestamp).toLocaleString()) + '</td>' +
                 '</tr>';
             }).join('') : '<tr><td colspan="5" class="muted">No events found.</td></tr>';
             applySortHeaders('search-events-table', 'search', null, doSearch);
           } else {
-            eventsSection.style.display = 'none';
+            eventsSection.hidden = true;
           }
 
           renderSearchPaging(data.page || searchCurrentPage, data.limit || searchPerPage, maxTotal);
           document.getElementById('search-meta').textContent =
             'Found ' + mappingsTotal + ' mappings + ' + eventsTotal + ' events in ' + (data.query_time_ms || 0) + 'ms';
         } catch (err) {
-          mappingsSection.style.display = '';
-          eventsSection.style.display = 'none';
-          mappingsBody.innerHTML = '<tr><td colspan="8" style="color:var(--status-error);">Search failed: ' + escapeHtml(err.message) + '</td></tr>';
+          mappingsSection.hidden = false;
+          eventsSection.hidden = true;
+          mappingsBody.innerHTML = '<tr><td colspan="8" class="generated-error">Search failed: ' + escapeHtml(err.message) + '</td></tr>';
           document.getElementById('search-meta').textContent = '';
           document.getElementById('search-paging').innerHTML = '';
         }
@@ -270,7 +269,7 @@ function parseSearchToFilter(search) {
         var panel = document.getElementById('timeline-panel');
         var title = document.getElementById('timeline-title');
         var content = document.getElementById('timeline-content');
-        panel.style.display = 'block';
+        panel.hidden = false;
         panel.classList.remove('timeline-enter');
         void panel.offsetWidth;
         panel.classList.add('timeline-enter');
@@ -285,10 +284,10 @@ function parseSearchToFilter(search) {
           if (type === 'ip') {
             var mapping = data.current_mapping;
             var html = '';
-            html += '<div class="panel" style="padding:12px;margin-bottom:12px;">';
-            html += '<div style="margin-bottom:8px;"><strong>Conflicts:</strong> <span class="' + badgeClass((data.conflicts_count || 0) > 0 ? 'warning' : 'info') + '">' + (data.conflicts_count || 0) + '</span></div>';
+            html += '<div class="panel generated-panel-compact">';
+            html += '<div class="generated-mb-8"><strong>Conflicts:</strong> <span class="' + badgeClass((data.conflicts_count || 0) > 0 ? 'warning' : 'info') + '">' + (data.conflicts_count || 0) + '</span></div>';
             if (mapping) {
-              html += '<div><strong>User:</strong> <a href="#" class="ip-link" onclick="openTimeline(\'user\', \'' + escJs(mapping.user || '') + '\');return false;">' + escapeHtml(mapping.user || '-') + '</a></div>';
+              html += '<div><strong>User:</strong> <a href="#" class="ip-link" data-mappings-action="timeline" data-timeline-type="user" data-timeline-value="' + escapeHtml(mapping.user || '') + '">' + escapeHtml(mapping.user || '-') + '</a></div>';
               html += '<div><strong>MAC:</strong> ' + escapeHtml(mapping.mac || '-') + '</div>';
               html += '<div><strong>Source:</strong> ' + escapeHtml(mapping.source || '-') + '</div>';
               html += '<div><strong>Last Seen:</strong> ' + escapeHtml(new Date(mapping.last_seen).toLocaleString()) + '</div>';
@@ -307,10 +306,10 @@ function parseSearchToFilter(search) {
 
             html += '<h3 class="section-title">User changes</h3>';
             if (data.user_changes && data.user_changes.length) {
-              html += '<ul style="padding-left:16px;margin-top:6px;">' +
+              html += '<ul class="generated-detail-list">' +
                 data.user_changes.map(function (c) {
-                  return '<li><a href="#" class="ip-link" onclick="openTimeline(\'user\', \'' + escJs(c.from_user) + '\');return false;">' + escapeHtml(c.from_user) +
-                    '</a> → <a href="#" class="ip-link" onclick="openTimeline(\'user\', \'' + escJs(c.to_user) + '\');return false;">' + escapeHtml(c.to_user) +
+                  return '<li><a href="#" class="ip-link" data-mappings-action="timeline" data-timeline-type="user" data-timeline-value="' + escapeHtml(c.from_user) + '">' + escapeHtml(c.from_user) +
+                    '</a> → <a href="#" class="ip-link" data-mappings-action="timeline" data-timeline-type="user" data-timeline-value="' + escapeHtml(c.to_user) + '">' + escapeHtml(c.to_user) +
                     '</a> <span class="muted">(' + escapeHtml(new Date(c.changed_at).toLocaleString()) + ', ' + escapeHtml(c.source || '-') + ')</span></li>';
                 }).join('') + '</ul>';
             } else {
@@ -319,9 +318,9 @@ function parseSearchToFilter(search) {
 
             html += '<h3 class="section-title">Recent events</h3>';
             if (data.events && data.events.data && data.events.data.length) {
-              html += '<ul style="padding-left:16px;margin-top:6px;">' +
+              html += '<ul class="generated-detail-list">' +
                 data.events.data.map(function (e) {
-                  return '<li><a href="#" class="ip-link" onclick="openTimeline(\'user\', \'' + escJs(e.user) + '\');return false;">' + escapeHtml(e.user) +
+                  return '<li><a href="#" class="ip-link" data-mappings-action="timeline" data-timeline-type="user" data-timeline-value="' + escapeHtml(e.user) + '">' + escapeHtml(e.user) +
                     '</a> <span class="muted">(' + escapeHtml(e.source || '-') + ', ' + escapeHtml(new Date(e.timestamp).toLocaleString()) + ')</span></li>';
                 }).join('') + '</ul>';
             } else {
@@ -331,9 +330,9 @@ function parseSearchToFilter(search) {
           } else if (type === 'user') {
             var html2 = '<h3 class="section-title">Active mappings</h3>';
             if (data.active_mappings && data.active_mappings.length) {
-              html2 += '<ul style="padding-left:16px;margin-top:6px;">' +
+              html2 += '<ul class="generated-detail-list">' +
                 data.active_mappings.map(function (m) {
-                  return '<li><a href="#" class="ip-link" onclick="openTimeline(\'ip\', \'' + escJs(m.ip) + '\');return false;">' + escapeHtml(m.ip) + '</a> ' +
+                  return '<li><a href="#" class="ip-link" data-mappings-action="timeline" data-timeline-type="ip" data-timeline-value="' + escapeHtml(m.ip) + '">' + escapeHtml(m.ip) + '</a> ' +
                     '<span class="muted">(' + escapeHtml(m.source || '-') + ', ' + escapeHtml(timeAgo(m.last_seen)) + ')</span></li>';
                 }).join('') + '</ul>';
             } else {
@@ -341,18 +340,18 @@ function parseSearchToFilter(search) {
             }
             html2 += '<h3 class="section-title">IP addresses used</h3>';
             if (data.ip_addresses_used && data.ip_addresses_used.length) {
-              html2 += '<div style="display:flex;flex-wrap:wrap;gap:6px;">' +
+              html2 += '<div class="generated-flex-wrap">' +
                 data.ip_addresses_used.map(function (ip) {
-                  return '<a href="#" class="ip-link" onclick="openTimeline(\'ip\', \'' + escJs(ip) + '\');return false;">' + escapeHtml(ip) + '</a>';
+                  return '<a href="#" class="ip-link" data-mappings-action="timeline" data-timeline-type="ip" data-timeline-value="' + escapeHtml(ip) + '">' + escapeHtml(ip) + '</a>';
                 }).join(' ') + '</div>';
             } else {
               html2 += '<div class="muted">No IP history.</div>';
             }
             html2 += '<h3 class="section-title">Recent events</h3>';
             if (data.events && data.events.data && data.events.data.length) {
-              html2 += '<ul style="padding-left:16px;margin-top:6px;">' +
+              html2 += '<ul class="generated-detail-list">' +
                 data.events.data.map(function (e) {
-                  return '<li><a href="#" class="ip-link" onclick="openTimeline(\'ip\', \'' + escJs(e.ip) + '\');return false;">' + escapeHtml(e.ip) +
+                  return '<li><a href="#" class="ip-link" data-mappings-action="timeline" data-timeline-type="ip" data-timeline-value="' + escapeHtml(e.ip) + '">' + escapeHtml(e.ip) +
                     '</a> <span class="muted">(' + escapeHtml(e.source || '-') + ', ' + escapeHtml(new Date(e.timestamp).toLocaleString()) + ')</span></li>';
                 }).join('') + '</ul>';
             } else {
@@ -360,16 +359,37 @@ function parseSearchToFilter(search) {
             }
             content.innerHTML = html2;
           } else {
-            content.innerHTML = '<pre style="white-space:pre-wrap;">' + escapeHtml(JSON.stringify(data, null, 2)) + '</pre>';
+            content.innerHTML = '<pre class="generated-pre-wrap">' + escapeHtml(JSON.stringify(data, null, 2)) + '</pre>';
           }
+          applyGeneratedTagColors(content);
         } catch (err) {
-          content.innerHTML = '<span style="color:var(--status-error);">Failed to load timeline: ' + escapeHtml(err.message) + '</span>';
+          content.innerHTML = '<span class="generated-error">Failed to load timeline: ' + escapeHtml(err.message) + '</span>';
         }
       }
 
       function closeTimeline() {
-        document.getElementById('timeline-panel').style.display = 'none';
+        document.getElementById('timeline-panel').hidden = true;
       }
+
+      document.addEventListener('click', function (event) {
+        var target = event.target.closest('[data-mappings-action]');
+        if (!target) return;
+        var action = target.getAttribute('data-mappings-action');
+        if (action === 'timeline') {
+          event.preventDefault();
+          var timelineType = target.getAttribute('data-timeline-type') || '';
+          var timelineValue = target.getAttribute('data-timeline-value') || '';
+          if ((timelineType === 'ip' || timelineType === 'user') && timelineValue && timelineValue.length <= 1024) {
+            openTimeline(timelineType, timelineValue);
+          }
+        } else if (action === 'page') {
+          var mappingsPage = Number(target.getAttribute('data-page'));
+          if (Number.isSafeInteger(mappingsPage) && mappingsPage > 0) loadMappings(mappingsPage);
+        } else if (action === 'search-page') {
+          var searchPage = Number(target.getAttribute('data-page'));
+          if (Number.isSafeInteger(searchPage) && searchPage > 0) doSearch(searchPage);
+        }
+      });
 
 (function () {
   window.TrueID = window.TrueID || {};

@@ -4,171 +4,29 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>TrueID — Login</title>
-    <style>
-      :root {
-        color-scheme: dark;
-        --bg-deep: #020a06;
-        --bg-panel: #091a11;
-        --bg-surface: #0d2818;
-        --bg-hover: #0f3d1f;
-        --green-bright: #00ff41;
-        --green-mid: #00cc33;
-        --green-dim: #0a8a2e;
-        --green-ghost: rgba(0, 255, 65, 0.08);
-        --green-glow: 0 0 8px rgba(0, 255, 65, 0.4);
-        --text-glow: 0 0 6px rgba(0, 255, 65, 0.5);
-        --text-primary: #c8f7d0;
-        --text-secondary: #5a9a6b;
-        --text-heading: #00ff41;
-        --status-ok: #00ff41;
-        --status-warn: #ffb800;
-        --status-error: #ff2d2d;
-        --status-info: #00b4ff;
-        --border-dim: #0f3d1f;
-        --border-bright: #00ff41;
-        --scrollbar-thumb: #0a8a2e;
-        --scrollbar-track: #020a06;
-      }
-      body {
-        background: var(--bg-deep);
-        color: var(--text-primary);
-        font-family: "SFMono-Regular", ui-monospace, Menlo, Monaco, Consolas,
-          "Liberation Mono", "Courier New", monospace;
-        margin: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        min-height: 100vh;
-      }
-      #matrix-bg {
-        position: fixed;
-        inset: 0;
-        width: 100%;
-        height: 100%;
-        z-index: 0;
-        opacity: 0.08;
-        pointer-events: none;
-      }
-      .login-card {
-        position: relative;
-        z-index: 1;
-        background: var(--bg-panel);
-        border: 1px solid var(--green-dim);
-        box-shadow: 0 0 20px rgba(0, 255, 65, 0.1), 0 0 60px rgba(0, 255, 65, 0.05);
-        border-radius: 6px;
-        padding: 32px;
-        width: 360px;
-      }
-      .lock-icon::before {
-        content: '🔒';
-        font-size: 32px;
-        display: block;
-        text-align: center;
-        margin-bottom: 16px;
-        filter: hue-rotate(90deg) brightness(1.5);
-      }
-      label {
-        display: block;
-        font-size: 13px;
-        color: var(--text-secondary);
-        margin-bottom: 4px;
-      }
-      input[type="text"],
-      input[type="password"] {
-        width: 100%;
-        box-sizing: border-box;
-        background: var(--bg-deep);
-        border: 1px solid var(--border-dim);
-        border-radius: 3px;
-        color: var(--text-primary);
-        padding: 10px 12px;
-        font-family: inherit;
-        font-size: 14px;
-        margin-bottom: 16px;
-      }
-      input:focus {
-        outline: none;
-        border-color: var(--green-bright);
-        box-shadow: var(--green-glow);
-      }
-      .btn {
-        width: 100%;
-        background: transparent;
-        color: var(--green-bright);
-        border: 1px solid var(--green-dim);
-        border-radius: 3px;
-        padding: 10px 16px;
-        font-family: inherit;
-        font-size: 14px;
-        cursor: pointer;
-        transition: all 0.2s;
-      }
-      .btn:hover {
-        border-color: var(--green-bright);
-        box-shadow: var(--green-glow);
-        text-shadow: var(--text-glow);
-      }
-      .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-      .error-msg {
-        display: none;
-        background: rgba(255, 45, 45, 0.1);
-        border: 1px solid var(--status-error);
-        border-radius: 4px;
-        color: var(--status-error);
-        padding: 10px;
-        margin-bottom: 16px;
-        font-size: 13px;
-        text-align: center;
-      }
-      .change-pw-section {
-        display: none;
-        margin-top: 16px;
-        padding-top: 16px;
-        border-top: 1px solid var(--border-dim);
-      }
-      .change-pw-section h2 {
-        font-size: 15px;
-        color: var(--status-warn);
-        margin: 0 0 8px;
-      }
-      .change-pw-section p {
-        font-size: 12px;
-        color: var(--text-secondary);
-        margin: 0 0 12px;
-      }
-      ::-webkit-scrollbar {
-        width: 6px;
-        height: 6px;
-      }
-      ::-webkit-scrollbar-track { background: var(--scrollbar-track); }
-      ::-webkit-scrollbar-thumb {
-        background: var(--scrollbar-thumb);
-        border-radius: 3px;
-      }
-      ::-webkit-scrollbar-thumb:hover { background: var(--green-mid); }
-    </style>
+    <link rel="stylesheet" href="css/login.css" />
   </head>
   <body>
     <canvas id="matrix-bg"></canvas>
     <div class="login-card">
       <div class="lock-icon"></div>
-      <h1 style="color:var(--green-bright);text-shadow:0 0 10px rgba(0,255,65,0.6);font-size:28px;letter-spacing:4px;text-align:center;margin:0;">
-        ▸ TRUE<span style="color:var(--text-primary)">ID</span>
+      <h1 class="csp-static-001">
+        ▸ TRUE<span class="csp-static-002">ID</span>
       </h1>
-      <p style="color:var(--text-secondary);text-align:center;font-size:12px;letter-spacing:2px;margin:8px 0 22px;">
+      <p class="csp-static-003">
         IDENTITY CORRELATION ENGINE
       </p>
 
-      <div id="error-msg" class="error-msg"></div>
+      <div id="error-msg" class="error-msg" hidden></div>
 
-      <div id="oidc-section" style="display:none;">
-        <a href="/api/auth/oidc/login" class="btn btn-oidc" style="display:block;text-align:center;padding:12px;margin-bottom:16px;border:1px solid var(--green-dim);color:var(--green-bright);text-decoration:none;">
+      <div id="oidc-section" hidden>
+        <a href="/api/auth/oidc/login" class="btn btn-oidc csp-static-004">
           ▸ Sign in with <span id="oidc-provider-name">OIDC</span>
         </a>
-        <div id="oidc-local-divider" style="text-align:center;color:var(--text-secondary);font-size:12px;margin-bottom:16px;">— or sign in locally —</div>
+        <div id="oidc-local-divider" class="csp-static-005">— or sign in locally —</div>
       </div>
 
-      <!-- Login form -->
+
       <form id="login-form" autocomplete="on">
         <label for="username">Username</label>
         <input type="text" id="username" name="username" autocomplete="username" required autofocus />
@@ -176,7 +34,7 @@
         <label for="password">Password</label>
         <input type="password" id="password" name="password" autocomplete="current-password" required />
 
-        <div id="totp-wrap" style="display:none;">
+        <div id="totp-wrap" hidden>
           <label for="totp-code">2FA code</label>
           <input type="text" id="totp-code" name="totp-code" inputmode="numeric" autocomplete="one-time-code" placeholder="123456 or backup code" />
         </div>
@@ -184,8 +42,8 @@
         <button type="submit" class="btn" id="login-btn">Log in</button>
       </form>
 
-      <!-- Force password change (shown after login if needed) -->
-      <div id="change-pw" class="change-pw-section">
+
+      <div id="change-pw" class="change-pw-section" hidden>
         <h2>Password change required</h2>
         <p>Your account requires a new password before continuing.</p>
 
@@ -195,192 +53,12 @@
         <label for="confirm-password">Confirm password</label>
         <input type="password" id="confirm-password" autocomplete="new-password" />
 
-        <button type="button" class="btn" id="change-pw-btn" onclick="changePassword()">
+        <button type="button" class="btn" id="change-pw-btn">
           Change password
         </button>
       </div>
     </div>
 
-    <script>
-      var currentUser = null;
-      var requires2fa = false;
-
-      (function initMatrixRain() {
-        var canvas = document.getElementById('matrix-bg');
-        if (!canvas) return;
-        var ctx = canvas.getContext('2d');
-        if (!ctx) return;
-        var matrixColor = getComputedStyle(document.documentElement).getPropertyValue('--green-bright').trim();
-        function resize() {
-          canvas.width = window.innerWidth;
-          canvas.height = window.innerHeight;
-        }
-        resize();
-        window.addEventListener('resize', resize);
-        var fontSize = 14;
-        var columns = Math.max(1, Math.floor(canvas.width / fontSize));
-        var drops = new Array(columns).fill(1);
-        var chars = 'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン0123456789ABCDEF';
-        function draw() {
-          ctx.fillStyle = 'rgba(2, 10, 6, 0.05)';
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-          ctx.fillStyle = matrixColor;
-          ctx.font = fontSize + 'px monospace';
-          for (var i = 0; i < drops.length; i++) {
-            var char = chars[Math.floor(Math.random() * chars.length)];
-            ctx.fillText(char, i * fontSize, drops[i] * fontSize);
-            if (drops[i] * fontSize > canvas.height && Math.random() > 0.975) {
-              drops[i] = 0;
-            }
-            drops[i]++;
-          }
-        }
-        setInterval(draw, 50);
-      })();
-
-      function showError(msg) {
-        var el = document.getElementById('error-msg');
-        el.textContent = msg;
-        el.style.display = 'block';
-      }
-
-      function hideError() {
-        document.getElementById('error-msg').style.display = 'none';
-      }
-
-      function getCsrfToken() {
-        var match = document.cookie.match(/trueid_csrf_token=([^;]+)/);
-        return match ? match[1] : '';
-      }
-
-      async function initOidcStatus() {
-        try {
-          var resp = await fetch('/api/auth/oidc/status', { credentials: 'include' });
-          if (!resp.ok) return;
-          var data = await resp.json();
-          if (!data || !data.enabled) return;
-          document.getElementById('oidc-provider-name').textContent = data.provider_name || 'OIDC';
-          document.getElementById('oidc-section').style.display = 'block';
-          if (data.allow_local_login === false) {
-            document.getElementById('login-form').style.display = 'none';
-            document.getElementById('oidc-local-divider').style.display = 'none';
-          }
-        } catch (e) {}
-      }
-
-      document.getElementById('login-form').addEventListener('submit', async function(e) {
-        e.preventDefault();
-        hideError();
-
-        var btn = document.getElementById('login-btn');
-        btn.disabled = true;
-        btn.textContent = 'Logging in...';
-
-        try {
-          var resp = await fetch('/api/auth/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'include',
-            body: JSON.stringify({
-              username: document.getElementById('username').value,
-              password: document.getElementById('password').value,
-              totp_code: requires2fa ? document.getElementById('totp-code').value : null
-            })
-          });
-
-          if (resp.status === 401) {
-            var authErr = await resp.json().catch(function() { return {}; });
-            if (authErr.requires_2fa) {
-              requires2fa = true;
-              document.getElementById('totp-wrap').style.display = 'block';
-              showError('Two-factor code required. Enter code and submit again.');
-              return;
-            }
-            showError('Invalid username or password.');
-            return;
-          }
-          if (resp.status === 423) {
-            var data = await resp.json();
-            var msg = 'Account locked.';
-            if (data.locked_until) {
-              var until = new Date(data.locked_until);
-              var mins = Math.ceil((until - Date.now()) / 60000);
-              if (mins > 0) msg += ' Try again in ' + mins + ' minute(s).';
-            }
-            showError(msg);
-            return;
-          }
-          if (!resp.ok) {
-            var errData = await resp.json().catch(function() { return {}; });
-            showError(errData.error || 'Login failed (HTTP ' + resp.status + ')');
-            return;
-          }
-
-          var user = await resp.json();
-          requires2fa = false;
-          currentUser = user;
-
-          if (user.force_password_change) {
-            document.getElementById('login-form').style.display = 'none';
-            document.getElementById('change-pw').style.display = 'block';
-            return;
-          }
-
-          window.location = '/';
-        } catch (err) {
-          showError('Network error: ' + err.message);
-        } finally {
-          btn.disabled = false;
-          btn.textContent = 'Log in';
-        }
-      });
-
-      async function changePassword() {
-        hideError();
-        var newPw = document.getElementById('new-password').value;
-        var confirmPw = document.getElementById('confirm-password').value;
-
-        if (newPw.length < 12) {
-          showError('Password must be at least 12 characters.');
-          return;
-        }
-        if (newPw !== confirmPw) {
-          showError('Passwords do not match.');
-          return;
-        }
-
-        var btn = document.getElementById('change-pw-btn');
-        btn.disabled = true;
-
-        try {
-          var resp = await fetch('/api/auth/change-password', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-CSRF-Token': getCsrfToken()
-            },
-            credentials: 'include',
-            body: JSON.stringify({
-              current_password: document.getElementById('password').value,
-              new_password: newPw
-            })
-          });
-
-          if (!resp.ok) {
-            var errData = await resp.json().catch(function() { return {}; });
-            showError(errData.error || 'Password change failed.');
-            return;
-          }
-
-          window.location = '/';
-        } catch (err) {
-          showError('Network error: ' + err.message);
-        } finally {
-          btn.disabled = false;
-        }
-      }
-
-      initOidcStatus();
-    </script>
+    <script src="js/login.js"></script>
   </body>
 </html>

@@ -40,6 +40,37 @@ fn parse_dhcp_new_lease() {
 }
 
 #[test]
+fn parse_ad_xml_preserves_entity_fragments() {
+    let xml = r#"<Event><System><EventID>47&#54;8</EventID></System><EventData><Data Name="TargetUserName">Alice &amp; Bob</Data></EventData></Event>"#;
+    let ev = parse_ad_xml(xml).expect("failed to parse entity fragments");
+
+    assert_eq!(ev.event_id, 4768);
+    assert_eq!(ev.user, "Alice & Bob");
+}
+
+#[test]
+fn parse_dhcp_xml_preserves_entity_fragments() {
+    let xml = r#"<Event><System><EventID>10</EventID></System><EventData><Data Name="HostName">WORK&#x53;TATION &amp; LAB</Data></EventData></Event>"#;
+    let ev = parse_dhcp_xml(xml).expect("failed to parse entity fragments");
+
+    assert_eq!(ev.hostname, "WORKSTATION & LAB");
+}
+
+#[test]
+fn parse_ad_xml_rejects_unknown_entity() {
+    let xml = r#"<Event><System><EventID>4768</EventID></System><EventData><Data Name="TargetUserName">Alice &unknown;</Data></EventData></Event>"#;
+
+    assert!(parse_ad_xml(xml).is_err());
+}
+
+#[test]
+fn parse_ad_xml_rejects_doctype() {
+    let xml = r#"<!DOCTYPE Event [<!ENTITY user "Alice">]><Event><System><EventID>4768</EventID></System><EventData><Data Name="TargetUserName">&user;</Data></EventData></Event>"#;
+
+    assert!(parse_ad_xml(xml).is_err());
+}
+
+#[test]
 fn syslog_ad_format() {
     let msg = format_ad_event("DC01", "jan.kowalski", "10.0.1.50", "52431", 4768, "0x0");
     assert!(msg.contains("<13>"));

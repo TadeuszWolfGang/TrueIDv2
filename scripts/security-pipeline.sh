@@ -49,16 +49,6 @@ run_and_check() {
     fi
 }
 
-run_advisory_check() {
-    local desc="$1"
-    shift
-    if "$@"; then
-        green "$desc"
-    else
-        yellow "$desc (advisory)"
-    fi
-}
-
 cleanup() {
     docker compose down -v >/dev/null 2>&1 || true
 }
@@ -126,6 +116,8 @@ run_and_check "gitleaks secret scan" \
   --redact \
   --exit-code 1
 run_and_check "cargo fmt check" cargo fmt --all -- --check
+run_and_check "ZAP report policy tests" python3 -m unittest scripts/test_check_zap_report.py
+run_and_check "CSP asset policy" python3 scripts/check-csp-assets.py
 run_and_check "cargo clippy (security-focused lints)" \
   cargo clippy --workspace --all-targets -- -D clippy::correctness -D clippy::suspicious -D clippy::perf
 run_and_check "cargo audit" cargo audit --ignore RUSTSEC-2023-0071
@@ -227,9 +219,14 @@ else
     red "login brute-force protection did not produce HTTP 429"
 fi
 
-run_advisory_check "ZAP baseline scan" \
+cp "${ROOT_DIR}/zap-baseline.conf" "${REPORT_DIR}/zap-baseline.conf"
+chmod 0777 "${REPORT_DIR}"
+run_and_check "ZAP baseline scan" \
   docker run --rm --network host -v "${REPORT_DIR}:/zap/wrk/:rw" ghcr.io/zaproxy/zaproxy:stable \
-  zap-baseline.py -I -t http://127.0.0.1:3000 -r zap-report.html -J zap-report.json -m 5
+  zap-baseline.py -c zap-baseline.conf -t http://127.0.0.1:3000 \
+  -r zap-report.html -J zap-report.json -m 5
+run_and_check "ZAP raw report policy" \
+  python3 "${ROOT_DIR}/scripts/check-zap-report.py" "${REPORT_DIR}/zap-report.json"
 
 rm -f "${REPORT_DIR}/nuclei-report.jsonl"
 if docker run --rm --network host -v "${REPORT_DIR}:/reports:rw" projectdiscovery/nuclei:latest \

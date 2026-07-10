@@ -1,5 +1,3 @@
-/* Alerts module. */
-
 var SOURCE_DOWN_DEFAULT_SILENCE_SECONDS = 300;
 var SOURCE_DOWN_MIN_SILENCE_SECONDS = 60;
 var SOURCE_DOWN_MAX_SILENCE_SECONDS = 3600;
@@ -13,16 +11,17 @@ function updateAlertRuleConditionalFields() {
   var ruleType = document.getElementById('rule-type').value;
   var sourceDownFields = document.getElementById('source-down-fields');
   var silenceInput = document.getElementById('rule-source-down-silence');
+  sourceDownFields.classList.add('generated-source-down-fields');
 
   if (isSourceDownRuleType(ruleType)) {
-    sourceDownFields.style.display = 'flex';
+    sourceDownFields.hidden = false;
     if (!silenceInput.value) {
       silenceInput.value = String(SOURCE_DOWN_DEFAULT_SILENCE_SECONDS);
     }
     return;
   }
 
-  sourceDownFields.style.display = 'none';
+  sourceDownFields.hidden = true;
 }
 
 function setAlertRuleFormMode(isEditing) {
@@ -67,11 +66,11 @@ function formatAlertRuleTypeCell(rule) {
 
   var conditions = parseSourceDownConditions(rule.conditions);
   if (!conditions) {
-    return html + '<div class="muted" style="margin-top:4px;">invalid conditions</div>';
+    return html + '<div class="muted generated-subtext">invalid conditions</div>';
   }
 
   return html +
-    '<div class="muted" style="margin-top:4px;">' +
+    '<div class="muted generated-subtext">' +
     escapeHtml(conditions.source) + ' · ' + escapeHtml(String(conditions.silence_seconds)) + 's' +
     '</div>';
 }
@@ -121,11 +120,6 @@ async function loadAlertStats() {
         }
       }
 
-      /**
-       * Sorts in-memory rows using tab sort state.
-       * Parameters: tabName - sort key namespace, rows - mutable row list.
-       * Returns: sorted row list.
-       */
       function sortRowsByState(tabName, rows) {
         var state = window.sortState && window.sortState[tabName];
         if (!state || !state.column) return rows;
@@ -144,14 +138,14 @@ async function loadAlertStats() {
       function showAddRuleForm() {
         editingRuleId = null;
         resetAlertRuleForm();
-        document.getElementById('alert-rule-form').style.display = '';
+        document.getElementById('alert-rule-form').hidden = false;
         loadRuleChannelOptions([]);
       }
 
       function hideRuleForm() {
         editingRuleId = null;
         resetAlertRuleForm();
-        document.getElementById('alert-rule-form').style.display = 'none';
+        document.getElementById('alert-rule-form').hidden = true;
       }
 
       async function loadRuleChannelOptions(selected) {
@@ -165,7 +159,7 @@ async function loadAlertStats() {
           var channels = await res.json();
           var html = channels.map(function (c) {
             var checked = selectedMap[String(c.id)] ? 'checked' : '';
-            return '<label class="setting-desc" style="display:inline-flex;align-items:center;gap:6px;margin-right:12px;">' +
+            return '<label class="setting-desc generated-checkbox-label">' +
               '<input type="checkbox" class="rule-channel-cb" value="' + c.id + '" ' + checked + '>' +
               escapeHtml(c.name) + ' (' + escapeHtml(c.channel_type) + ')' +
               '</label>';
@@ -192,16 +186,16 @@ async function loadAlertStats() {
           body.innerHTML = rules.map(function (r) {
             var channels = Array.isArray(r.channels) ? r.channels.map(function (c) { return c.name; }).join(', ') : '';
             return '<tr>' +
-              '<td><label class="toggle"><input type="checkbox" ' + (r.enabled ? 'checked' : '') + ' onchange="toggleRuleEnabled(' + r.id + ', this.checked)"><span class="toggle-slider"></span></label></td>' +
+              '<td><label class="toggle"><input type="checkbox" ' + (r.enabled ? 'checked' : '') + ' data-alert-change="toggle-rule" data-id="' + escapeHtml(String(r.id)) + '"><span class="toggle-slider"></span></label></td>' +
               '<td>' + escapeHtml(r.name) + '</td>' +
               '<td>' + formatAlertRuleTypeCell(r) + '</td>' +
               '<td><span class="' + badgeClass(r.severity) + '">' + escapeHtml(r.severity) + '</span></td>' +
               '<td>' + (r.action_webhook_url ? '<span class="muted">configured</span>' : '<span class="muted">none</span>') +
-                (channels ? '<div class="muted" style="margin-top:4px;">' + escapeHtml(channels) + '</div>' : '') + '</td>' +
+                (channels ? '<div class="muted generated-subtext">' + escapeHtml(channels) + '</div>' : '') + '</td>' +
               '<td>' + escapeHtml(r.cooldown_seconds) + 's</td>' +
               '<td>' +
-                '<button class="btn btn-sm" onclick="editAlertRule(' + r.id + ')">Edit</button> ' +
-                '<button class="btn btn-sm" onclick="deleteAlertRule(' + r.id + ')">Delete</button>' +
+                '<button class="btn btn-sm" data-alert-action="edit-rule" data-id="' + escapeHtml(String(r.id)) + '">Edit</button> ' +
+                '<button class="btn btn-sm" data-alert-action="delete-rule" data-id="' + escapeHtml(String(r.id)) + '">Delete</button>' +
               '</td>' +
               '</tr>';
           }).join('');
@@ -247,7 +241,7 @@ async function loadAlertStats() {
             ? rule.channels.map(function (channel) { return channel.id; })
             : []
         );
-        document.getElementById('alert-rule-form').style.display = '';
+        document.getElementById('alert-rule-form').hidden = false;
       }
 
       async function saveAlertRule() {
@@ -324,8 +318,8 @@ async function loadAlertStats() {
         var totalPages = Math.ceil(total / perPage) || 1;
         var el = document.getElementById('alert-history-paging');
         var html = 'Page ' + page + ' of ' + totalPages + ' (' + total + ' alerts) &nbsp;';
-        if (page > 1) html += '<button class="btn btn-sm" onclick="loadAlertHistory(' + (page - 1) + ')">← Prev</button> ';
-        if (page < totalPages) html += '<button class="btn btn-sm" onclick="loadAlertHistory(' + (page + 1) + ')">Next →</button>';
+        if (page > 1) html += '<button class="btn btn-sm" data-alert-action="load-history-page" data-page="' + (page - 1) + '">← Prev</button> ';
+        if (page < totalPages) html += '<button class="btn btn-sm" data-alert-action="load-history-page" data-page="' + (page + 1) + '">Next →</button>';
         el.innerHTML = html;
       }
 
@@ -360,7 +354,7 @@ async function loadAlertStats() {
                 '<td><span class="' + badgeClass(r.severity) + '">' + escapeHtml(r.severity) + '</span></td>' +
                 '<td>' + escapeHtml(r.rule_name) + '</td>' +
                 '<td>' + escapeHtml(r.rule_type) + '</td>' +
-                '<td>' + (r.ip ? '<a href="#" class="ip-link" onclick="openTimeline(\'ip\', \'' + escJs(r.ip) + '\');return false;">' + escapeHtml(r.ip) + '</a>' : '-') + '</td>' +
+                '<td>' + (r.ip ? '<a href="#" class="ip-link" data-alert-action="open-ip-timeline" data-ip="' + escapeHtml(r.ip) + '">' + escapeHtml(r.ip) + '</a>' : '-') + '</td>' +
                 '<td>' + escapeHtml(r.user_name || '-') + '</td>' +
                 '<td>' + webhookStatusView(r.webhook_status) + '</td>' +
                 '<td>' + escapeHtml(new Date(r.fired_at).toLocaleString()) + '</td>' +
@@ -377,6 +371,36 @@ async function loadAlertStats() {
       }
 
 (function () {
+  function dataInteger(el, name) {
+    var value = el.dataset[name];
+    if (!/^[1-9][0-9]*$/.test(value || '')) return null;
+    var parsed = Number(value);
+    return Number.isSafeInteger(parsed) ? parsed : null;
+  }
+
+  var actionHandlers = {
+    'delete-rule': function (el) { var id = dataInteger(el, 'id'); if (id !== null) return deleteAlertRule(id); },
+    'edit-rule': function (el) { var id = dataInteger(el, 'id'); if (id !== null) return editAlertRule(id); },
+    'load-history-page': function (el) { var page = dataInteger(el, 'page'); if (page !== null) return loadAlertHistory(page); },
+    'open-ip-timeline': function (el) { return openTimeline('ip', el.dataset.ip || ''); }
+  };
+
+  document.addEventListener('click', function (event) {
+    var target = event.target.closest('[data-alert-action]');
+    if (!target) return;
+    var handler = actionHandlers[target.dataset.alertAction];
+    if (!handler) return;
+    event.preventDefault();
+    handler(target);
+  });
+
+  document.addEventListener('change', function (event) {
+    var target = event.target.closest('[data-alert-change="toggle-rule"]');
+    if (!target) return;
+    var id = dataInteger(target, 'id');
+    if (id !== null) toggleRuleEnabled(id, target.checked);
+  });
+
   window.TrueID = window.TrueID || {};
   if (typeof window.deleteAlertRule === 'function') window.TrueID.deleteAlertRule = window.deleteAlertRule;
   if (typeof window.editAlertRule === 'function') window.TrueID.editAlertRule = window.editAlertRule;

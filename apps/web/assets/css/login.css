@@ -1,0 +1,181 @@
+:root {
+  color-scheme: dark;
+  --bg-deep: #020a06;
+  --bg-panel: #091a11;
+  --bg-surface: #0d2818;
+  --bg-hover: #0f3d1f;
+  --green-bright: #00ff41;
+  --green-mid: #00cc33;
+  --green-dim: #0a8a2e;
+  --green-ghost: rgba(0, 255, 65, 0.08);
+  --green-glow: 0 0 8px rgba(0, 255, 65, 0.4);
+  --text-glow: 0 0 6px rgba(0, 255, 65, 0.5);
+  --text-primary: #c8f7d0;
+  --text-secondary: #5a9a6b;
+  --text-heading: #00ff41;
+  --status-ok: #00ff41;
+  --status-warn: #ffb800;
+  --status-error: #ff2d2d;
+  --status-info: #00b4ff;
+  --border-dim: #0f3d1f;
+  --border-bright: #00ff41;
+  --scrollbar-thumb: #0a8a2e;
+  --scrollbar-track: #020a06;
+}
+[hidden] {
+  display: none !important;
+}
+body {
+  background: var(--bg-deep);
+  color: var(--text-primary);
+  font-family: "SFMono-Regular", ui-monospace, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+}
+#matrix-bg {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  opacity: 0.08;
+  pointer-events: none;
+}
+.login-card {
+  position: relative;
+  z-index: 1;
+  background: var(--bg-panel);
+  border: 1px solid var(--green-dim);
+  box-shadow: 0 0 20px rgba(0, 255, 65, 0.1), 0 0 60px rgba(0, 255, 65, 0.05);
+  border-radius: 6px;
+  padding: 32px;
+  width: 360px;
+}
+.lock-icon::before {
+  content: '🔒';
+  font-size: 32px;
+  display: block;
+  text-align: center;
+  margin-bottom: 16px;
+  filter: hue-rotate(90deg) brightness(1.5);
+}
+label {
+  display: block;
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+input[type="text"],
+input[type="password"] {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg-deep);
+  border: 1px solid var(--border-dim);
+  border-radius: 3px;
+  color: var(--text-primary);
+  padding: 10px 12px;
+  font-family: inherit;
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+input:focus {
+  outline: none;
+  border-color: var(--green-bright);
+  box-shadow: var(--green-glow);
+}
+.btn {
+  width: 100%;
+  background: transparent;
+  color: var(--green-bright);
+  border: 1px solid var(--green-dim);
+  border-radius: 3px;
+  padding: 10px 16px;
+  font-family: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn:hover {
+  border-color: var(--green-bright);
+  box-shadow: var(--green-glow);
+  text-shadow: var(--text-glow);
+}
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.error-msg {
+  background: rgba(255, 45, 45, 0.1);
+  border: 1px solid var(--status-error);
+  border-radius: 4px;
+  color: var(--status-error);
+  padding: 10px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  text-align: center;
+}
+.change-pw-section {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-dim);
+}
+.change-pw-section h2 {
+  font-size: 15px;
+  color: var(--status-warn);
+  margin: 0 0 8px;
+}
+.change-pw-section p {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 0 0 12px;
+}
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track { background: var(--scrollbar-track); }
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--green-mid); }
+
+
+.csp-static-001 {
+  color: var(--green-bright);
+  text-shadow: 0 0 10px rgba(0,255,65,0.6);
+  font-size: 28px;
+  letter-spacing: 4px;
+  text-align: center;
+  margin: 0;
+}
+
+.csp-static-002 {
+  color: var(--text-primary);
+}
+
+.csp-static-003 {
+  color: var(--text-secondary);
+  text-align: center;
+  font-size: 12px;
+  letter-spacing: 2px;
+  margin: 8px 0 22px;
+}
+
+.csp-static-004 {
+  display: block;
+  text-align: center;
+  padding: 12px;
+  margin-bottom: 16px;
+  border: 1px solid var(--green-dim);
+  color: var(--green-bright);
+  text-decoration: none;
+}
+
+.csp-static-005 {
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 12px;
+  margin-bottom: 16px;
+}

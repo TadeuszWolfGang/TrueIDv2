@@ -5,12 +5,6 @@
     recentFlowKeys: {},
   };
 
-  /**
-   * Creates an SVG element with attributes.
-   * @param {string} tag SVG tag name.
-   * @param {Object} attrs Attribute map.
-   * @returns {SVGElement} Created node.
-   */
   function createSvgElement(tag, attrs) {
     var el = document.createElementNS('http://www.w3.org/2000/svg', tag);
     Object.keys(attrs || {}).forEach(function (k) {
@@ -19,11 +13,6 @@
     return el;
   }
 
-  /**
-   * Escapes value for use in DOM id.
-   * @param {string} value Raw value.
-   * @returns {string} Safe id fragment.
-   */
   function safeId(value) {
     return String(value || '')
       .toLowerCase()
@@ -32,23 +21,12 @@
       .slice(0, 64);
   }
 
-  /**
-   * Returns stroke color by conflict severity.
-   * @param {number} conflicts Unresolved conflicts count.
-   * @returns {string} CSS color var.
-   */
   function subnetStroke(conflicts) {
     if (conflicts > 3) return 'var(--status-error)';
     if (conflicts > 0) return 'var(--status-warn)';
     return 'var(--green-dim)';
   }
 
-  /**
-   * Shows subnet hover tooltip.
-   * @param {MouseEvent} evt Pointer event.
-   * @param {Object} subnet Subnet payload.
-   * @returns {void}
-   */
   function showMapTooltip(evt, subnet) {
     var tip = document.getElementById('map-tooltip');
     if (!tip) return;
@@ -59,32 +37,17 @@
       subnet.total_mappings + ' mappings · ' +
       subnet.conflict_count + ' conflicts\n' +
       'Top users: ' + topUsers;
-    tip.style.display = 'block';
+    tip.hidden = false;
     tip.style.left = (evt.clientX + 14) + 'px';
     tip.style.top = (evt.clientY + 14) + 'px';
   }
 
-  /**
-   * Hides map tooltip.
-   * @returns {void}
-   */
   function hideMapTooltip() {
     var tip = document.getElementById('map-tooltip');
     if (!tip) return;
-    tip.style.display = 'none';
+    tip.hidden = true;
   }
 
-  /**
-   * Renders one subnet node rectangle and labels.
-   * @param {SVGElement} svg SVG root.
-   * @param {Object} subnet Subnet payload.
-   * @param {number} x Left.
-   * @param {number} y Top.
-   * @param {number} w Width.
-   * @param {number} h Height.
-   * @param {boolean} discovered Whether discovered subnet node.
-   * @returns {void}
-   */
   function renderSubnetNode(svg, subnet, x, y, w, h, discovered) {
     var rect = createSvgElement('rect', {
       x: x,
@@ -140,14 +103,6 @@
     svg.appendChild(cidr);
   }
 
-  /**
-   * Renders adapter icon node.
-   * @param {SVGElement} svg SVG root.
-   * @param {Object} adapter Adapter payload.
-   * @param {number} x Left.
-   * @param {number} y Top.
-   * @returns {void}
-   */
   function renderAdapterNode(svg, adapter, x, y) {
     var group = createSvgElement('g', { class: 'map-node-hover' });
     var box = createSvgElement('rect', {
@@ -195,15 +150,6 @@
     svg.appendChild(group);
   }
 
-  /**
-   * Renders one integration node rectangle.
-   * @param {SVGElement} svg SVG root.
-   * @param {string} title Node title.
-   * @param {string} value Node value.
-   * @param {number} x Left.
-   * @param {number} y Top.
-   * @returns {void}
-   */
   function renderIntegrationNode(svg, title, value, x, y) {
     svg.appendChild(createSvgElement('rect', {
       x: x,
@@ -238,17 +184,6 @@
     svg.appendChild(valEl);
   }
 
-  /**
-   * Draws a curved path between two points.
-   * @param {SVGElement} svg SVG root.
-   * @param {string} id Path id.
-   * @param {number} x1 Source x.
-   * @param {number} y1 Source y.
-   * @param {number} x2 Target x.
-   * @param {number} y2 Target y.
-   * @param {number} width Stroke width.
-   * @returns {void}
-   */
   function drawPath(svg, id, x1, y1, x2, y2, width) {
     var midX = (x1 + x2) / 2;
     svg.appendChild(createSvgElement('path', {
@@ -262,12 +197,6 @@
     }));
   }
 
-  /**
-   * Animates a flow dot along given path.
-   * @param {SVGElement} svg SVG root.
-   * @param {string} pathId Path id.
-   * @returns {void}
-   */
   function animateFlow(svg, pathId) {
     var path = document.getElementById(pathId);
     if (!svg || !path) return;
@@ -281,12 +210,6 @@
     setTimeout(function () { dot.remove(); }, 1500);
   }
 
-  /**
-   * Promotes discovered subnet to managed subnet.
-   * @param {number} discoveredId Discovered subnet id.
-   * @param {string} cidr Subnet CIDR.
-   * @returns {Promise<void>}
-   */
   async function promoteDiscovered(discoveredId, cidr) {
     try {
       var name = 'Auto ' + cidr;
@@ -302,11 +225,6 @@
     }
   }
 
-  /**
-   * Renders topology SVG from backend payload.
-   * @param {Object} data Topology response.
-   * @returns {void}
-   */
   function renderTopology(data) {
     var svg = document.getElementById('network-svg');
     if (!svg) return;
@@ -360,7 +278,7 @@
           fill: 'var(--green-bright)',
           'font-size': '10',
           'font-family': 'inherit',
-          style: 'cursor:pointer;text-decoration:underline;',
+          class: 'map-promote-link',
         });
         btn.textContent = 'Promote';
         btn.addEventListener('click', function () {
@@ -401,20 +319,12 @@
     });
   }
 
-  /**
-   * Loads topology payload and renders map.
-   * @returns {Promise<void>}
-   */
   async function loadMapTopology() {
     var data = await authGet('/api/v2/map/topology');
     mapState.topology = data;
     renderTopology(data);
   }
 
-  /**
-   * Loads recent flows and animates unseen events.
-   * @returns {Promise<void>}
-   */
   async function loadMapFlows() {
     var svg = document.getElementById('network-svg');
     if (!svg) return;
@@ -434,10 +344,6 @@
     });
   }
 
-  /**
-   * Loads Network Map tab data (topology + flows).
-   * @returns {Promise<void>}
-   */
   async function loadMapTab() {
     try {
       await loadMapTopology();
