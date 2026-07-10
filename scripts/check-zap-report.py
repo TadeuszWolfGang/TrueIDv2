@@ -37,12 +37,13 @@ def validate_cache_alert(alert: dict[str, Any]) -> list[str]:
     for instance in instances:
         uri, method, param, evidence = instance_key(instance)
         parsed = urlparse(uri)
+        path = parsed.path or "/"
         if (
             parsed.scheme != "http"
             or parsed.netloc != "127.0.0.1:3000"
             or parsed.query
             or parsed.fragment
-            or ".." in parsed.path
+            or ".." in path
             or method != "GET"
             or param
         ):
@@ -50,13 +51,13 @@ def validate_cache_alert(alert: dict[str, Any]) -> list[str]:
             continue
 
         if alert_ref == "10049-1":
-            if parsed.path != "/metrics" or evidence != "401":
+            if path != "/metrics" or evidence != "401":
                 errors.append(
                     f"unreviewed non-storable instance: {(uri, method, param, evidence)!r}"
                 )
         elif alert_ref == "10049-3":
-            is_public_asset = parsed.path in {"/", "/sitemap.xml"} or bool(
-                re.fullmatch(r"/(?:css|js)/[A-Za-z0-9._/-]+\.(?:css|js)", parsed.path)
+            is_public_asset = path in {"/", "/robots.txt", "/sitemap.xml"} or bool(
+                re.fullmatch(r"/(?:css|js)/[A-Za-z0-9._/-]+\.(?:css|js)", path)
             )
             if not is_public_asset or evidence:
                 errors.append(

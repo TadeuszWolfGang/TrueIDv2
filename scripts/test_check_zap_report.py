@@ -44,8 +44,10 @@ class ZapReportPolicyTests(unittest.TestCase):
                 "alertRef": "10049-3",
                 "riskcode": "0",
                 "instances": [
+                    instance(POLICY.TARGET_URL),
                     instance(f"{POLICY.TARGET_URL}/js/api.js"),
                     instance(f"{POLICY.TARGET_URL}/css/index.css"),
+                    instance(f"{POLICY.TARGET_URL}/robots.txt"),
                     instance(f"{POLICY.TARGET_URL}/sitemap.xml"),
                 ],
             },
