@@ -4,515 +4,12 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>TrueID Dashboard</title>
-    <style>
-      :root {
-        color-scheme: dark;
-        --bg-deep: #020a06;
-        --bg-panel: #091a11;
-        --bg-surface: #0d2818;
-        --bg-hover: #0f3d1f;
-        --green-bright: #00ff41;
-        --green-mid: #00cc33;
-        --green-dim: #0a8a2e;
-        --green-ghost: rgba(0, 255, 65, 0.08);
-        --green-glow: 0 0 8px rgba(0, 255, 65, 0.4);
-        --text-glow: 0 0 6px rgba(0, 255, 65, 0.5);
-        --text-primary: #c8f7d0;
-        --text-secondary: #5a9a6b;
-        --text-heading: #00ff41;
-        --status-ok: #00ff41;
-        --status-warn: #ffb800;
-        --status-error: #ff2d2d;
-        --status-info: #00b4ff;
-        --border-dim: #0f3d1f;
-        --border-bright: #00ff41;
-        --scrollbar-thumb: #0a8a2e;
-        --scrollbar-track: #020a06;
-        --status-ok-soft: color-mix(in srgb, var(--status-ok) 14%, transparent);
-        --status-warn-soft: color-mix(in srgb, var(--status-warn) 14%, transparent);
-        --status-error-soft: color-mix(in srgb, var(--status-error) 14%, transparent);
-        --status-info-soft: color-mix(in srgb, var(--status-info) 14%, transparent);
-        --status-accent: color-mix(in srgb, var(--status-info) 60%, var(--status-warn) 40%);
-        --danger-glow: 0 0 8px color-mix(in srgb, var(--status-error) 40%, transparent);
-        --matrix-rain-fade: rgba(2, 10, 6, 0.05);
-        --toast-flash-glow: 0 0 15px color-mix(in srgb, var(--green-bright) 50%, transparent);
-        --overlay-backdrop: color-mix(in srgb, var(--bg-deep) 65%, transparent);
-        --overlay-backdrop-strong: color-mix(in srgb, var(--bg-deep) 68%, transparent);
-      }
-      body {
-        background: var(--bg-deep);
-        color: var(--text-primary);
-        font-family: "SFMono-Regular", ui-monospace, Menlo, Monaco, Consolas,
-          "Liberation Mono", "Courier New", monospace;
-        margin: 0;
-        padding: 0;
-      }
-      #app-shell {
-        display: block;
-      }
-      #sidebar {
-        position: fixed;
-        left: 0;
-        top: 0;
-        width: 180px;
-        height: 100vh;
-        overflow-y: auto;
-        background: rgba(9, 26, 17, 0.92);
-        border-right: 1px solid var(--border-dim);
-        box-shadow: 0 0 18px var(--green-ghost);
-        display: flex;
-        flex-direction: column;
-        z-index: 2;
-      }
-      #sidebar-logo {
-        color: var(--green-bright);
-        font-weight: 700;
-        letter-spacing: 0.14em;
-        font-size: 17px;
-        padding: 14px 12px 12px;
-        text-shadow: var(--text-glow);
-      }
-      #main-content {
-        margin-left: 180px;
-        height: 100vh;
-        overflow: auto;
-        padding: 20px 24px;
-        position: relative;
-        z-index: 1;
-        background: transparent;
-      }
-      body > *:not(#matrix-bg) { position: relative; z-index: 1; }
-      h1 {
-        margin: 0 0 16px;
-        font-size: 20px;
-        color: var(--text-heading);
-        letter-spacing: 0.02em;
-        text-shadow: var(--text-glow);
-      }
-      .panel {
-        border: 1px solid var(--border-dim);
-        border-radius: 8px;
-        background: color-mix(in srgb, var(--bg-panel) 95%, transparent);
-        padding: 16px;
-        box-shadow: 0 0 18px var(--green-ghost);
-      }
-      table {
-        width: 100%;
-        border-collapse: collapse;
-        background: color-mix(in srgb, var(--bg-panel) 95%, transparent);
-      }
-      thead th {
-        text-align: left;
-        font-weight: 600;
-        color: var(--text-heading);
-        border-bottom: 1px solid var(--border-dim);
-        padding: 10px 8px;
-      }
-      tbody td {
-        padding: 8px;
-        border-bottom: 1px solid var(--border-dim);
-      }
-      table tr:hover td {
-        background: var(--bg-hover);
-        box-shadow: inset 2px 0 0 var(--green-bright);
-      }
-      .muted { color: var(--text-secondary); }
-      tr.offline td { opacity: 0.45; }
-      .dot {
-        display: inline-block;
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        margin-right: 6px;
-        vertical-align: middle;
-      }
-      .dot.online {
-        background: var(--green-bright);
-        box-shadow: 0 0 6px var(--green-bright);
-        animation: pulse-green 2s infinite;
-      }
-      .dot.offline { background: var(--status-error); opacity: 0.75; }
-      @keyframes pulse-green {
-        0%, 100% { box-shadow: 0 0 4px var(--green-bright); }
-        50% {
-          box-shadow: 0 0 12px var(--green-bright),
-            0 0 20px var(--green-ghost);
-        }
-      }
-      .vendor { display: block; font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
-      .status { margin-top: 12px; font-size: 12px; color: var(--text-secondary); }
-
-      #tabs {
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-        padding: 8px 0 0;
-      }
-      .tab {
-        width: 100%;
-        text-align: left;
-        padding: 8px 12px;
-        background: transparent;
-        color: var(--text-secondary);
-        border: none;
-        border-left: 3px solid transparent;
-        cursor: pointer;
-        font-family: inherit;
-        font-size: 13px;
-        transition: all 0.2s;
-      }
-      .tab:hover {
-        color: var(--green-bright);
-        background: var(--bg-hover);
-      }
-      .tab.active {
-        color: var(--green-bright);
-        background: var(--green-ghost);
-        border-left: 3px solid var(--green-bright);
-        box-shadow: inset 0 0 8px var(--green-ghost);
-        text-shadow: var(--text-glow);
-      }
-      .tab-group-header {
-        color: var(--text-secondary);
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-        font-size: 10px;
-        padding: 10px 12px 4px;
-        cursor: pointer;
-        user-select: none;
-        display: flex;
-        align-items: center;
-        gap: 4px;
-      }
-      .tab-group-header:hover { color: var(--green-bright); }
-      .tab-group-arrow {
-        display: inline-block;
-        transition: transform 0.2s;
-        font-size: 9px;
-      }
-      .tab-group.expanded .tab-group-arrow { transform: rotate(90deg); }
-      .tab-group-items {
-        display: none;
-        padding: 0;
-      }
-      .tab-group.expanded .tab-group-items { display: block; }
-      .sidebar-divider {
-        border-top: 1px solid var(--border-dim);
-        margin: 10px 10px 8px;
-      }
-      #user-bar {
-        margin-top: auto;
-        padding: 8px 10px 12px;
-        flex-direction: column;
-        align-items: stretch;
-        gap: 8px;
-      }
-      #user-info {
-        color: var(--text-secondary);
-        font-size: 12px;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      #connection-status {
-        color: var(--text-secondary);
-        font-size: 11px;
-        display: flex;
-        align-items: center;
-        gap: 6px;
-      }
-      .sidebar-controls {
-        display: flex;
-        gap: 6px;
-      }
-      .sidebar-controls .btn {
-        flex: 1;
-        padding: 6px 8px;
-      }
-
-      .setting-row {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 12px 0;
-        gap: 16px;
-      }
-      .setting-label { flex: 1; }
-      .setting-title { display: block; color: var(--text-primary); font-size: 14px; }
-      .setting-desc { display: block; color: var(--text-secondary); font-size: 12px; margin-top: 2px; }
-      .setting-divider { border-top: 1px solid var(--border-dim); margin: 8px 0; }
-      .section-title {
-        color: var(--text-heading);
-        font-size: 15px;
-        margin: 16px 0 4px;
-        font-weight: 600;
-        text-shadow: var(--text-glow);
-      }
-      .section-desc { color: var(--text-secondary); font-size: 12px; margin: 0 0 8px; }
-      .section-desc code {
-        background: var(--bg-surface);
-        padding: 2px 6px;
-        border-radius: 3px;
-        font-size: 11px;
-        color: var(--green-bright);
-      }
-
-      .toggle { position: relative; display: inline-block; width: 48px; height: 26px; flex-shrink: 0; }
-      .toggle input { opacity: 0; width: 0; height: 0; }
-      .toggle-slider {
-        position: absolute;
-        inset: 0;
-        background: var(--bg-surface);
-        border-radius: 26px;
-        transition: 0.3s;
-        cursor: pointer;
-        border: 1px solid var(--border-dim);
-      }
-      .toggle-slider::before {
-        content: '';
-        position: absolute;
-        width: 20px;
-        height: 20px;
-        left: 3px;
-        bottom: 2px;
-        background: var(--text-secondary);
-        border-radius: 50%;
-        transition: 0.3s;
-      }
-      .toggle input:checked + .toggle-slider { background: var(--green-dim); }
-      .toggle input:checked + .toggle-slider::before {
-        transform: translateX(22px);
-        background: var(--green-bright);
-        box-shadow: var(--green-glow);
-      }
-
-      input, select, textarea, .setting-input {
-        background: var(--bg-deep);
-        border: 1px solid var(--border-dim);
-        color: var(--text-primary);
-        font-family: inherit;
-        padding: 8px 12px;
-        border-radius: 3px;
-      }
-      input:focus, select:focus, textarea:focus, .setting-input:focus {
-        outline: none;
-        border-color: var(--green-bright);
-        box-shadow: var(--green-glow);
-      }
-
-      .btn {
-        background: transparent;
-        color: var(--green-bright);
-        border: 1px solid var(--green-dim);
-        border-radius: 3px;
-        padding: 6px 14px;
-        cursor: pointer;
-        transition: all 0.2s;
-        font-family: inherit;
-        white-space: nowrap;
-      }
-      .btn:hover {
-        border-color: var(--green-bright);
-        box-shadow: var(--green-glow);
-        text-shadow: var(--text-glow);
-      }
-      .btn-primary {
-        background: var(--green-dim);
-        border-color: var(--green-mid);
-      }
-      .btn-primary:hover { background: var(--green-mid); }
-      .btn-danger {
-        color: var(--status-error);
-        border-color: var(--status-error);
-      }
-      .btn-danger:hover { box-shadow: var(--danger-glow); }
-      .btn-sm { padding: 6px 12px; font-size: 12px; }
-      .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-
-      .sync-status-box {
-        background: color-mix(in srgb, var(--bg-panel) 95%, transparent);
-        border: 1px solid var(--border-dim);
-        border-radius: 4px;
-        padding: 12px;
-        font-size: 13px;
-      }
-
-      .flash-ok { animation: flashGreen 0.6s; }
-      .flash-err { animation: flashRed 0.6s; }
-      @keyframes flashGreen {
-        0%, 100% { border-color: var(--border-dim); }
-        50% { border-color: var(--status-ok); box-shadow: var(--green-glow); }
-      }
-      @keyframes flashRed {
-        0%, 100% { border-color: var(--border-dim); }
-        50% {
-          border-color: var(--status-error);
-          box-shadow: var(--danger-glow);
-        }
-      }
-
-      .badge {
-        display: inline-block;
-        padding: 2px 8px;
-        border-radius: 10px;
-        font-size: 11px;
-        font-weight: 600;
-        text-transform: uppercase;
-      }
-      .badge-critical { background: var(--status-error-soft); color: var(--status-error); }
-      .badge-warning { background: var(--status-warn-soft); color: var(--status-warn); }
-      .badge-info { background: var(--status-info-soft); color: var(--status-info); }
-      .badge-panos,
-      .badge-cef,
-      .badge-udp { background: var(--green-ghost); color: var(--status-ok); }
-      .badge-fortigate,
-      .badge-json,
-      .badge-tcp { background: var(--status-info-soft); color: var(--status-info); }
-      .badge-leef { background: var(--status-warn-soft); color: var(--status-warn); }
-      .check-yes { color: var(--status-ok); font-weight: 700; }
-      .check-no { color: var(--status-error); font-weight: 700; }
-      .expand-row { cursor: pointer; }
-      .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-      .multi-badge {
-        font-size: 11px;
-        color: var(--green-bright);
-        background: var(--green-ghost);
-        padding: 1px 6px;
-        border-radius: 8px;
-        margin-left: 4px;
-      }
-
-      .ip-link {
-        color: var(--green-bright);
-        cursor: pointer;
-        text-decoration: none;
-        border-bottom: 1px dotted var(--green-bright);
-      }
-      .ip-link:hover { color: var(--text-primary); text-shadow: var(--text-glow); }
-
-      .timeline-enter { animation: slideIn 0.2s ease-out; }
-      @keyframes slideIn {
-        from { transform: translateX(100%); }
-        to { transform: translateX(0); }
-      }
-      .wh-sent { color: var(--status-ok); }
-      .wh-failed { color: var(--status-error); }
-      .wh-skip { color: var(--text-secondary); }
-
-      .stat-card {
-        background: color-mix(in srgb, var(--bg-panel) 95%, transparent);
-        border: 1px solid var(--border-dim);
-        border-radius: 4px;
-        padding: 12px 16px;
-        position: relative;
-        overflow: hidden;
-      }
-      .stat-card::after {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background: repeating-linear-gradient(
-          0deg,
-          transparent,
-          transparent 2px,
-          color-mix(in srgb, var(--green-bright) 8%, transparent) 2px,
-          color-mix(in srgb, var(--green-bright) 8%, transparent) 4px
-        );
-        pointer-events: none;
-      }
-
-      #security-modal {
-        backdrop-filter: blur(2px);
-      }
-      .security-modal-panel {
-        max-width: 640px;
-        margin: 6vh auto;
-        background: color-mix(in srgb, var(--bg-panel) 95%, transparent);
-        border: 1px solid var(--green-dim);
-        border-radius: 8px;
-        padding: 16px;
-        box-shadow: var(--green-glow);
-      }
-      .qr-box {
-        background: var(--bg-deep);
-        border: 1px solid var(--green-dim);
-        padding: 10px;
-        border-radius: 6px;
-        display: inline-block;
-      }
-      #totp-backup-codes {
-        font-family: inherit;
-        color: var(--green-bright);
-        background: var(--bg-surface);
-        border-color: var(--green-dim);
-      }
-
-      #matrix-toggle {
-        min-width: 34px;
-        padding: 6px 8px;
-      }
-      th.sortable {
-        cursor: pointer;
-        user-select: none;
-        white-space: nowrap;
-      }
-      th.sortable:hover { color: var(--green-bright); }
-      th.sortable::after {
-        content: ' ⇅';
-        opacity: 0.3;
-        font-size: 11px;
-      }
-      th.sortable.sort-asc::after {
-        content: ' ▲';
-        opacity: 1;
-        color: var(--green-bright);
-      }
-      th.sortable.sort-desc::after {
-        content: ' ▼';
-        opacity: 1;
-        color: var(--green-bright);
-      }
-
-      @keyframes neon-flash {
-        0% { opacity: 0; transform: translateX(20px); }
-        10% {
-          opacity: 1;
-          transform: translateX(0);
-          box-shadow: var(--toast-flash-glow);
-        }
-        90% { opacity: 1; }
-        100% { opacity: 0; }
-      }
-      .live-toast { animation: neon-flash 4s ease-out forwards; }
-      .map-flow-line {
-        stroke-dasharray: 6 6;
-        animation: map-dash 2.6s linear infinite;
-      }
-      .map-node-hover:hover {
-        filter: url(#glow);
-        cursor: pointer;
-      }
-      @keyframes map-dash {
-        to { stroke-dashoffset: -24; }
-      }
-
-      ::-webkit-scrollbar {
-        width: 6px;
-        height: 6px;
-      }
-      ::-webkit-scrollbar-track { background: var(--scrollbar-track); }
-      ::-webkit-scrollbar-thumb {
-        background: var(--scrollbar-thumb);
-        border-radius: 3px;
-      }
-      ::-webkit-scrollbar-thumb:hover { background: var(--green-mid); }
-    </style>
+    <link rel="stylesheet" href="css/dashboard.css" />
+    <link rel="stylesheet" href="css/generated-a.css" />
+    <link rel="stylesheet" href="css/generated-b.css" />
   </head>
   <body>
-    <canvas id="matrix-bg" style="position:fixed;inset:0;width:100%;height:100%;z-index:0;opacity:0.15;pointer-events:none;"></canvas>
+    <canvas id="matrix-bg" class="csp-static-001"></canvas>
 
     <div id="app-shell">
       <aside id="sidebar">
@@ -523,10 +20,10 @@
               <span class="tab-group-arrow">▸</span> CORE
             </div>
             <div class="tab-group-items" id="group-core">
-              <button class="tab active" id="tab-btn-mappings" onclick="switchTab('mappings')">Mappings</button>
-              <button class="tab" id="tab-btn-search" onclick="switchTab('search')">Search</button>
-              <button class="tab" id="tab-btn-conflicts" onclick="switchTab('conflicts')">Conflicts</button>
-              <button class="tab" id="tab-btn-alerts" onclick="switchTab('alerts')">Alerts</button>
+              <button class="tab active" id="tab-btn-mappings">Mappings</button>
+              <button class="tab" id="tab-btn-search">Search</button>
+              <button class="tab" id="tab-btn-conflicts">Conflicts</button>
+              <button class="tab" id="tab-btn-alerts">Alerts</button>
             </div>
           </div>
 
@@ -535,8 +32,8 @@
               <span class="tab-group-arrow">▸</span> ANALYTICS
             </div>
             <div class="tab-group-items" id="group-analytics">
-              <button class="tab" id="tab-btn-analytics" onclick="switchTab('analytics')">Analytics</button>
-              <button class="tab" id="tab-btn-map" onclick="switchTab('map')">Net Map</button>
+              <button class="tab" id="tab-btn-analytics">Analytics</button>
+              <button class="tab" id="tab-btn-map">Net Map</button>
             </div>
           </div>
 
@@ -545,10 +42,10 @@
               <span class="tab-group-arrow">▸</span> NETWORK
             </div>
             <div class="tab-group-items" id="group-network">
-              <button class="tab" id="tab-btn-subnets" onclick="switchTab('subnets')">Subnets</button>
-              <button class="tab" id="tab-btn-switches" onclick="switchTab('switches')">Switches</button>
-              <button class="tab" id="tab-btn-fingerprints" onclick="switchTab('fingerprints')">FPrint</button>
-              <button class="tab" id="tab-btn-dns" onclick="switchTab('dns')">DNS</button>
+              <button class="tab" id="tab-btn-subnets">Subnets</button>
+              <button class="tab" id="tab-btn-switches">Switches</button>
+              <button class="tab" id="tab-btn-fingerprints">FPrint</button>
+              <button class="tab" id="tab-btn-dns">DNS</button>
             </div>
           </div>
 
@@ -557,11 +54,11 @@
               <span class="tab-group-arrow">▸</span> INTEGRATIONS
             </div>
             <div class="tab-group-items" id="group-integrations">
-              <button class="tab" id="tab-btn-firewall" onclick="switchTab('firewall')" style="display:none;">Firewall</button>
-              <button class="tab" id="tab-btn-siem" onclick="switchTab('siem')" style="display:none;">SIEM</button>
-              <button class="tab" id="tab-btn-ldap" onclick="switchTab('ldap')" style="display:none;">LDAP</button>
-              <button class="tab" id="tab-btn-notifications" onclick="switchTab('notifications')" style="display:none;">Notifs</button>
-              <button class="tab" id="tab-btn-sycope" onclick="switchTab('sycope')">Sycope</button>
+              <button class="tab" id="tab-btn-firewall" hidden>Firewall</button>
+              <button class="tab" id="tab-btn-siem" hidden>SIEM</button>
+              <button class="tab" id="tab-btn-ldap" hidden>LDAP</button>
+              <button class="tab" id="tab-btn-notifications" hidden>Notifs</button>
+              <button class="tab" id="tab-btn-sycope">Sycope</button>
             </div>
           </div>
 
@@ -570,34 +67,34 @@
               <span class="tab-group-arrow">▸</span> ADMIN
             </div>
             <div class="tab-group-items" id="group-admin">
-              <button class="tab" id="tab-btn-audit" onclick="switchTab('audit')" style="display:none;">Audit</button>
-              <button class="tab" id="tab-btn-status" onclick="switchTab('status')">Status</button>
+              <button class="tab" id="tab-btn-audit" hidden>Audit</button>
+              <button class="tab" id="tab-btn-status">Status</button>
             </div>
           </div>
         </nav>
         <div class="sidebar-divider"></div>
-        <div id="user-bar" style="display:none;">
+        <div id="user-bar" hidden>
           <span id="user-info"></span>
           <span id="connection-status">
             <span class="dot offline"></span> Polling
           </span>
           <div class="sidebar-controls">
-            <button class="btn btn-sm" id="matrix-toggle" onclick="toggleMatrixRain()" title="Toggle background effect">◈</button>
-            <button class="btn btn-sm" id="security-btn" onclick="openSecurityModal()">Security</button>
-            <button class="btn btn-sm" id="logout-btn" onclick="doLogout()">Logout</button>
+            <button class="btn btn-sm" id="matrix-toggle" title="Toggle background effect">◈</button>
+            <button class="btn btn-sm" id="security-btn">Security</button>
+            <button class="btn btn-sm" id="logout-btn">Logout</button>
           </div>
         </div>
       </aside>
       <main id="main-content">
 
-    <!-- ═══ TAB: Mappings ═══ -->
+
     <div id="tab-mappings">
       <h1>TrueID :: Mappings</h1>
       <div class="panel">
-        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">
-          <input type="text" id="mappings-search" class="setting-input" style="width:300px;"
-            placeholder="Search IP, user, MAC, vendor..." onkeydown="if(event.key==='Enter')loadMappings(1)">
-          <select id="mappings-source" class="setting-input" style="width:140px;">
+        <div class="csp-static-002">
+          <input type="text" id="mappings-search" class="setting-input csp-static-003"
+            placeholder="Search IP, user, MAC, vendor...">
+          <select id="mappings-source" class="setting-input csp-static-004">
             <option value="">All sources</option>
             <option value="Radius">Radius</option>
             <option value="AdLog">AdLog</option>
@@ -607,17 +104,17 @@
             <option value="VpnGlobalProtect">VPN GlobalProtect</option>
             <option value="VpnFortinet">VPN Fortinet</option>
           </select>
-          <select id="mappings-active" class="setting-input" style="width:120px;">
+          <select id="mappings-active" class="setting-input csp-static-005">
             <option value="">All</option>
             <option value="true" selected>Active</option>
             <option value="false">Inactive</option>
           </select>
-          <button class="btn btn-sm" onclick="loadMappings(1)">Search</button>
-          <button class="btn btn-sm" onclick="loadMappings(mappingsCurrentPage)">Refresh</button>
-          <button class="btn btn-sm" onclick="exportMappings('csv')">Export CSV</button>
-          <button class="btn btn-sm" onclick="exportMappings('json')">Export JSON</button>
+          <button class="btn btn-sm" id="static-event-1">Search</button>
+          <button class="btn btn-sm" id="static-event-2">Refresh</button>
+          <button class="btn btn-sm" id="static-event-3">Export CSV</button>
+          <button class="btn btn-sm" id="static-event-4">Export JSON</button>
         </div>
-        <div id="mappings-stats" style="display:flex;gap:24px;margin-bottom:12px;font-size:13px;color:var(--text-secondary);"></div>
+        <div id="mappings-stats" class="csp-static-006"></div>
         <table id="mappings-table">
           <thead>
             <tr>
@@ -639,22 +136,22 @@
             </tr>
           </tbody>
         </table>
-        <div id="mappings-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text-secondary);"></div>
+        <div id="mappings-paging" class="csp-static-007"></div>
         <div class="status" id="mappings-status">Last update: never</div>
       </div>
     </div>
 
-    <!-- ═══ TAB: Search ═══ -->
-    <div id="tab-search" style="display:none;">
+
+    <div id="tab-search" hidden>
       <h1>TrueID :: Search</h1>
       <div class="panel">
-        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">
-          <input type="text" id="search-q" class="setting-input" style="width:300px;"
-            placeholder="Free text search..." onkeydown="if(event.key==='Enter')doSearch(1)">
-          <input type="text" id="search-ip" class="setting-input" style="width:160px;" placeholder="IP">
-          <input type="text" id="search-user" class="setting-input" style="width:160px;" placeholder="User">
-          <input type="text" id="search-mac" class="setting-input" style="width:160px;" placeholder="MAC">
-          <select id="search-source" class="setting-input" style="width:140px;">
+        <div class="csp-static-002">
+          <input type="text" id="search-q" class="setting-input csp-static-003"
+            placeholder="Free text search...">
+          <input type="text" id="search-ip" class="setting-input csp-static-008" placeholder="IP">
+          <input type="text" id="search-user" class="setting-input csp-static-008" placeholder="User">
+          <input type="text" id="search-mac" class="setting-input csp-static-008" placeholder="MAC">
+          <select id="search-source" class="setting-input csp-static-004">
             <option value="">All sources</option>
             <option value="Radius">Radius</option>
             <option value="AdLog">AdLog</option>
@@ -664,61 +161,61 @@
             <option value="VpnGlobalProtect">VPN GlobalProtect</option>
             <option value="VpnFortinet">VPN Fortinet</option>
           </select>
-          <select id="search-scope" class="setting-input" style="width:120px;">
+          <select id="search-scope" class="setting-input csp-static-005">
             <option value="all">All</option>
             <option value="mappings">Mappings</option>
             <option value="events">Events</option>
           </select>
-          <button class="btn" onclick="doSearch(1)">Search</button>
-          <button class="btn btn-sm" onclick="exportEvents('csv')">Export Events CSV</button>
-          <button class="btn btn-sm" onclick="exportEvents('json')">Export Events JSON</button>
+          <button class="btn" id="static-event-5">Search</button>
+          <button class="btn btn-sm" id="static-event-6">Export Events CSV</button>
+          <button class="btn btn-sm" id="static-event-7">Export Events JSON</button>
         </div>
 
-        <div id="search-mappings-section" style="display:none;">
-          <h2 class="section-title">Mappings <span id="search-mappings-count" class="muted" style="font-weight:normal;font-size:13px;"></span></h2>
+        <div id="search-mappings-section" hidden>
+          <h2 class="section-title">Mappings <span id="search-mappings-count" class="muted csp-static-009"></span></h2>
           <table id="search-mappings-table">
             <thead><tr><th></th><th data-sort="ip">IP</th><th data-sort="mac">MAC</th><th data-sort="user">User</th><th>Groups</th><th data-sort="last_seen">Last Seen</th><th data-sort="source">Source</th><th data-sort="confidence">Confidence</th></tr></thead>
             <tbody id="search-mappings-body"></tbody>
           </table>
         </div>
 
-        <div id="search-events-section" style="display:none;margin-top:16px;">
-          <h2 class="section-title">Events <span id="search-events-count" class="muted" style="font-weight:normal;font-size:13px;"></span></h2>
+        <div id="search-events-section" hidden class="csp-static-010">
+          <h2 class="section-title">Events <span id="search-events-count" class="muted csp-static-009"></span></h2>
           <table id="search-events-table">
             <thead><tr><th data-sort="id">ID</th><th data-sort="ip">IP</th><th data-sort="user">User</th><th data-sort="source">Source</th><th data-sort="timestamp">Timestamp</th></tr></thead>
             <tbody id="search-events-body"></tbody>
           </table>
         </div>
 
-        <div id="search-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text-secondary);"></div>
-        <div id="search-meta" style="margin-top:8px;font-size:12px;color:var(--text-secondary);"></div>
+        <div id="search-paging" class="csp-static-007"></div>
+        <div id="search-meta" class="csp-static-011"></div>
       </div>
     </div>
 
-    <!-- ═══ TAB: Conflicts ═══ -->
-    <div id="tab-conflicts" style="display:none;">
+
+    <div id="tab-conflicts" hidden>
       <h1>TrueID :: Conflicts</h1>
       <div class="panel">
-        <div id="conflicts-stats" style="display:flex;gap:24px;margin-bottom:16px;font-size:13px;color:var(--text-secondary);"></div>
-        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">
-          <select id="conflict-type" class="setting-input" style="width:160px;">
+        <div id="conflicts-stats" class="csp-static-012"></div>
+        <div class="csp-static-002">
+          <select id="conflict-type" class="setting-input csp-static-008">
             <option value="">All types</option>
             <option value="ip_user_change">IP User Change</option>
             <option value="mac_ip_conflict">MAC/IP Conflict</option>
             <option value="duplicate_mac">Duplicate MAC</option>
           </select>
-          <select id="conflict-severity" class="setting-input" style="width:120px;">
+          <select id="conflict-severity" class="setting-input csp-static-005">
             <option value="">All</option>
             <option value="critical">Critical</option>
             <option value="warning">Warning</option>
             <option value="info">Info</option>
           </select>
-          <select id="conflict-resolved" class="setting-input" style="width:130px;">
+          <select id="conflict-resolved" class="setting-input csp-static-013">
             <option value="false" selected>Unresolved</option>
             <option value="true">Resolved</option>
             <option value="">All</option>
           </select>
-          <button class="btn btn-sm" onclick="loadConflicts(1)">Apply</button>
+          <button class="btn btn-sm" id="static-event-8">Apply</button>
         </div>
         <table id="conflicts-table">
           <thead>
@@ -737,40 +234,40 @@
             <tr><td colspan="8" class="muted">Loading...</td></tr>
           </tbody>
         </table>
-        <div id="conflicts-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text-secondary);"></div>
+        <div id="conflicts-paging" class="csp-static-007"></div>
       </div>
     </div>
 
-    <!-- ═══ TAB: Alerts ═══ -->
-    <div id="tab-alerts" style="display:none;">
+
+    <div id="tab-alerts" hidden>
       <h1>TrueID :: Alerts</h1>
       <div class="panel">
-        <div id="alerts-stats" style="display:flex;gap:24px;margin-bottom:16px;font-size:13px;color:var(--text-secondary);"></div>
+        <div id="alerts-stats" class="csp-static-012"></div>
 
         <div id="alerts-rules-section">
           <h2 class="section-title">Alert Rules
-            <button class="btn btn-sm" style="margin-left:12px;" onclick="showAddRuleForm()">+ Add Rule</button>
+            <button class="btn btn-sm csp-static-014" id="static-event-9">+ Add Rule</button>
           </h2>
-          <div id="alert-rule-form" style="display:none;margin-bottom:16px;padding:12px;border:1px solid var(--border-dim);border-radius:4px;">
-            <div id="alert-rule-form-title" class="muted" style="margin-bottom:8px;">Create alert rule</div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-              <input type="text" id="rule-name" class="setting-input" style="width:200px;" placeholder="Rule name">
-              <select id="rule-type" class="setting-input" style="width:160px;" onchange="updateAlertRuleConditionalFields()">
+          <div id="alert-rule-form" hidden class="csp-static-015">
+            <div id="alert-rule-form-title" class="muted csp-static-016">Create alert rule</div>
+            <div class="csp-static-017">
+              <input type="text" id="rule-name" class="setting-input csp-static-018" placeholder="Rule name">
+              <select id="rule-type" class="setting-input csp-static-008">
                 <option value="new_mac">New MAC</option>
                 <option value="ip_conflict">IP Conflict</option>
                 <option value="user_change">User Change</option>
                 <option value="new_subnet">New Subnet</option>
                 <option value="source_down">Source Down</option>
               </select>
-              <select id="rule-severity" class="setting-input" style="width:120px;">
+              <select id="rule-severity" class="setting-input csp-static-005">
                 <option value="info">Info</option>
                 <option value="warning" selected>Warning</option>
                 <option value="critical">Critical</option>
               </select>
-              <input type="number" id="rule-cooldown" class="setting-input" style="width:140px;" placeholder="Cooldown (s)" value="300">
+              <input type="number" id="rule-cooldown" class="setting-input csp-static-004" placeholder="Cooldown (s)" value="300">
             </div>
-            <div id="source-down-fields" style="display:none;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-              <select id="rule-source-down-source" class="setting-input" style="width:180px;">
+            <div id="source-down-fields" hidden class="csp-static-019">
+              <select id="rule-source-down-source" class="setting-input csp-static-020">
                 <option value="RADIUS">RADIUS</option>
                 <option value="AD Syslog">AD Syslog</option>
                 <option value="DHCP Syslog">DHCP Syslog</option>
@@ -781,8 +278,8 @@
               <input
                 type="number"
                 id="rule-source-down-silence"
-                class="setting-input"
-                style="width:180px;"
+                class="setting-input csp-static-020"
+
                 min="60"
                 max="3600"
                 step="1"
@@ -790,16 +287,16 @@
                 placeholder="Silence window (s)"
               >
             </div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-              <input type="text" id="rule-webhook" class="setting-input" style="width:400px;" placeholder="Webhook URL (optional)">
+            <div class="csp-static-017">
+              <input type="text" id="rule-webhook" class="setting-input csp-static-021" placeholder="Webhook URL (optional)">
             </div>
-            <div style="margin-bottom:8px;">
-              <div class="muted" style="margin-bottom:4px;">Notification channels</div>
+            <div class="csp-static-016">
+              <div class="muted csp-static-022">Notification channels</div>
               <div id="rule-channel-list" class="sync-status-box">Loading channels...</div>
             </div>
-            <div style="display:flex;gap:8px;">
-              <button id="alert-rule-save-btn" class="btn btn-sm" onclick="saveAlertRule()">Create</button>
-              <button class="btn btn-sm" onclick="hideRuleForm()">Cancel</button>
+            <div class="csp-static-023">
+              <button id="alert-rule-save-btn" class="btn btn-sm">Create</button>
+              <button class="btn btn-sm" id="static-event-10">Cancel</button>
             </div>
           </div>
           <table id="alerts-rules-table">
@@ -808,17 +305,17 @@
           </table>
         </div>
 
-        <div class="setting-divider" style="margin:16px 0;"></div>
+        <div class="setting-divider csp-static-024"></div>
 
         <h2 class="section-title">Alert History</h2>
-        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">
-          <select id="alert-hist-severity" class="setting-input" style="width:120px;">
+        <div class="csp-static-002">
+          <select id="alert-hist-severity" class="setting-input csp-static-005">
             <option value="">All</option>
             <option value="critical">Critical</option>
             <option value="warning">Warning</option>
             <option value="info">Info</option>
           </select>
-          <select id="alert-hist-type" class="setting-input" style="width:160px;">
+          <select id="alert-hist-type" class="setting-input csp-static-008">
             <option value="">All types</option>
             <option value="new_mac">New MAC</option>
             <option value="ip_conflict">IP Conflict</option>
@@ -826,49 +323,49 @@
             <option value="new_subnet">New Subnet</option>
             <option value="source_down">Source Down</option>
           </select>
-          <button class="btn btn-sm" onclick="loadAlertHistory(1)">Apply</button>
+          <button class="btn btn-sm" id="static-event-11">Apply</button>
         </div>
         <table id="alert-history-table">
           <thead><tr><th data-sort="severity">Severity</th><th data-sort="rule_name">Rule</th><th data-sort="rule_type">Type</th><th data-sort="ip">IP</th><th data-sort="user">User</th><th data-sort="webhook_status">Webhook</th><th data-sort="fired_at">Fired At</th></tr></thead>
           <tbody id="alert-history-body"></tbody>
         </table>
-        <div id="alert-history-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text-secondary);"></div>
+        <div id="alert-history-paging" class="csp-static-007"></div>
       </div>
     </div>
 
-    <!-- ═══ TAB: Analytics ═══ -->
-    <div id="tab-analytics" style="display:none;">
+
+    <div id="tab-analytics" hidden>
       <h1>TrueID :: Analytics</h1>
       <div class="panel">
         <h2 class="section-title">Trends (Last 7 Days)</h2>
-        <div style="display:flex;gap:16px;flex-wrap:wrap;">
-          <div style="flex:1;min-width:250px;">
-            <div class="muted" style="margin-bottom:6px;">Events</div>
+        <div class="csp-static-025">
+          <div class="csp-static-026">
+            <div class="muted csp-static-027">Events</div>
             <div id="analytics-trend-events" class="muted">Loading...</div>
           </div>
-          <div style="flex:1;min-width:250px;">
-            <div class="muted" style="margin-bottom:6px;">Conflicts</div>
+          <div class="csp-static-026">
+            <div class="muted csp-static-027">Conflicts</div>
             <div id="analytics-trend-conflicts" class="muted">Loading...</div>
           </div>
-          <div style="flex:1;min-width:250px;">
-            <div class="muted" style="margin-bottom:6px;">Alerts</div>
+          <div class="csp-static-026">
+            <div class="muted csp-static-027">Alerts</div>
             <div id="analytics-trend-alerts" class="muted">Loading...</div>
           </div>
         </div>
 
-        <div class="setting-divider" style="margin:16px 0;"></div>
+        <div class="setting-divider csp-static-024"></div>
         <h2 class="section-title">Source Distribution</h2>
         <div id="analytics-sources-chart" class="muted">Loading...</div>
 
-        <div class="setting-divider" style="margin:16px 0;"></div>
+        <div class="setting-divider csp-static-024"></div>
         <h2 class="section-title">Compliance Summary</h2>
-        <div id="analytics-compliance-cards" style="display:flex;gap:12px;flex-wrap:wrap;"></div>
+        <div id="analytics-compliance-cards" class="csp-static-028"></div>
 
-        <div class="setting-divider" style="margin:16px 0;"></div>
+        <div class="setting-divider csp-static-024"></div>
         <h2 class="section-title">Daily Reports</h2>
-        <div style="display:flex;gap:8px;margin-bottom:10px;">
-          <button class="btn btn-sm role-admin" onclick="generateAnalyticsReport()">Generate now</button>
-          <button class="btn btn-sm" onclick="loadAnalyticsReports()">Refresh</button>
+        <div class="csp-static-029">
+          <button class="btn btn-sm role-admin" id="static-event-12">Generate now</button>
+          <button class="btn btn-sm" id="static-event-13">Refresh</button>
         </div>
         <table>
           <thead>
@@ -877,17 +374,17 @@
           <tbody id="analytics-reports-body"><tr><td colspan="4" class="muted">Loading...</td></tr></tbody>
         </table>
 
-        <div class="setting-divider" style="margin:16px 0;"></div>
+        <div class="setting-divider csp-static-024"></div>
         <h2 class="section-title">Scheduled Reports</h2>
-        <div id="report-schedule-form" class="sync-status-box" style="margin-bottom:10px;">
-          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-            <input id="report-schedule-name" class="setting-input" style="width:180px;" placeholder="Schedule name">
-            <select id="report-schedule-type" class="setting-input" style="width:140px;">
+        <div id="report-schedule-form" class="sync-status-box csp-static-030">
+          <div class="csp-static-031">
+            <input id="report-schedule-name" class="setting-input csp-static-020" placeholder="Schedule name">
+            <select id="report-schedule-type" class="setting-input csp-static-004">
               <option value="daily">Daily</option>
               <option value="weekly">Weekly</option>
               <option value="compliance">Compliance</option>
             </select>
-            <select id="report-schedule-cron" class="setting-input" style="width:170px;">
+            <select id="report-schedule-cron" class="setting-input csp-static-032">
               <option value="0 8 * * 1">Weekly Mon 08:00</option>
               <option value="0 8 * * 2">Weekly Tue 08:00</option>
               <option value="0 8 * * 3">Weekly Wed 08:00</option>
@@ -898,13 +395,13 @@
             </select>
             <label class="setting-desc"><input type="checkbox" id="report-schedule-enabled" checked> Enabled</label>
           </div>
-          <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;">
+          <div class="csp-static-033">
             <div>
-              <div class="muted" style="margin-bottom:4px;">Channels</div>
+              <div class="muted csp-static-022">Channels</div>
               <div id="report-schedule-channels" class="sync-status-box">Loading...</div>
             </div>
             <div>
-              <div class="muted" style="margin-bottom:4px;">Sections</div>
+              <div class="muted csp-static-022">Sections</div>
               <label class="setting-desc"><input type="checkbox" value="summary" class="report-section" checked> summary</label>
               <label class="setting-desc"><input type="checkbox" value="conflicts" class="report-section" checked> conflicts</label>
               <label class="setting-desc"><input type="checkbox" value="alerts" class="report-section" checked> alerts</label>
@@ -913,9 +410,9 @@
               <label class="setting-desc"><input type="checkbox" value="top_ips" class="report-section"> top_ips</label>
             </div>
           </div>
-          <div style="margin-top:8px;">
-            <button class="btn btn-sm role-admin" onclick="saveReportSchedule()">Save schedule</button>
-            <button class="btn btn-sm" onclick="loadReportSchedules()">Refresh</button>
+          <div class="csp-static-034">
+            <button class="btn btn-sm role-admin" id="static-event-14">Save schedule</button>
+            <button class="btn btn-sm" id="static-event-15">Refresh</button>
           </div>
         </div>
         <table>
@@ -925,43 +422,43 @@
       </div>
     </div>
 
-    <!-- ═══ TAB: Network Map ═══ -->
-    <div id="tab-map" style="display:none;">
+
+    <div id="tab-map" hidden>
       <h1>TrueID :: Network Map</h1>
-      <div class="panel" style="position:relative;">
-        <div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
-          <div class="stat-card" id="map-stat-ips" style="min-width:180px;">IPs: -</div>
-          <div class="stat-card" id="map-stat-users" style="min-width:180px;">Users: -</div>
-          <div class="stat-card" id="map-stat-conflicts" style="min-width:180px;">Conflicts: -</div>
+      <div class="panel csp-static-035">
+        <div class="csp-static-036">
+          <div class="stat-card csp-static-037" id="map-stat-ips">IPs: -</div>
+          <div class="stat-card csp-static-037" id="map-stat-users">Users: -</div>
+          <div class="stat-card csp-static-037" id="map-stat-conflicts">Conflicts: -</div>
         </div>
-        <svg id="network-svg" width="100%" height="600" style="background:var(--bg-deep);border:1px solid var(--border-dim);border-radius:4px;"></svg>
-        <div id="map-tooltip" style="display:none;position:absolute;z-index:240;background:var(--bg-panel);border:1px solid var(--green-dim);padding:8px 10px;border-radius:4px;max-width:300px;color:var(--text-primary);font-size:12px;pointer-events:none;white-space:pre-line;"></div>
+        <svg id="network-svg" width="100%" height="600" class="csp-static-038"></svg>
+        <div id="map-tooltip" hidden class="csp-static-039"></div>
       </div>
     </div>
 
-    <!-- ═══ TAB: Subnets ═══ -->
-    <div id="tab-subnets" style="display:none;">
+
+    <div id="tab-subnets" hidden>
       <h1>TrueID :: Subnets</h1>
       <div class="panel">
-        <div id="subnets-stats" style="display:flex;gap:24px;margin-bottom:12px;font-size:13px;color:var(--text-secondary);"></div>
-        <div style="display:flex;gap:8px;margin-bottom:12px;">
-          <button class="btn btn-sm role-operator" onclick="showSubnetForm()">+ Add Subnet</button>
-          <button class="btn btn-sm" onclick="loadSubnets()">Refresh</button>
+        <div id="subnets-stats" class="csp-static-006"></div>
+        <div class="csp-static-040">
+          <button class="btn btn-sm role-operator" id="static-event-16">+ Add Subnet</button>
+          <button class="btn btn-sm" id="static-event-17">Refresh</button>
         </div>
-        <div id="subnet-form-wrap" style="display:none;margin-bottom:16px;padding:12px;border:1px solid var(--border-dim);border-radius:4px;">
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-            <input id="subnet-name" class="setting-input" style="width:200px;" placeholder="Name">
-            <input id="subnet-cidr" class="setting-input" style="width:180px;" placeholder="CIDR">
-            <input id="subnet-vlan" class="setting-input" style="width:120px;" type="number" min="1" max="4094" placeholder="VLAN ID">
-            <input id="subnet-location" class="setting-input" style="width:180px;" placeholder="Location">
+        <div id="subnet-form-wrap" hidden class="csp-static-015">
+          <div class="csp-static-017">
+            <input id="subnet-name" class="setting-input csp-static-018" placeholder="Name">
+            <input id="subnet-cidr" class="setting-input csp-static-020" placeholder="CIDR">
+            <input id="subnet-vlan" class="setting-input csp-static-005" type="number" min="1" max="4094" placeholder="VLAN ID">
+            <input id="subnet-location" class="setting-input csp-static-020" placeholder="Location">
           </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-            <input id="subnet-description" class="setting-input" style="width:280px;" placeholder="Description">
-            <input id="subnet-gateway" class="setting-input" style="width:180px;" placeholder="Gateway IP">
+          <div class="csp-static-017">
+            <input id="subnet-description" class="setting-input csp-static-041" placeholder="Description">
+            <input id="subnet-gateway" class="setting-input csp-static-020" placeholder="Gateway IP">
           </div>
-          <div style="display:flex;gap:8px;">
-            <button class="btn btn-sm role-operator" onclick="saveSubnet()">Save</button>
-            <button class="btn btn-sm" onclick="hideSubnetForm()">Cancel</button>
+          <div class="csp-static-023">
+            <button class="btn btn-sm role-operator" id="static-event-18">Save</button>
+            <button class="btn btn-sm" id="static-event-19">Cancel</button>
           </div>
         </div>
         <table id="subnets-table">
@@ -978,12 +475,12 @@
           </thead>
           <tbody id="subnets-body"><tr><td colspan="7" class="muted">Loading...</td></tr></tbody>
         </table>
-        <div id="subnets-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text-secondary);"></div>
+        <div id="subnets-paging" class="csp-static-007"></div>
 
-        <div class="setting-divider" style="margin:16px 0;"></div>
+        <div class="setting-divider csp-static-024"></div>
         <h2 class="section-title">Discovered Subnets</h2>
-        <div style="display:flex;gap:8px;margin-bottom:12px;">
-          <button class="btn btn-sm" onclick="loadDiscoveredSubnets()">Refresh</button>
+        <div class="csp-static-040">
+          <button class="btn btn-sm" id="static-event-20">Refresh</button>
         </div>
         <table>
           <thead>
@@ -1001,37 +498,37 @@
       </div>
     </div>
 
-    <!-- ═══ TAB: Switches ═══ -->
-    <div id="tab-switches" style="display:none;">
+
+    <div id="tab-switches" hidden>
       <h1>TrueID :: SNMP Switches</h1>
       <div class="panel">
-        <div id="switches-stats" style="display:flex;gap:24px;margin-bottom:12px;font-size:13px;color:var(--text-secondary);"></div>
-        <div style="display:flex;gap:8px;margin-bottom:12px;">
-          <button class="btn btn-sm role-operator" onclick="showSwitchForm()">+ Add Switch</button>
-          <button class="btn btn-sm" onclick="loadSwitches()">Refresh</button>
+        <div id="switches-stats" class="csp-static-006"></div>
+        <div class="csp-static-040">
+          <button class="btn btn-sm role-operator" id="static-event-21">+ Add Switch</button>
+          <button class="btn btn-sm" id="static-event-22">Refresh</button>
         </div>
-        <div id="switch-form-wrap" style="display:none;margin-bottom:16px;padding:12px;border:1px solid var(--border-dim);border-radius:4px;">
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-            <input id="switch-name" class="setting-input" style="width:220px;" placeholder="Name">
-            <input id="switch-ip" class="setting-input" style="width:160px;" placeholder="IP">
-            <input id="switch-community" class="setting-input" style="width:180px;" type="password" placeholder="SNMP Community">
-            <select id="switch-version" class="setting-input" style="width:110px;">
+        <div id="switch-form-wrap" hidden class="csp-static-015">
+          <div class="csp-static-017">
+            <input id="switch-name" class="setting-input csp-static-042" placeholder="Name">
+            <input id="switch-ip" class="setting-input csp-static-008" placeholder="IP">
+            <input id="switch-community" class="setting-input csp-static-020" type="password" placeholder="SNMP Community">
+            <select id="switch-version" class="setting-input csp-static-043">
               <option value="v2c">v2c</option>
               <option value="v3">v3</option>
             </select>
-            <input id="switch-port" class="setting-input" style="width:90px;" type="number" min="1" max="65535" value="161" placeholder="Port">
-            <input id="switch-interval" class="setting-input" style="width:130px;" type="number" min="60" value="300" placeholder="Poll sec">
+            <input id="switch-port" class="setting-input csp-static-044" type="number" min="1" max="65535" value="161" placeholder="Port">
+            <input id="switch-interval" class="setting-input csp-static-013" type="number" min="60" value="300" placeholder="Poll sec">
           </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-            <select id="switch-subnet" class="setting-input" style="width:240px;">
+          <div class="csp-static-017">
+            <select id="switch-subnet" class="setting-input csp-static-045">
               <option value="">No subnet</option>
             </select>
-            <input id="switch-location" class="setting-input" style="width:220px;" placeholder="Location">
-            <label class="setting-desc" style="display:flex;align-items:center;gap:6px;"><input id="switch-enabled" type="checkbox" checked> Enabled</label>
+            <input id="switch-location" class="setting-input csp-static-042" placeholder="Location">
+            <label class="setting-desc csp-static-046"><input id="switch-enabled" type="checkbox" checked> Enabled</label>
           </div>
-          <div style="display:flex;gap:8px;">
-            <button class="btn btn-sm role-operator" onclick="saveSwitch()">Save</button>
-            <button class="btn btn-sm" onclick="hideSwitchForm()">Cancel</button>
+          <div class="csp-static-023">
+            <button class="btn btn-sm role-operator" id="static-event-23">Save</button>
+            <button class="btn btn-sm" id="static-event-24">Cancel</button>
           </div>
         </div>
         <table id="switches-table">
@@ -1050,32 +547,32 @@
           </thead>
           <tbody id="switches-body"><tr><td colspan="9" class="muted">Loading...</td></tr></tbody>
         </table>
-        <div id="switches-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text-secondary);"></div>
+        <div id="switches-paging" class="csp-static-007"></div>
       </div>
     </div>
 
-    <!-- ═══ TAB: Fingerprints ═══ -->
-    <div id="tab-fingerprints" style="display:none;">
+
+    <div id="tab-fingerprints" hidden>
       <h1>TrueID :: DHCP Fingerprints</h1>
       <div class="panel">
-        <div id="fp-stats" style="display:flex;gap:24px;margin-bottom:12px;font-size:13px;color:var(--text-secondary);"></div>
-        <div style="display:flex;gap:8px;margin-bottom:12px;">
-          <button class="btn btn-sm role-admin" onclick="showFingerprintForm()">+ Add Fingerprint</button>
-          <button class="btn btn-sm role-admin" onclick="runFingerprintBackfill()">Backfill</button>
-          <button class="btn btn-sm" onclick="loadFingerprintsTab()">Refresh</button>
+        <div id="fp-stats" class="csp-static-006"></div>
+        <div class="csp-static-040">
+          <button class="btn btn-sm role-admin" id="static-event-25">+ Add Fingerprint</button>
+          <button class="btn btn-sm role-admin" id="static-event-26">Backfill</button>
+          <button class="btn btn-sm" id="static-event-27">Refresh</button>
         </div>
-        <div id="fp-form-wrap" style="display:none;margin-bottom:16px;padding:12px;border:1px solid var(--border-dim);border-radius:4px;">
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-            <input id="fp-fingerprint" class="setting-input" style="width:260px;" placeholder="Fingerprint (DHCP option 55)">
-            <input id="fp-device-type" class="setting-input" style="width:220px;" placeholder="Device Type">
-            <input id="fp-os-family" class="setting-input" style="width:180px;" placeholder="OS Family (optional)">
+        <div id="fp-form-wrap" hidden class="csp-static-015">
+          <div class="csp-static-017">
+            <input id="fp-fingerprint" class="setting-input csp-static-047" placeholder="Fingerprint (DHCP option 55)">
+            <input id="fp-device-type" class="setting-input csp-static-042" placeholder="Device Type">
+            <input id="fp-os-family" class="setting-input csp-static-020" placeholder="OS Family (optional)">
           </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-            <input id="fp-description" class="setting-input" style="width:420px;" placeholder="Description (optional)">
+          <div class="csp-static-017">
+            <input id="fp-description" class="setting-input csp-static-048" placeholder="Description (optional)">
           </div>
-          <div style="display:flex;gap:8px;">
-            <button class="btn btn-sm role-admin" onclick="saveFingerprint()">Save</button>
-            <button class="btn btn-sm" onclick="hideFingerprintForm()">Cancel</button>
+          <div class="csp-static-023">
+            <button class="btn btn-sm role-admin" id="static-event-28">Save</button>
+            <button class="btn btn-sm" id="static-event-29">Cancel</button>
           </div>
         </div>
 
@@ -1093,9 +590,9 @@
           </thead>
           <tbody id="fp-body"><tr><td colspan="6" class="muted">Loading...</td></tr></tbody>
         </table>
-        <div id="fp-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text-secondary);"></div>
+        <div id="fp-paging" class="csp-static-007"></div>
 
-        <div class="setting-divider" style="margin:16px 0;"></div>
+        <div class="setting-divider csp-static-024"></div>
 
         <h2 class="section-title">Recent Observations</h2>
         <table id="fp-obs-table">
@@ -1112,20 +609,20 @@
           </thead>
           <tbody id="fp-obs-body"><tr><td colspan="7" class="muted">Loading...</td></tr></tbody>
         </table>
-        <div id="fp-obs-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text-secondary);"></div>
+        <div id="fp-obs-paging" class="csp-static-007"></div>
       </div>
     </div>
 
-    <!-- ═══ TAB: DNS ═══ -->
-    <div id="tab-dns" style="display:none;">
+
+    <div id="tab-dns" hidden>
       <h1>TrueID :: DNS Cache</h1>
       <div class="panel">
-        <div id="dns-stats" style="display:flex;gap:24px;margin-bottom:12px;font-size:13px;color:var(--text-secondary);"></div>
-        <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap;">
-          <input id="dns-lookup-ip" class="setting-input" style="width:180px;" placeholder="IP for lookup" onkeydown="if(event.key==='Enter')dnsLookupIp()">
-          <button class="btn btn-sm" onclick="dnsLookupIp()">Lookup</button>
-          <button class="btn btn-sm role-admin" onclick="flushDnsCache()">Flush cache</button>
-          <button class="btn btn-sm" onclick="loadDnsTab()">Refresh</button>
+        <div id="dns-stats" class="csp-static-006"></div>
+        <div class="csp-static-049">
+          <input id="dns-lookup-ip" class="setting-input csp-static-020" placeholder="IP for lookup">
+          <button class="btn btn-sm" id="static-event-30">Lookup</button>
+          <button class="btn btn-sm role-admin" id="static-event-31">Flush cache</button>
+          <button class="btn btn-sm" id="static-event-32">Refresh</button>
           <span id="dns-lookup-result" class="muted"></span>
         </div>
         <table id="dns-table">
@@ -1139,12 +636,12 @@
           </thead>
           <tbody id="dns-body"><tr><td colspan="4" class="muted">Loading...</td></tr></tbody>
         </table>
-        <div id="dns-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text-secondary);"></div>
+        <div id="dns-paging" class="csp-static-007"></div>
       </div>
     </div>
 
-    <!-- ═══ TAB: Status ═══ -->
-    <div id="tab-status" style="display:none;">
+
+    <div id="tab-status" hidden>
       <h1>TrueID :: System Status</h1>
       <div class="panel">
         <h2 class="section-title">Adapter Status</h2>
@@ -1163,17 +660,17 @@
           </tbody>
         </table>
 
-        <div class="setting-divider" style="margin:16px 0;"></div>
+        <div class="setting-divider csp-static-024"></div>
 
         <h2 class="section-title">Runtime Environment</h2>
         <div id="status-runtime" class="sync-status-box">Loading...</div>
 
-        <div class="setting-divider" style="margin:16px 0;"></div>
+        <div class="setting-divider csp-static-024"></div>
 
         <h2 class="section-title">Data Retention</h2>
-        <div style="display:flex;gap:8px;margin-bottom:10px;">
-          <button class="btn btn-sm role-admin" onclick="runRetentionNow()">Run Retention Now</button>
-          <button class="btn btn-sm" onclick="loadRetentionSection()">Refresh</button>
+        <div class="csp-static-029">
+          <button class="btn btn-sm role-admin" id="static-event-33">Run Retention Now</button>
+          <button class="btn btn-sm" id="static-event-34">Refresh</button>
           <span id="retention-run-result" class="muted"></span>
         </div>
         <table>
@@ -1189,70 +686,70 @@
           </thead>
           <tbody id="retention-body"><tr><td colspan="6" class="muted">Loading...</td></tr></tbody>
         </table>
-        <div id="retention-stats" class="sync-status-box" style="margin-top:10px;">Loading...</div>
+        <div id="retention-stats" class="sync-status-box csp-static-050">Loading...</div>
 
-        <div class="setting-divider" style="margin:16px 0;"></div>
+        <div class="setting-divider csp-static-024"></div>
 
         <h2 class="section-title role-admin">Security (Admin)</h2>
-        <div class="role-admin" style="display:flex;gap:8px;margin-bottom:10px;">
-          <button class="btn btn-sm" onclick="saveAdminSecurityPolicy()">Save Security Policy</button>
-          <button class="btn btn-sm" onclick="loadAdminSecuritySection()">Refresh</button>
+        <div class="role-admin csp-static-029">
+          <button class="btn btn-sm" id="static-event-35">Save Security Policy</button>
+          <button class="btn btn-sm" id="static-event-36">Refresh</button>
           <span id="admin-security-result" class="muted"></span>
         </div>
-        <div id="admin-security-policy" class="sync-status-box role-admin" style="margin-bottom:10px;"></div>
-        <div id="admin-security-sessions" class="sync-status-box role-admin" style="max-height:220px;overflow:auto;"></div>
+        <div id="admin-security-policy" class="sync-status-box role-admin csp-static-030"></div>
+        <div id="admin-security-sessions" class="sync-status-box role-admin csp-static-051"></div>
 
-        <div class="setting-divider role-admin" style="margin:16px 0;"></div>
+        <div class="setting-divider role-admin csp-static-024"></div>
 
         <h2 class="section-title role-admin">OIDC / SSO (Admin)</h2>
-        <div id="oidc-config" class="sync-status-box role-admin" style="margin-bottom:10px;">
-          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <div id="oidc-config" class="sync-status-box role-admin csp-static-030">
+          <div class="csp-static-052">
             <label class="setting-desc"><input id="oidc-enabled" type="checkbox"> Enabled</label>
             <label class="setting-desc"><input id="oidc-auto-create" type="checkbox" checked> Auto-create users</label>
             <label class="setting-desc"><input id="oidc-allow-local" type="checkbox" checked> Allow local login</label>
           </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
-            <input id="oidc-provider-name" class="setting-input" style="width:170px;" placeholder="Provider name">
-            <input id="oidc-issuer-url" class="setting-input" style="width:320px;" placeholder="Issuer URL">
-            <input id="oidc-client-id" class="setting-input" style="width:260px;" placeholder="Client ID">
+          <div class="csp-static-053">
+            <input id="oidc-provider-name" class="setting-input csp-static-032" placeholder="Provider name">
+            <input id="oidc-issuer-url" class="setting-input csp-static-054" placeholder="Issuer URL">
+            <input id="oidc-client-id" class="setting-input csp-static-047" placeholder="Client ID">
           </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
-            <input id="oidc-client-secret" class="setting-input" style="width:260px;" type="password" placeholder="Client secret (optional)">
-            <input id="oidc-redirect-uri" class="setting-input" style="width:360px;" placeholder="Redirect URI">
-            <input id="oidc-scopes" class="setting-input" style="width:240px;" placeholder="openid profile email">
+          <div class="csp-static-053">
+            <input id="oidc-client-secret" class="setting-input csp-static-047" type="password" placeholder="Client secret (optional)">
+            <input id="oidc-redirect-uri" class="setting-input csp-static-055" placeholder="Redirect URI">
+            <input id="oidc-scopes" class="setting-input csp-static-045" placeholder="openid profile email">
           </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
-            <select id="oidc-default-role" class="setting-input" style="width:140px;">
+          <div class="csp-static-053">
+            <select id="oidc-default-role" class="setting-input csp-static-004">
               <option value="Viewer">Viewer</option>
               <option value="Operator">Operator</option>
               <option value="Admin">Admin</option>
             </select>
-            <input id="oidc-role-claim" class="setting-input" style="width:180px;" placeholder="Role claim (optional)">
-            <input id="oidc-role-mapping" class="setting-input" style="width:520px;" placeholder='{"group-admin":"Admin","group-ops":"Operator"}'>
+            <input id="oidc-role-claim" class="setting-input csp-static-020" placeholder="Role claim (optional)">
+            <input id="oidc-role-mapping" class="setting-input csp-static-056" placeholder='{"group-admin":"Admin","group-ops":"Operator"}'>
           </div>
-          <div style="display:flex;gap:8px;margin-top:8px;">
-            <button class="btn btn-sm" onclick="testOidcDiscovery()">Test Discovery</button>
-            <button class="btn btn-sm" onclick="saveOidcConfig()">Save OIDC</button>
+          <div class="csp-static-057">
+            <button class="btn btn-sm" id="static-event-37">Test Discovery</button>
+            <button class="btn btn-sm" id="static-event-38">Save OIDC</button>
             <span id="oidc-config-result" class="muted"></span>
           </div>
         </div>
 
-        <div class="setting-divider role-admin" style="margin:16px 0;"></div>
+        <div class="setting-divider role-admin csp-static-024"></div>
 
         <h2 class="section-title role-admin">API Keys (Admin)</h2>
-        <div class="role-admin" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
-          <input id="api-key-name" class="setting-input" style="width:180px;" placeholder="Key name">
-          <select id="api-key-role" class="setting-input" style="width:130px;">
+        <div class="role-admin csp-static-058">
+          <input id="api-key-name" class="setting-input csp-static-020" placeholder="Key name">
+          <select id="api-key-role" class="setting-input csp-static-013">
             <option value="Viewer">Viewer</option>
             <option value="Operator">Operator</option>
             <option value="Admin">Admin</option>
           </select>
-          <input id="api-key-rpm" class="setting-input" style="width:120px;" type="number" min="1" max="10000" value="100" placeholder="RPM">
-          <input id="api-key-burst" class="setting-input" style="width:120px;" type="number" min="1" max="1000" value="20" placeholder="Burst">
-          <button class="btn btn-sm" onclick="createApiKey()">Create</button>
-          <button class="btn btn-sm" onclick="loadApiKeysSection()">Refresh</button>
+          <input id="api-key-rpm" class="setting-input csp-static-005" type="number" min="1" max="10000" value="100" placeholder="RPM">
+          <input id="api-key-burst" class="setting-input csp-static-005" type="number" min="1" max="1000" value="20" placeholder="Burst">
+          <button class="btn btn-sm" id="static-event-39">Create</button>
+          <button class="btn btn-sm" id="static-event-40">Refresh</button>
         </div>
-        <div id="api-key-create-result" class="sync-status-box role-admin" style="margin-bottom:8px;">No new key generated.</div>
+        <div id="api-key-create-result" class="sync-status-box role-admin csp-static-016">No new key generated.</div>
         <table class="role-admin">
           <thead>
             <tr>
@@ -1266,14 +763,14 @@
           </thead>
           <tbody id="api-keys-body"><tr><td colspan="6" class="muted">Loading...</td></tr></tbody>
         </table>
-        <div id="api-key-details" class="sync-status-box role-admin" style="margin-top:10px;">Select a key to view 7-day usage.</div>
+        <div id="api-key-details" class="sync-status-box role-admin csp-static-050">Select a key to view 7-day usage.</div>
 
-        <div class="setting-divider role-admin" style="margin:16px 0;"></div>
+        <div class="setting-divider role-admin csp-static-024"></div>
 
         <h2 class="section-title role-admin">Users (Admin)</h2>
-        <div class="role-admin" style="display:flex;gap:8px;align-items:center;margin-bottom:10px;">
-          <button class="btn btn-sm" onclick="openAddUserModal()">+ Add User</button>
-          <button class="btn btn-sm" onclick="loadUsersSection()">Refresh</button>
+        <div class="role-admin csp-static-059">
+          <button class="btn btn-sm" id="static-event-41">+ Add User</button>
+          <button class="btn btn-sm" id="static-event-42">Refresh</button>
           <span id="users-policy-hint" class="muted"></span>
         </div>
         <table class="role-admin">
@@ -1290,63 +787,63 @@
           <tbody id="users-body"><tr><td colspan="6" class="muted">Loading...</td></tr></tbody>
         </table>
 
-        <div class="setting-divider role-admin" style="margin:16px 0;"></div>
+        <div class="setting-divider role-admin csp-static-024"></div>
 
         <h2 class="section-title role-admin">Tags (Admin)</h2>
-        <div class="role-admin" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
-          <input id="status-tag-ip" class="setting-input" style="width:170px;" placeholder="IP">
-          <input id="status-tag-name" class="setting-input" style="width:150px;" placeholder="Tag">
-          <input id="status-tag-color" class="setting-input" style="width:110px;" placeholder="var(--status-info)">
-          <button class="btn btn-sm" onclick="quickAddTag()">Add Tag</button>
+        <div class="role-admin csp-static-058">
+          <input id="status-tag-ip" class="setting-input csp-static-032" placeholder="IP">
+          <input id="status-tag-name" class="setting-input csp-static-060" placeholder="Tag">
+          <input id="status-tag-color" class="setting-input csp-static-043" placeholder="var(--status-info)">
+          <button class="btn btn-sm" id="static-event-43">Add Tag</button>
         </div>
         <div id="status-tags-list" class="sync-status-box role-admin">Loading...</div>
 
-        <div class="setting-divider role-admin" style="margin:16px 0;"></div>
+        <div class="setting-divider role-admin csp-static-024"></div>
 
         <h2 class="section-title">Prometheus</h2>
         <div class="sync-status-box">
           <div><a class="ip-link" href="/metrics" target="_blank" rel="noopener noreferrer">Open /metrics endpoint</a></div>
-          <div class="muted" style="margin-top:6px;">Requires a logged-in Viewer+ session or <code>?token=&lt;METRICS_TOKEN&gt;</code>. Refresh interval: 15s recommended.</div>
+          <div class="muted csp-static-061">Requires a logged-in Viewer+ session or <code>?token=&lt;METRICS_TOKEN&gt;</code>. Refresh interval: 15s recommended.</div>
         </div>
       </div>
     </div>
 
-    <!-- ═══ TAB: Firewall ═══ -->
-    <div id="tab-firewall" style="display:none;">
+
+    <div id="tab-firewall" hidden>
       <h1>TrueID :: Firewall Targets</h1>
       <div class="panel">
-        <div id="firewall-stats" style="display:flex;gap:24px;margin-bottom:12px;font-size:13px;color:var(--text-secondary);"></div>
-        <div style="display:flex;gap:8px;margin-bottom:12px;">
-          <button class="btn btn-sm role-admin" onclick="showFirewallForm()">+ Add Target</button>
-          <button class="btn btn-sm" onclick="loadFirewallTargets()">Refresh</button>
+        <div id="firewall-stats" class="csp-static-006"></div>
+        <div class="csp-static-040">
+          <button class="btn btn-sm role-admin" id="static-event-44">+ Add Target</button>
+          <button class="btn btn-sm" id="static-event-45">Refresh</button>
         </div>
-        <div id="firewall-form-wrap" style="display:none;margin-bottom:16px;padding:12px;border:1px solid var(--border-dim);border-radius:4px;">
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-            <input id="fw-name" class="setting-input" style="width:220px;" placeholder="Name">
-            <select id="fw-type" class="setting-input" style="width:140px;" onchange="toggleFirewallUsername()">
+        <div id="firewall-form-wrap" hidden class="csp-static-015">
+          <div class="csp-static-017">
+            <input id="fw-name" class="setting-input csp-static-042" placeholder="Name">
+            <select id="fw-type" class="setting-input csp-static-004">
               <option value="panos">PAN-OS</option>
               <option value="fortigate">FortiGate</option>
             </select>
-            <input id="fw-host" class="setting-input" style="width:180px;" placeholder="Host">
-            <input id="fw-port" class="setting-input" style="width:110px;" type="number" min="1" max="65535" value="443" placeholder="Port">
-            <input id="fw-interval" class="setting-input" style="width:150px;" type="number" min="10" value="60" placeholder="Push interval (s)">
+            <input id="fw-host" class="setting-input csp-static-020" placeholder="Host">
+            <input id="fw-port" class="setting-input csp-static-043" type="number" min="1" max="65535" value="443" placeholder="Port">
+            <input id="fw-interval" class="setting-input csp-static-060" type="number" min="10" value="60" placeholder="Push interval (s)">
           </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-            <input id="fw-username" class="setting-input" style="width:220px;" placeholder="Username (PAN-OS)">
-            <input id="fw-password" class="setting-input" style="width:260px;" type="password" placeholder="Password / API Token">
-            <input id="fw-subnet-filter" class="setting-input" style="width:240px;" placeholder="Subnet filter (optional)">
+          <div class="csp-static-017">
+            <input id="fw-username" class="setting-input csp-static-042" placeholder="Username (PAN-OS)">
+            <input id="fw-password" class="setting-input csp-static-047" type="password" placeholder="Password / API Token">
+            <input id="fw-subnet-filter" class="setting-input csp-static-045" placeholder="Subnet filter (optional)">
           </div>
-          <div style="display:flex;gap:16px;align-items:center;margin-bottom:8px;">
-            <label class="setting-desc" style="display:flex;align-items:center;gap:6px;">
+          <div class="csp-static-062">
+            <label class="setting-desc csp-static-046">
               <input id="fw-verify-tls" type="checkbox"> Verify TLS
             </label>
-            <label class="setting-desc" style="display:flex;align-items:center;gap:6px;">
+            <label class="setting-desc csp-static-046">
               <input id="fw-enabled" type="checkbox" checked> Enabled
             </label>
           </div>
-          <div style="display:flex;gap:8px;">
-            <button class="btn btn-sm role-admin" onclick="saveFirewallTarget()">Save</button>
-            <button class="btn btn-sm" onclick="hideFirewallForm()">Cancel</button>
+          <div class="csp-static-023">
+            <button class="btn btn-sm role-admin" id="static-event-46">Save</button>
+            <button class="btn btn-sm" id="static-event-47">Cancel</button>
           </div>
         </div>
         <table>
@@ -1366,39 +863,39 @@
       </div>
     </div>
 
-    <!-- ═══ TAB: SIEM ═══ -->
-    <div id="tab-siem" style="display:none;">
+
+    <div id="tab-siem" hidden>
       <h1>TrueID :: SIEM Targets</h1>
       <div class="panel">
-        <div id="siem-stats" style="display:flex;gap:24px;margin-bottom:12px;font-size:13px;color:var(--text-secondary);"></div>
-        <div style="display:flex;gap:8px;margin-bottom:12px;">
-          <button class="btn btn-sm role-admin" onclick="showSiemForm()">+ Add Target</button>
-          <button class="btn btn-sm" onclick="loadSiemTargets()">Refresh</button>
+        <div id="siem-stats" class="csp-static-006"></div>
+        <div class="csp-static-040">
+          <button class="btn btn-sm role-admin" id="static-event-48">+ Add Target</button>
+          <button class="btn btn-sm" id="static-event-49">Refresh</button>
         </div>
-        <div id="siem-form-wrap" style="display:none;margin-bottom:16px;padding:12px;border:1px solid var(--border-dim);border-radius:4px;">
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-            <input id="siem-name" class="setting-input" style="width:220px;" placeholder="Name">
-            <select id="siem-format" class="setting-input" style="width:130px;">
+        <div id="siem-form-wrap" hidden class="csp-static-015">
+          <div class="csp-static-017">
+            <input id="siem-name" class="setting-input csp-static-042" placeholder="Name">
+            <select id="siem-format" class="setting-input csp-static-013">
               <option value="cef">CEF</option>
               <option value="leef">LEEF</option>
               <option value="json">JSON</option>
             </select>
-            <select id="siem-transport" class="setting-input" style="width:130px;">
+            <select id="siem-transport" class="setting-input csp-static-013">
               <option value="udp">UDP</option>
               <option value="tcp">TCP</option>
             </select>
-            <input id="siem-host" class="setting-input" style="width:200px;" placeholder="Host">
-            <input id="siem-port" class="setting-input" style="width:120px;" type="number" min="1" max="65535" value="514" placeholder="Port">
+            <input id="siem-host" class="setting-input csp-static-018" placeholder="Host">
+            <input id="siem-port" class="setting-input csp-static-005" type="number" min="1" max="65535" value="514" placeholder="Port">
           </div>
-          <div style="display:flex;gap:16px;align-items:center;margin-bottom:8px;">
-            <label class="setting-desc" style="display:flex;align-items:center;gap:6px;"><input id="siem-fwd-m" type="checkbox" checked> Forward mappings</label>
-            <label class="setting-desc" style="display:flex;align-items:center;gap:6px;"><input id="siem-fwd-c" type="checkbox" checked> Forward conflicts</label>
-            <label class="setting-desc" style="display:flex;align-items:center;gap:6px;"><input id="siem-fwd-a" type="checkbox"> Forward alerts</label>
-            <label class="setting-desc" style="display:flex;align-items:center;gap:6px;"><input id="siem-enabled" type="checkbox" checked> Enabled</label>
+          <div class="csp-static-062">
+            <label class="setting-desc csp-static-046"><input id="siem-fwd-m" type="checkbox" checked> Forward mappings</label>
+            <label class="setting-desc csp-static-046"><input id="siem-fwd-c" type="checkbox" checked> Forward conflicts</label>
+            <label class="setting-desc csp-static-046"><input id="siem-fwd-a" type="checkbox"> Forward alerts</label>
+            <label class="setting-desc csp-static-046"><input id="siem-enabled" type="checkbox" checked> Enabled</label>
           </div>
-          <div style="display:flex;gap:8px;">
-            <button class="btn btn-sm role-admin" onclick="saveSiemTarget()">Save</button>
-            <button class="btn btn-sm" onclick="hideSiemForm()">Cancel</button>
+          <div class="csp-static-023">
+            <button class="btn btn-sm role-admin" id="static-event-50">Save</button>
+            <button class="btn btn-sm" id="static-event-51">Cancel</button>
           </div>
         </div>
         <table>
@@ -1417,48 +914,48 @@
       </div>
     </div>
 
-    <!-- ═══ TAB: LDAP ═══ -->
-    <div id="tab-ldap" style="display:none;">
+
+    <div id="tab-ldap" hidden>
       <h1>TrueID :: LDAP Integration</h1>
       <div class="panel">
         <h2 class="section-title">Configuration</h2>
         <div class="setting-row">
           <div class="setting-label"><span class="setting-title">Enabled</span></div>
-          <label class="toggle"><input id="ldap-enabled" type="checkbox" onchange="saveLdapField('enabled', this.checked, this)"><span class="toggle-slider"></span></label>
+          <label class="toggle"><input id="ldap-enabled" type="checkbox"><span class="toggle-slider"></span></label>
         </div>
         <div class="setting-row">
           <div class="setting-label"><span class="setting-title">LDAP URL</span></div>
-          <input id="ldap-url" class="setting-input" onchange="saveLdapField('ldap_url', this.value, this)">
+          <input id="ldap-url" class="setting-input">
         </div>
         <div class="setting-row">
           <div class="setting-label"><span class="setting-title">Bind DN</span></div>
-          <input id="ldap-bind-dn" class="setting-input" onchange="saveLdapField('bind_dn', this.value, this)">
+          <input id="ldap-bind-dn" class="setting-input">
         </div>
         <div class="setting-row">
           <div class="setting-label">
             <span class="setting-title">Bind Password</span>
             <span id="ldap-pass-status" class="setting-desc">Not set</span>
           </div>
-          <div style="display:flex;gap:8px;align-items:center;">
+          <div class="csp-static-063">
             <input id="ldap-bind-pass" class="setting-input" type="password" autocomplete="new-password" placeholder="••••••••">
-            <button class="btn btn-sm" onclick="saveLdapPassword()">Save</button>
+            <button class="btn btn-sm" id="static-event-52">Save</button>
           </div>
         </div>
         <div class="setting-row">
           <div class="setting-label"><span class="setting-title">Search Base</span></div>
-          <input id="ldap-base-dn" class="setting-input" onchange="saveLdapField('base_dn', this.value, this)">
+          <input id="ldap-base-dn" class="setting-input">
         </div>
         <div class="setting-row">
           <div class="setting-label"><span class="setting-title">Search Filter</span></div>
-          <input id="ldap-filter" class="setting-input" onchange="saveLdapField('search_filter', this.value, this)">
+          <input id="ldap-filter" class="setting-input">
         </div>
         <div class="setting-row">
           <div class="setting-label"><span class="setting-title">Sync Interval (seconds)</span></div>
-          <input id="ldap-interval" class="setting-input" type="number" min="60" onchange="saveLdapField('sync_interval_secs', parseInt(this.value || '300', 10), this)">
+          <input id="ldap-interval" class="setting-input" type="number" min="60">
         </div>
-        <div style="display:flex;gap:8px;margin:12px 0 16px;">
-          <button class="btn btn-sm role-admin" onclick="forceLdapSync()">Force Sync</button>
-          <button class="btn btn-sm" onclick="loadLdapTab()">Refresh</button>
+        <div class="csp-static-064">
+          <button class="btn btn-sm role-admin" id="static-event-53">Force Sync</button>
+          <button class="btn btn-sm" id="static-event-54">Refresh</button>
           <span id="ldap-sync-msg" class="muted"></span>
         </div>
 
@@ -1467,52 +964,52 @@
         <h2 class="section-title">Groups Browser</h2>
         <div class="two-col">
           <div>
-            <div class="muted" style="margin-bottom:8px;">Groups</div>
+            <div class="muted csp-static-016">Groups</div>
             <div id="ldap-groups-list" class="sync-status-box">Loading...</div>
           </div>
           <div>
-            <div class="muted" style="margin-bottom:8px;">Members</div>
+            <div class="muted csp-static-016">Members</div>
             <div id="ldap-members-list" class="sync-status-box">Select group...</div>
           </div>
         </div>
 
-        <div class="setting-divider" style="margin:16px 0;"></div>
+        <div class="setting-divider csp-static-024"></div>
 
         <h2 class="section-title">User Group Lookup</h2>
-        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
-          <input id="ldap-user-query" class="setting-input" style="width:220px;" placeholder="username" onkeydown="if(event.key==='Enter')lookupLdapUserGroups()">
-          <button class="btn btn-sm" onclick="lookupLdapUserGroups()">Lookup</button>
+        <div class="csp-static-065">
+          <input id="ldap-user-query" class="setting-input csp-static-042" placeholder="username">
+          <button class="btn btn-sm" id="static-event-55">Lookup</button>
         </div>
         <div id="ldap-user-groups" class="sync-status-box">No query yet.</div>
       </div>
     </div>
 
-    <!-- ═══ TAB: Notifications ═══ -->
-    <div id="tab-notifications" style="display:none;">
+
+    <div id="tab-notifications" hidden>
       <h1>TrueID :: Notifications</h1>
       <div class="panel">
         <h2 class="section-title">Channels</h2>
-        <div style="display:flex;gap:8px;margin-bottom:10px;">
-          <button class="btn btn-sm role-admin" onclick="showNotificationForm()">+ Add Channel</button>
-          <button class="btn btn-sm" onclick="loadNotificationsTab()">Refresh</button>
+        <div class="csp-static-029">
+          <button class="btn btn-sm role-admin" id="static-event-56">+ Add Channel</button>
+          <button class="btn btn-sm" id="static-event-57">Refresh</button>
         </div>
-        <div id="notification-form" style="display:none;margin-bottom:12px;padding:12px;border:1px solid var(--border-dim);border-radius:4px;">
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-            <input id="notif-name" class="setting-input" style="width:180px;" placeholder="Name">
-            <select id="notif-type" class="setting-input" style="width:140px;" onchange="renderNotificationConfigForm()">
+        <div id="notification-form" hidden class="csp-static-066">
+          <div class="csp-static-017">
+            <input id="notif-name" class="setting-input csp-static-020" placeholder="Name">
+            <select id="notif-type" class="setting-input csp-static-004">
               <option value="email">Email</option>
               <option value="slack">Slack</option>
               <option value="teams">Teams</option>
               <option value="webhook">Webhook</option>
             </select>
-            <label class="setting-desc" style="display:flex;align-items:center;gap:6px;">
+            <label class="setting-desc csp-static-046">
               <input id="notif-enabled" type="checkbox" checked> Enabled
             </label>
           </div>
-          <div id="notif-config-fields" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;"></div>
-          <div style="display:flex;gap:8px;">
-            <button class="btn btn-sm role-admin" onclick="saveNotificationChannel()">Save</button>
-            <button class="btn btn-sm" onclick="hideNotificationForm()">Cancel</button>
+          <div id="notif-config-fields" class="csp-static-017"></div>
+          <div class="csp-static-023">
+            <button class="btn btn-sm role-admin" id="static-event-58">Save</button>
+            <button class="btn btn-sm" id="static-event-59">Cancel</button>
           </div>
         </div>
         <table>
@@ -1520,14 +1017,14 @@
           <tbody id="notifications-body"><tr><td colspan="5" class="muted">Loading...</td></tr></tbody>
         </table>
 
-        <div class="setting-divider" style="margin:16px 0;"></div>
+        <div class="setting-divider csp-static-024"></div>
         <h2 class="section-title">Delivery Log</h2>
         <div id="notifications-deliveries" class="sync-status-box">Select channel to see deliveries.</div>
       </div>
     </div>
 
-    <!-- ═══ TAB: Sycope ═══ -->
-    <div id="tab-sycope" style="display:none;">
+
+    <div id="tab-sycope" hidden>
       <h1>TrueID :: Sycope Integration</h1>
       <p class="section-desc">
         Reference/example integration. CSV Lookup enrichment is the primary validated path.
@@ -1535,30 +1032,30 @@
       </p>
       <div class="panel">
 
-        <!-- Master switch -->
+
         <div class="setting-row">
           <div class="setting-label">
             <span class="setting-title">Enable Sycope Sync</span>
             <span class="setting-desc">Push identity data to Sycope for NetFlow enrichment</span>
           </div>
           <label class="toggle">
-            <input type="checkbox" id="sycope-enabled" onchange="saveSycopeField('enabled', this.checked)">
+            <input type="checkbox" id="sycope-enabled">
             <span class="toggle-slider"></span>
           </label>
         </div>
 
         <div class="setting-divider"></div>
 
-        <!-- Connection -->
+
         <h2 class="section-title">Connection</h2>
 
         <div class="setting-row">
           <div class="setting-label">
             <span class="setting-title">Sycope Host</span>
-            <span class="setting-desc">URL of the Sycope appliance (e.g. https://192.168.1.14)</span>
+            <span class="setting-desc">URL of the Sycope appliance (e.g. https://sycope.example.com)</span>
           </div>
           <input type="text" id="sycope-host" class="setting-input" placeholder="https://sycope.example.com"
-            onchange="saveSycopeField('sycope_host', this.value)">
+           >
         </div>
 
         <div class="setting-row">
@@ -1568,7 +1065,7 @@
           </div>
           <input type="text" id="sycope-login" class="setting-input" placeholder="trueid_sync"
             autocomplete="username"
-            onchange="saveSycopeField('sycope_login', this.value)">
+           >
         </div>
 
         <div class="setting-row">
@@ -1576,10 +1073,10 @@
             <span class="setting-title">Password</span>
             <span class="setting-desc" id="pass-status">Not set</span>
           </div>
-          <div style="display:flex;gap:8px;align-items:center;">
+          <div class="csp-static-063">
             <input type="password" id="sycope-pass" class="setting-input" placeholder="••••••••"
               autocomplete="new-password">
-            <button class="btn btn-sm" onclick="saveSycopePassword()">Save</button>
+            <button class="btn btn-sm" id="static-event-60">Save</button>
           </div>
         </div>
 
@@ -1588,14 +1085,14 @@
             <span class="setting-title">Test Connection</span>
             <span class="setting-desc">Verify credentials and network connectivity</span>
           </div>
-          <button class="btn" id="test-btn" onclick="testSycopeConnection()">Test Connection</button>
+          <button class="btn" id="test-btn">Test Connection</button>
         </div>
 
-        <div id="test-result" style="display:none;margin:8px 0;padding:10px;border-radius:4px;font-size:13px;"></div>
+        <div id="test-result" hidden class="csp-static-067"></div>
 
         <div class="setting-divider"></div>
 
-        <!-- Pattern A: Lookup Enrichment -->
+
         <h2 class="section-title">Pattern A — Lookup Enrichment</h2>
         <p class="section-desc">
           Active IP-to-identity mappings pushed to a Sycope CSV Lookup.
@@ -1609,7 +1106,7 @@
             <span class="setting-desc">CSV Lookup name in Sycope (must exist in Sycope first)</span>
           </div>
           <input type="text" id="sycope-lookup" class="setting-input" placeholder="TrueID_Enrichment"
-            onchange="saveSycopeField('lookup_name', this.value)">
+           >
         </div>
 
         <div class="setting-row">
@@ -1617,14 +1114,14 @@
             <span class="setting-title">Sync Interval</span>
             <span class="setting-desc">How often to push data (seconds)</span>
           </div>
-          <input type="number" id="sycope-interval" class="setting-input" style="width:100px;"
+          <input type="number" id="sycope-interval" class="setting-input csp-static-068"
             min="30" step="30" placeholder="300"
-            onchange="saveSycopeField('sync_interval_seconds', parseInt(this.value))">
+           >
         </div>
 
         <div class="setting-divider"></div>
 
-        <!-- Pattern B: Event Index -->
+
         <h2 class="section-title">Pattern B — Event History</h2>
         <p class="section-desc">
           Optional and appliance-dependent. Auth and mapping change events are injected into a Sycope
@@ -1638,7 +1135,7 @@
             <span class="setting-desc">Inject auth events to custom Sycope index</span>
           </div>
           <label class="toggle">
-            <input type="checkbox" id="sycope-evt-idx" onchange="saveSycopeField('enable_event_index', this.checked)">
+            <input type="checkbox" id="sycope-evt-idx">
             <span class="toggle-slider"></span>
           </label>
         </div>
@@ -1649,34 +1146,34 @@
             <span class="setting-desc">Custom Index name (created via install.py)</span>
           </div>
           <input type="text" id="sycope-idx-name" class="setting-input" placeholder="trueid_events"
-            onchange="saveSycopeField('index_name', this.value)">
+           >
         </div>
 
         <div class="setting-divider"></div>
 
-        <!-- Sync Status -->
+
         <h2 class="section-title">Sync Status</h2>
         <div id="sync-status" class="sync-status-box">Loading...</div>
 
       </div>
     </div>
 
-    <!-- ═══ TAB: Audit Log ═══ -->
-    <div id="tab-audit" style="display:none;">
+
+    <div id="tab-audit" hidden>
       <h1>TrueID :: Audit Log</h1>
       <div class="panel">
-        <!-- Stats summary -->
-        <div id="audit-stats" style="display:flex;gap:24px;margin-bottom:16px;font-size:13px;color:var(--text-secondary);">
+
+        <div id="audit-stats" class="csp-static-012">
         </div>
-        <!-- Filters -->
-        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">
-          <input type="text" id="audit-filter-action" class="setting-input" style="width:160px;"
+
+        <div class="csp-static-002">
+          <input type="text" id="audit-filter-action" class="setting-input csp-static-008"
             placeholder="Filter by action">
-          <input type="text" id="audit-filter-user" class="setting-input" style="width:160px;"
+          <input type="text" id="audit-filter-user" class="setting-input csp-static-008"
             placeholder="Filter by username">
-          <button class="btn btn-sm" onclick="loadAuditLogs(1)">Apply</button>
+          <button class="btn btn-sm" id="static-event-61">Apply</button>
         </div>
-        <!-- Table -->
+
         <table id="audit-table">
           <thead>
             <tr>
@@ -1693,8 +1190,8 @@
             <tr><td colspan="7" class="muted">Loading...</td></tr>
           </tbody>
         </table>
-        <!-- Pagination -->
-        <div id="audit-paging" style="margin-top:12px;display:flex;gap:8px;align-items:center;font-size:13px;color:var(--text-secondary);">
+
+        <div id="audit-paging" class="csp-static-007">
         </div>
       </div>
     </div>
@@ -1702,71 +1199,71 @@
       </main>
     </div>
 
-    <!-- Timeline slide-in panel -->
-    <div id="timeline-panel" style="display:none;position:fixed;top:0;right:0;width:500px;height:100vh;background:var(--bg-panel);border-left:2px solid var(--green-bright);overflow-y:auto;padding:24px;z-index:100;box-shadow:-4px 0 24px var(--green-ghost);">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
-        <h2 style="margin:0;color:var(--green-bright);font-size:16px;text-shadow:var(--text-glow);" id="timeline-title">Timeline</h2>
-        <button class="btn btn-sm" onclick="closeTimeline()">✕ Close</button>
+
+    <div id="timeline-panel" hidden class="csp-static-069">
+      <div class="csp-static-070">
+        <h2 id="timeline-title" class="csp-static-071">Timeline</h2>
+        <button class="btn btn-sm" id="static-event-62">✕ Close</button>
       </div>
       <div id="timeline-content">Loading...</div>
     </div>
 
-    <!-- Analytics report JSON modal -->
-    <div id="analytics-report-modal" style="display:none;position:fixed;inset:0;background:var(--overlay-backdrop);z-index:120;">
-      <div style="max-width:900px;margin:40px auto;background:var(--bg-panel);border:1px solid var(--border-dim);border-radius:8px;padding:16px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-          <h2 style="margin:0;color:var(--green-bright);font-size:16px;text-shadow:var(--text-glow);">Report JSON</h2>
-          <button class="btn btn-sm" onclick="closeAnalyticsReportModal()">Close</button>
+
+    <div id="analytics-report-modal" hidden class="csp-static-072">
+      <div class="csp-static-073">
+        <div class="csp-static-074">
+          <h2 class="csp-static-071">Report JSON</h2>
+          <button class="btn btn-sm" id="static-event-63">Close</button>
         </div>
-        <pre id="analytics-report-json" style="max-height:70vh;overflow:auto;white-space:pre-wrap;color:var(--text-primary);"></pre>
+        <pre id="analytics-report-json" class="csp-static-075"></pre>
       </div>
     </div>
-    <div id="live-indicator" style="position:fixed;bottom:16px;right:16px;z-index:200;"></div>
-    <div id="add-user-modal" style="display:none;position:fixed;inset:0;background:color-mix(in srgb, var(--bg-deep) 74%, transparent);z-index:320;">
-      <div class="security-modal-panel" style="max-width:520px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <h2 class="section-title" style="margin:0;">Add User</h2>
-          <button class="btn btn-sm" onclick="closeAddUserModal()">Close</button>
+    <div id="live-indicator" class="csp-static-076"></div>
+    <div id="add-user-modal" hidden class="csp-static-077">
+      <div class="security-modal-panel csp-static-078">
+        <div class="csp-static-079">
+          <h2 class="section-title csp-static-080">Add User</h2>
+          <button class="btn btn-sm" id="static-event-64">Close</button>
         </div>
-        <div class="sync-status-box" style="margin-top:12px;">
-          <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            <input id="add-user-username" class="setting-input" style="width:220px;" placeholder="Username">
-            <select id="add-user-role" class="setting-input" style="width:140px;">
+        <div class="sync-status-box csp-static-081">
+          <div class="csp-static-052">
+            <input id="add-user-username" class="setting-input csp-static-042" placeholder="Username">
+            <select id="add-user-role" class="setting-input csp-static-004">
               <option value="Admin">Admin</option>
               <option value="Operator">Operator</option>
               <option value="Viewer" selected>Viewer</option>
             </select>
           </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
-            <input id="add-user-password" type="password" class="setting-input" style="width:220px;" placeholder="Password">
-            <input id="add-user-password-confirm" type="password" class="setting-input" style="width:220px;" placeholder="Confirm password">
+          <div class="csp-static-053">
+            <input id="add-user-password" type="password" class="setting-input csp-static-042" placeholder="Password">
+            <input id="add-user-password-confirm" type="password" class="setting-input csp-static-042" placeholder="Confirm password">
           </div>
-          <div id="add-user-result" class="muted" style="margin-top:8px;"></div>
-          <div style="display:flex;gap:8px;margin-top:10px;">
-            <button class="btn btn-sm" onclick="createUserFromModal()">Create user</button>
-            <button class="btn btn-sm" onclick="closeAddUserModal()">Cancel</button>
+          <div id="add-user-result" class="muted csp-static-034"></div>
+          <div class="csp-static-082">
+            <button class="btn btn-sm" id="static-event-65">Create user</button>
+            <button class="btn btn-sm" id="static-event-66">Cancel</button>
           </div>
         </div>
       </div>
     </div>
-    <div id="security-modal" style="display:none;position:fixed;inset:0;background:var(--overlay-backdrop-strong);z-index:300;">
+    <div id="security-modal" hidden class="csp-static-083">
       <div class="security-modal-panel">
-        <div style="display:flex;justify-content:space-between;align-items:center;">
-          <h2 class="section-title" style="margin:0;">Security Settings</h2>
-          <button class="btn btn-sm" onclick="closeSecurityModal()">Close</button>
+        <div class="csp-static-079">
+          <h2 class="section-title csp-static-080">Security Settings</h2>
+          <button class="btn btn-sm" id="static-event-67">Close</button>
         </div>
-        <div id="totp-status-box" class="sync-status-box" style="margin-top:12px;">Loading...</div>
-        <div id="totp-setup-box" style="display:none;margin-top:12px;">
+        <div id="totp-status-box" class="sync-status-box csp-static-081">Loading...</div>
+        <div id="totp-setup-box" hidden class="csp-static-081">
           <div class="sync-status-box">
             <div class="qr-box">
-              <img id="totp-qr" alt="TOTP QR" style="max-width:180px;max-height:180px;display:block;">
+              <img id="totp-qr" alt="TOTP QR" class="csp-static-084">
             </div>
             <div class="muted" id="totp-secret-line"></div>
-            <input id="totp-verify-code" class="setting-input" style="width:220px;margin-top:8px;" placeholder="Enter 2FA code">
-            <button class="btn btn-sm" style="margin-top:8px;" onclick="verifyTotpSetup()">Verify & Enable</button>
+            <input id="totp-verify-code" class="setting-input csp-static-085" placeholder="Enter 2FA code">
+            <button class="btn btn-sm csp-static-034" id="static-event-68">Verify & Enable</button>
           </div>
         </div>
-        <div id="totp-backup-codes" class="sync-status-box" style="display:none;margin-top:12px;white-space:pre-wrap;"></div>
+        <div id="totp-backup-codes" class="sync-status-box csp-static-086" hidden></div>
       </div>
     </div>
 
@@ -1781,5 +1278,6 @@
     <script src="js/integrations.js"></script>
     <script src="js/admin.js"></script>
     <script src="js/map.js"></script>
+    <script src="js/static-events.js"></script>
   </body>
 </html>
