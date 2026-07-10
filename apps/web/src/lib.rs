@@ -125,7 +125,7 @@ pub(crate) async fn login_rate_limit(
 ///
 /// Sets CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy,
 /// and Permissions-Policy on all outgoing responses.
-async fn security_headers_layer(req: Request, next: axum_mw::Next) -> Response {
+pub async fn security_headers_layer(req: Request, next: axum_mw::Next) -> Response {
     let mut resp = next.run(req).await;
     let h = resp.headers_mut();
     // TODO: migrate to nonce-based CSP when dashboard moves to external JS files

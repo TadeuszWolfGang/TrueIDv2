@@ -1,6 +1,7 @@
 //! TrueID Web binary — startup and server binding.
 
 use anyhow::Result;
+use axum::middleware as axum_mw;
 use std::sync::Arc;
 use tower_http::services::ServeDir;
 use tracing::{error, info, warn};
@@ -8,7 +9,8 @@ use tracing_subscriber::EnvFilter;
 use trueid_common::model::UserRole;
 use trueid_common::{env_or_default, parse_socket_addr};
 use trueid_web::{
-    auth::JwtConfig, build_router, helpers, rate_limit, AppState, DEFAULT_ENGINE_URL,
+    auth::JwtConfig, build_router, helpers, rate_limit, security_headers_layer, AppState,
+    DEFAULT_ENGINE_URL,
 };
 
 const DEFAULT_DB_URL: &str = "sqlite://net-identity.db?mode=rwc";
@@ -208,10 +210,14 @@ async fn main() -> Result<()> {
         });
     }
 
-    let app = build_router(state).fallback_service(ServeDir::new(env_or_default(
-        "ASSETS_DIR",
-        DEFAULT_ASSETS_DIR,
-    )));
+    // The static fallback is added after build_router's layers, so wrap the final
+    // router to apply security headers to assets as well as API responses.
+    let app = build_router(state)
+        .fallback_service(ServeDir::new(env_or_default(
+            "ASSETS_DIR",
+            DEFAULT_ASSETS_DIR,
+        )))
+        .layer(axum_mw::from_fn(security_headers_layer));
 
     // ── TLS or plain TCP ──────────────────────────────────
     let tls_cert = std::env::var("TLS_CERT").ok().filter(|s| !s.is_empty());
