@@ -1,16 +1,9 @@
-/* Network module (subnets, switches, fingerprints, DNS). */
-
 async function loadSubnetsTab() {
         await loadSubnetsStats();
         await loadSubnets(1);
         await loadDiscoveredSubnets();
       }
 
-      /**
-       * Sorts rows using per-tab sort state.
-       * Parameters: tabName - logical tab key, rows - list of objects.
-       * Returns: sorted rows.
-       */
       function sortNetworkRows(tabName, rows) {
         var state = window.sortState && window.sortState[tabName];
         if (!state || !state.column) return rows;
@@ -28,6 +21,12 @@ async function loadSubnetsTab() {
           if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir;
           return String(av).localeCompare(String(bv)) * dir;
         });
+      }
+
+      function setNetworkStatusClass(element, state) {
+        if (!element) return;
+        element.classList.remove('generated-status-ok', 'generated-status-error', 'generated-status-muted');
+        element.classList.add('generated-status-' + state);
       }
 
       async function loadSubnetsStats() {
@@ -69,30 +68,30 @@ async function loadSubnetsTab() {
           }
           body.innerHTML = rows.map(function (s) {
             var actions =
-              '<button class="btn btn-sm role-operator" onclick="event.stopPropagation();editSubnet(' + s.id + ')">Edit</button> ' +
-              '<button class="btn btn-sm role-operator" onclick="event.stopPropagation();deleteSubnet(' + s.id + ')">Delete</button>';
-            return '<tr class="expand-row" onclick="toggleSubnetMappings(' + s.id + ')">' +
+              '<button class="btn btn-sm role-operator" data-network-action="edit-subnet" data-network-id="' + escapeHtml(s.id) + '">Edit</button> ' +
+              '<button class="btn btn-sm role-operator" data-network-action="delete-subnet" data-network-id="' + escapeHtml(s.id) + '">Delete</button>';
+            return '<tr class="expand-row" data-network-action="toggle-subnet" data-network-id="' + escapeHtml(s.id) + '">' +
               '<td>' + escapeHtml(s.name || '-') + '</td>' +
               '<td>' + escapeHtml(s.cidr || '-') + '</td>' +
               '<td>' + escapeHtml(s.vlan_id != null ? s.vlan_id : '-') + '</td>' +
               '<td>' + escapeHtml(s.location || '-') + '</td>' +
               '<td>' + escapeHtml(s.gateway || '-') + '</td>' +
-              '<td><a class="ip-link" href="#" onclick="event.preventDefault();event.stopPropagation();toggleSubnetMappings(' + s.id + ')">' + escapeHtml(subnetCounts[s.id] != null ? subnetCounts[s.id] : 0) + ' mappings</a></td>' +
+              '<td><a class="ip-link" href="#" data-network-action="toggle-subnet" data-network-id="' + escapeHtml(s.id) + '">' + escapeHtml(subnetCounts[s.id] != null ? subnetCounts[s.id] : 0) + ' mappings</a></td>' +
               '<td>' + actions + '</td>' +
               '</tr>' +
-              '<tr id="subnet-map-row-' + s.id + '" style="display:' + (subnetMappingOpen[s.id] ? '' : 'none') + ';"><td colspan="7"><div id="subnet-map-' + s.id + '" class="muted">Loading mappings...</div></td></tr>';
+              '<tr id="subnet-map-row-' + s.id + '"' + (subnetMappingOpen[s.id] ? '' : ' hidden') + '><td colspan="7"><div id="subnet-map-' + s.id + '" class="muted">Loading mappings...</div></td></tr>';
           }).join('');
           renderPager('subnets-paging', subnetCurrentPage, subnetPageSize, sorted.length, 'loadSubnets');
           applySortHeaders('subnets-table', 'subnets', null, loadSubnets);
           applyRoleVisibility(currentUser.role);
         } catch (e) {
           document.getElementById('subnets-body').innerHTML =
-            '<tr><td colspan="7" style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+            '<tr><td colspan="7" class="generated-error">Failed: ' + escapeHtml(e.message) + '</td></tr>';
         }
       }
 
       function showSubnetForm(item) {
-        document.getElementById('subnet-form-wrap').style.display = '';
+        document.getElementById('subnet-form-wrap').hidden = false;
         document.getElementById('subnet-form-wrap').setAttribute('data-edit-id', item && item.id ? String(item.id) : '');
         document.getElementById('subnet-name').value = item ? (item.name || '') : '';
         document.getElementById('subnet-cidr').value = item ? (item.cidr || '') : '';
@@ -103,7 +102,7 @@ async function loadSubnetsTab() {
       }
 
       function hideSubnetForm() {
-        document.getElementById('subnet-form-wrap').style.display = 'none';
+        document.getElementById('subnet-form-wrap').hidden = true;
         document.getElementById('subnet-form-wrap').setAttribute('data-edit-id', '');
       }
 
@@ -160,7 +159,7 @@ async function loadSubnetsTab() {
         subnetMappingOpen[id] = !subnetMappingOpen[id];
         var row = document.getElementById('subnet-map-row-' + id);
         if (!row) return;
-        row.style.display = subnetMappingOpen[id] ? '' : 'none';
+        row.hidden = !subnetMappingOpen[id];
         if (subnetMappingOpen[id]) loadSubnetMappings(id, 1);
       }
 
@@ -180,15 +179,15 @@ async function loadSubnetsTab() {
               var user = Array.isArray(m.current_users) && m.current_users.length ? m.current_users.join(', ') : (m.user || '-');
               var primary = Array.isArray(m.current_users) && m.current_users.length ? m.current_users[0] : (m.user || '');
               return '<tr>' +
-                '<td><a href="#" class="ip-link" onclick="openTimeline(\'ip\', \'' + escJs(m.ip || '') + '\');return false;">' + escapeHtml(m.ip || '-') + '</a></td>' +
-                '<td><a href="#" class="ip-link" onclick="openTimeline(\'user\', \'' + escJs(primary) + '\');return false;">' + escapeHtml(user) + '</a></td>' +
+                '<td><a href="#" class="ip-link" data-network-action="timeline" data-timeline-type="ip" data-timeline-value="' + escapeHtml(m.ip || '') + '">' + escapeHtml(m.ip || '-') + '</a></td>' +
+                '<td><a href="#" class="ip-link" data-network-action="timeline" data-timeline-type="user" data-timeline-value="' + escapeHtml(primary) + '">' + escapeHtml(user) + '</a></td>' +
                 '<td>' + escapeHtml(m.mac || '-') + '</td>' +
                 '<td>' + escapeHtml(m.source || '-') + '</td>' +
                 '<td>' + escapeHtml(timeAgo(m.last_seen)) + '</td>' +
                 '</tr>';
             }).join('') + '</tbody></table>';
         } catch (e) {
-          document.getElementById('subnet-map-' + id).innerHTML = '<span style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</span>';
+          document.getElementById('subnet-map-' + id).innerHTML = '<span class="generated-error">Failed: ' + escapeHtml(e.message) + '</span>';
         }
       }
 
@@ -206,8 +205,8 @@ async function loadSubnetsTab() {
           el.innerHTML = rows.map(function (r) {
             var status = r.promoted ? '<span class="badge badge-info">Promoted</span>' : '<span class="badge badge-warning">New</span>';
             var actions = '';
-            if (!r.promoted) actions += '<button class="btn btn-sm role-operator" onclick="promoteDiscoveredSubnet(' + r.id + ', \'' + escJs(r.cidr) + '\')">Promote</button> ';
-            actions += '<button class="btn btn-sm role-admin" onclick="dismissDiscoveredSubnet(' + r.id + ')">Dismiss</button>';
+            if (!r.promoted) actions += '<button class="btn btn-sm role-operator" data-network-action="promote-subnet" data-network-id="' + escapeHtml(r.id) + '" data-cidr="' + escapeHtml(r.cidr || '') + '">Promote</button> ';
+            actions += '<button class="btn btn-sm role-admin" data-network-action="dismiss-subnet" data-network-id="' + escapeHtml(r.id) + '">Dismiss</button>';
             return '<tr>' +
               '<td>' + escapeHtml(r.cidr || '-') + '</td>' +
               '<td>' + escapeHtml(r.ip_count || 0) + '</td>' +
@@ -220,7 +219,7 @@ async function loadSubnetsTab() {
           applyRoleVisibility(currentUser.role);
         } catch (e) {
           document.getElementById('discovered-subnets-body').innerHTML =
-            '<tr><td colspan="6" style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+            '<tr><td colspan="6" class="generated-error">Failed: ' + escapeHtml(e.message) + '</td></tr>';
         }
       }
 
@@ -295,11 +294,11 @@ async function loadSubnetsTab() {
           }
           body.innerHTML = rows.map(function (s) {
             var actions =
-              '<button class="btn btn-sm role-operator" onclick="event.stopPropagation();pollSwitch(' + s.id + ')">Poll Now</button> ' +
-              '<button class="btn btn-sm role-operator" onclick="event.stopPropagation();editSwitch(' + s.id + ')">Edit</button> ' +
-              '<button class="btn btn-sm role-operator" onclick="event.stopPropagation();deleteSwitch(' + s.id + ')">Delete</button>';
-            return '<tr class="expand-row" onclick="toggleSwitchPorts(' + s.id + ')">' +
-              '<td>' + escapeHtml(s.name || '-') + '<div id="sw-msg-' + s.id + '" class="muted" style="font-size:11px;"></div></td>' +
+              '<button class="btn btn-sm role-operator" data-network-action="poll-switch" data-network-id="' + escapeHtml(s.id) + '">Poll Now</button> ' +
+              '<button class="btn btn-sm role-operator" data-network-action="edit-switch" data-network-id="' + escapeHtml(s.id) + '">Edit</button> ' +
+              '<button class="btn btn-sm role-operator" data-network-action="delete-switch" data-network-id="' + escapeHtml(s.id) + '">Delete</button>';
+            return '<tr class="expand-row" data-network-action="toggle-switch" data-network-id="' + escapeHtml(s.id) + '">' +
+              '<td>' + escapeHtml(s.name || '-') + '<div id="sw-msg-' + s.id + '" class="muted generated-small"></div></td>' +
               '<td>' + escapeHtml(s.ip || '-') + '</td>' +
               '<td>' + escapeHtml(s.snmp_version || '-') + '</td>' +
               '<td>' + escapeHtml((s.poll_interval_secs || '-') + 's') + '</td>' +
@@ -309,14 +308,14 @@ async function loadSubnetsTab() {
               '<td>' + escapeHtml(s.mac_count != null ? s.mac_count : 0) + '</td>' +
               '<td>' + actions + '</td>' +
               '</tr>' +
-              '<tr id="sw-ports-row-' + s.id + '" style="display:' + (switchPortOpen[s.id] ? '' : 'none') + ';"><td colspan="9"><div id="sw-ports-' + s.id + '" class="muted">Loading ports...</div></td></tr>';
+              '<tr id="sw-ports-row-' + s.id + '"' + (switchPortOpen[s.id] ? '' : ' hidden') + '><td colspan="9"><div id="sw-ports-' + s.id + '" class="muted">Loading ports...</div></td></tr>';
           }).join('');
           renderPager('switches-paging', switchesCurrentPage, switchesPageSize, sorted.length, 'loadSwitches');
           applySortHeaders('switches-table', 'switches', null, loadSwitches);
           applyRoleVisibility(currentUser.role);
         } catch (e) {
           document.getElementById('switches-body').innerHTML =
-            '<tr><td colspan="9" style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+            '<tr><td colspan="9" class="generated-error">Failed: ' + escapeHtml(e.message) + '</td></tr>';
         }
       }
 
@@ -335,7 +334,7 @@ async function loadSubnetsTab() {
 
       function showSwitchForm(item) {
         switchEditingId = item && item.id ? item.id : null;
-        document.getElementById('switch-form-wrap').style.display = '';
+        document.getElementById('switch-form-wrap').hidden = false;
         document.getElementById('switch-name').value = item ? (item.name || '') : '';
         document.getElementById('switch-ip').value = item ? (item.ip || '') : '';
         document.getElementById('switch-community').value = '';
@@ -349,7 +348,7 @@ async function loadSubnetsTab() {
 
       function hideSwitchForm() {
         switchEditingId = null;
-        document.getElementById('switch-form-wrap').style.display = 'none';
+        document.getElementById('switch-form-wrap').hidden = true;
       }
 
       function editSwitch(id) {
@@ -415,15 +414,15 @@ async function loadSubnetsTab() {
           var el = document.getElementById('sw-msg-' + id);
           if (res.ok) {
             el.textContent = data.message || 'Poll queued';
-            el.style.color = 'var(--status-ok)';
+            setNetworkStatusClass(el, 'ok');
           } else {
             el.textContent = data.message || ('HTTP ' + res.status);
-            el.style.color = 'var(--status-error)';
+            setNetworkStatusClass(el, 'error');
           }
         } catch (e) {
           var el2 = document.getElementById('sw-msg-' + id);
           el2.textContent = 'Poll failed: ' + e.message;
-          el2.style.color = 'var(--status-error)';
+          setNetworkStatusClass(el2, 'error');
         }
       }
 
@@ -431,7 +430,7 @@ async function loadSubnetsTab() {
         switchPortOpen[id] = !switchPortOpen[id];
         var row = document.getElementById('sw-ports-row-' + id);
         if (!row) return;
-        row.style.display = switchPortOpen[id] ? '' : 'none';
+        row.hidden = !switchPortOpen[id];
         if (switchPortOpen[id]) loadSwitchPorts(id, 1);
       }
 
@@ -457,7 +456,7 @@ async function loadSubnetsTab() {
                 '</tr>';
             }).join('') + '</tbody></table>';
         } catch (e) {
-          document.getElementById('sw-ports-' + id).innerHTML = '<span style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</span>';
+          document.getElementById('sw-ports-' + id).innerHTML = '<span class="generated-error">Failed: ' + escapeHtml(e.message) + '</span>';
         }
       }
 
@@ -483,11 +482,11 @@ async function loadSubnetsTab() {
       }
 
       function showFingerprintForm() {
-        document.getElementById('fp-form-wrap').style.display = '';
+        document.getElementById('fp-form-wrap').hidden = false;
       }
 
       function hideFingerprintForm() {
-        document.getElementById('fp-form-wrap').style.display = 'none';
+        document.getElementById('fp-form-wrap').hidden = true;
       }
 
       async function saveFingerprint() {
@@ -542,7 +541,7 @@ async function loadSubnetsTab() {
             return;
           }
           body.innerHTML = rows.map(function (f) {
-            var actions = '<button class="btn btn-sm role-admin" onclick="deleteFingerprint(' + f.id + ')">Delete</button>';
+            var actions = '<button class="btn btn-sm role-admin" data-network-action="delete-fingerprint" data-network-id="' + escapeHtml(f.id) + '">Delete</button>';
             return '<tr>' +
               '<td title="' + escapeHtml(f.fingerprint || '-') + '">' + trimFingerprint(f.fingerprint) + '</td>' +
               '<td>' + escapeHtml(f.device_type || '-') + '</td>' +
@@ -557,7 +556,7 @@ async function loadSubnetsTab() {
           applyRoleVisibility(currentUser.role);
         } catch (e) {
           document.getElementById('fp-body').innerHTML =
-            '<tr><td colspan="6" style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+            '<tr><td colspan="6" class="generated-error">Failed: ' + escapeHtml(e.message) + '</td></tr>';
         }
       }
 
@@ -620,7 +619,7 @@ async function loadSubnetsTab() {
           renderPager('fp-obs-paging', fpObsCurrentPage, 50, data.total || 0, 'loadFingerprintObservations');
         } catch (e) {
           document.getElementById('fp-obs-body').innerHTML =
-            '<tr><td colspan="7" style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+            '<tr><td colspan="7" class="generated-error">Failed: ' + escapeHtml(e.message) + '</td></tr>';
         }
       }
 
@@ -661,7 +660,7 @@ async function loadSubnetsTab() {
           }
           body.innerHTML = rows.map(function (d) {
             return '<tr>' +
-              '<td><a href="#" class="ip-link" onclick="openTimeline(\'ip\', \'' + escJs(d.ip || '') + '\');return false;">' + escapeHtml(d.ip || '-') + '</a></td>' +
+              '<td><a href="#" class="ip-link" data-network-action="timeline" data-timeline-type="ip" data-timeline-value="' + escapeHtml(d.ip || '') + '">' + escapeHtml(d.ip || '-') + '</a></td>' +
               '<td>' + escapeHtml(d.hostname || '-') + '</td>' +
               '<td>' + escapeHtml(d.resolved_at ? new Date(d.resolved_at).toLocaleString() : '-') + '</td>' +
               '<td>' + escapeHtml(timeAgo(d.expires_at)) + '</td>' +
@@ -671,7 +670,7 @@ async function loadSubnetsTab() {
           renderPager('dns-paging', dnsCurrentPage, 50, data.total || 0, 'loadDnsList');
         } catch (e) {
           document.getElementById('dns-body').innerHTML =
-            '<tr><td colspan="4" style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+            '<tr><td colspan="4" class="generated-error">Failed: ' + escapeHtml(e.message) + '</td></tr>';
         }
       }
 
@@ -683,16 +682,16 @@ async function loadSubnetsTab() {
           var res = await fetch('/api/v2/dns/' + encodeURIComponent(ip), { credentials: 'include' });
           if (res.status === 404) {
             out.textContent = 'not cached';
-            out.style.color = 'var(--text-secondary)';
+            setNetworkStatusClass(out, 'muted');
             return;
           }
           if (!res.ok) throw new Error('HTTP ' + res.status);
           var data = await res.json();
           out.textContent = 'hostname: ' + (data.hostname || 'not cached');
-          out.style.color = 'var(--status-ok)';
+          setNetworkStatusClass(out, 'ok');
         } catch (e) {
           out.textContent = 'lookup failed: ' + e.message;
-          out.style.color = 'var(--status-error)';
+          setNetworkStatusClass(out, 'error');
         }
       }
 
@@ -712,6 +711,56 @@ async function loadSubnetsTab() {
           alert('Flush failed: ' + e.message);
         }
       }
+
+      document.addEventListener('click', function (event) {
+        var target = event.target.closest('[data-network-action]');
+        if (!target) return;
+        var action = target.getAttribute('data-network-action');
+        var rawId = target.getAttribute('data-network-id');
+        var id = /^[1-9][0-9]*$/.test(rawId || '') ? Number(rawId) : null;
+        if (action !== 'timeline' && (!Number.isSafeInteger(id) || id === null)) return;
+        switch (action) {
+          case 'edit-subnet':
+            editSubnet(id);
+            break;
+          case 'delete-subnet':
+            deleteSubnet(id);
+            break;
+          case 'toggle-subnet':
+            if (target.tagName === 'A') event.preventDefault();
+            toggleSubnetMappings(id);
+            break;
+          case 'promote-subnet':
+            promoteDiscoveredSubnet(id, target.getAttribute('data-cidr') || '');
+            break;
+          case 'dismiss-subnet':
+            dismissDiscoveredSubnet(id);
+            break;
+          case 'poll-switch':
+            pollSwitch(id);
+            break;
+          case 'edit-switch':
+            editSwitch(id);
+            break;
+          case 'delete-switch':
+            deleteSwitch(id);
+            break;
+          case 'toggle-switch':
+            toggleSwitchPorts(id);
+            break;
+          case 'delete-fingerprint':
+            deleteFingerprint(id);
+            break;
+          case 'timeline':
+            event.preventDefault();
+            var timelineType = target.getAttribute('data-timeline-type') || '';
+            var timelineValue = target.getAttribute('data-timeline-value') || '';
+            if ((timelineType === 'ip' || timelineType === 'user') && timelineValue && timelineValue.length <= 1024) {
+              openTimeline(timelineType, timelineValue);
+            }
+            break;
+        }
+      });
 
 (function () {
   window.TrueID = window.TrueID || {};

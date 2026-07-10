@@ -1,8 +1,12 @@
-/* Integrations module (notifications, firewall, SIEM, LDAP, Sycope). */
+function setIntegrationStatusClass(element, state) {
+        if (!element) return;
+        element.classList.remove('generated-status-ok', 'generated-status-error');
+        element.classList.add('generated-status-' + state);
+      }
 
-function showNotificationForm() {
+      function showNotificationForm() {
         notificationEditingId = null;
-        document.getElementById('notification-form').style.display = '';
+        document.getElementById('notification-form').hidden = false;
         document.getElementById('notif-name').value = '';
         document.getElementById('notif-type').value = 'email';
         document.getElementById('notif-enabled').checked = true;
@@ -11,7 +15,7 @@ function showNotificationForm() {
 
       function hideNotificationForm() {
         notificationEditingId = null;
-        document.getElementById('notification-form').style.display = 'none';
+        document.getElementById('notification-form').hidden = true;
       }
 
       function renderNotificationConfigForm() {
@@ -19,25 +23,25 @@ function showNotificationForm() {
         var el = document.getElementById('notif-config-fields');
         if (type === 'email') {
           el.innerHTML =
-            '<input id="notif-smtp-host" class="setting-input" style="width:180px;" placeholder="SMTP host">' +
-            '<input id="notif-smtp-port" class="setting-input" style="width:120px;" type="number" value="587" placeholder="Port">' +
-            '<label class="setting-desc" style="display:flex;align-items:center;gap:6px;"><input id="notif-smtp-tls" type="checkbox" checked> STARTTLS</label>' +
-            '<input id="notif-smtp-user" class="setting-input" style="width:180px;" placeholder="SMTP user (optional)">' +
-            '<input id="notif-smtp-pass" class="setting-input" style="width:180px;" type="password" placeholder="SMTP pass (optional)">' +
-            '<input id="notif-from" class="setting-input" style="width:220px;" placeholder="From address">' +
-            '<input id="notif-to" class="setting-input" style="width:280px;" placeholder="Recipients (comma separated)">';
+            '<input id="notif-smtp-host" class="setting-input generated-w-180" placeholder="SMTP host">' +
+            '<input id="notif-smtp-port" class="setting-input generated-w-120" type="number" value="587" placeholder="Port">' +
+            '<label class="setting-desc generated-inline-label"><input id="notif-smtp-tls" type="checkbox" checked> STARTTLS</label>' +
+            '<input id="notif-smtp-user" class="setting-input generated-w-180" placeholder="SMTP user (optional)">' +
+            '<input id="notif-smtp-pass" class="setting-input generated-w-180" type="password" placeholder="SMTP pass (optional)">' +
+            '<input id="notif-from" class="setting-input generated-w-220" placeholder="From address">' +
+            '<input id="notif-to" class="setting-input generated-w-280" placeholder="Recipients (comma separated)">';
         } else if (type === 'slack') {
           el.innerHTML =
-            '<input id="notif-webhook-url" class="setting-input" style="width:420px;" placeholder="https://hooks.slack.com/...">' +
-            '<input id="notif-channel" class="setting-input" style="width:160px;" placeholder="#channel (optional)">' +
-            '<input id="notif-username" class="setting-input" style="width:140px;" placeholder="Username (optional)">' +
-            '<input id="notif-icon-emoji" class="setting-input" style="width:140px;" placeholder=":shield: (optional)">';
+            '<input id="notif-webhook-url" class="setting-input generated-w-420" placeholder="https://hooks.slack.com/...">' +
+            '<input id="notif-channel" class="setting-input generated-w-160" placeholder="#channel (optional)">' +
+            '<input id="notif-username" class="setting-input generated-w-140" placeholder="Username (optional)">' +
+            '<input id="notif-icon-emoji" class="setting-input generated-w-140" placeholder=":shield: (optional)">';
         } else if (type === 'teams') {
-          el.innerHTML = '<input id="notif-webhook-url" class="setting-input" style="width:520px;" placeholder="Teams webhook URL">';
+          el.innerHTML = '<input id="notif-webhook-url" class="setting-input generated-w-520" placeholder="Teams webhook URL">';
         } else {
           el.innerHTML =
-            '<input id="notif-webhook-url" class="setting-input" style="width:360px;" placeholder="http(s)://...">' +
-            '<select id="notif-webhook-method" class="setting-input" style="width:110px;"><option value="POST">POST</option><option value="PUT">PUT</option></select>';
+            '<input id="notif-webhook-url" class="setting-input generated-w-360" placeholder="http(s)://...">' +
+            '<select id="notif-webhook-method" class="setting-input generated-w-110"><option value="POST">POST</option><option value="PUT">PUT</option></select>';
         }
       }
 
@@ -173,9 +177,9 @@ function showNotificationForm() {
               '<td><span class="badge badge-info">' + escapeHtml(c.channel_type) + '</span></td>' +
               '<td>' + (c.enabled ? '<span class="check-yes">enabled</span>' : '<span class="check-no">disabled</span>') + '</td>' +
               '<td>' + escapeHtml(c.config_summary || '-') + '</td>' +
-              '<td><button class="btn btn-sm" onclick="testNotificationChannel(' + c.id + ')">Test</button> ' +
-              '<button class="btn btn-sm" onclick="loadChannelDeliveries(' + c.id + ')">Deliveries</button> ' +
-              '<button class="btn btn-sm role-admin" onclick="deleteNotificationChannel(' + c.id + ')">Delete</button></td>' +
+              '<td><button class="btn btn-sm" data-integration-action="test-notification" data-integration-id="' + escapeHtml(c.id) + '">Test</button> ' +
+              '<button class="btn btn-sm" data-integration-action="notification-deliveries" data-integration-id="' + escapeHtml(c.id) + '">Deliveries</button> ' +
+              '<button class="btn btn-sm role-admin" data-integration-action="delete-notification" data-integration-id="' + escapeHtml(c.id) + '">Delete</button></td>' +
               '</tr>';
           }).join('');
           loadChannelDeliveries(rows[0].id);
@@ -193,12 +197,12 @@ function showNotificationForm() {
 
       function toggleFirewallUsername() {
         var type = document.getElementById('fw-type').value;
-        document.getElementById('fw-username').style.display = type === 'panos' ? '' : 'none';
+        document.getElementById('fw-username').hidden = type !== 'panos';
       }
 
       function showFirewallForm(item) {
         firewallEditingId = item && item.id ? item.id : null;
-        document.getElementById('firewall-form-wrap').style.display = '';
+        document.getElementById('firewall-form-wrap').hidden = false;
         document.getElementById('fw-name').value = item ? (item.name || '') : '';
         document.getElementById('fw-type').value = item ? (item.firewall_type || 'panos') : 'panos';
         document.getElementById('fw-host').value = item ? (item.host || '') : '';
@@ -214,7 +218,7 @@ function showNotificationForm() {
 
       function hideFirewallForm() {
         firewallEditingId = null;
-        document.getElementById('firewall-form-wrap').style.display = 'none';
+        document.getElementById('firewall-form-wrap').hidden = true;
       }
 
       async function saveFirewallTarget() {
@@ -296,12 +300,12 @@ function showNotificationForm() {
             var id = t.id;
             var open = !!firewallHistoryOpen[id];
             var actions =
-              '<button class="btn btn-sm role-admin" onclick="event.stopPropagation();testFirewallTarget(' + id + ')">Test</button> ' +
-              '<button class="btn btn-sm role-admin" onclick="event.stopPropagation();forceFirewallPush(' + id + ')">Force Push</button> ' +
-              '<button class="btn btn-sm role-admin" onclick="event.stopPropagation();editFirewallTarget(' + id + ')">Edit</button> ' +
-              '<button class="btn btn-sm role-admin" onclick="event.stopPropagation();deleteFirewallTarget(' + id + ')">Delete</button>';
-            return '<tr class="expand-row" onclick="toggleFirewallHistory(' + id + ')">' +
-              '<td>' + escapeHtml(t.name || '-') + '<div id="fw-result-' + id + '" class="muted" style="font-size:11px;"></div></td>' +
+              '<button class="btn btn-sm role-admin" data-integration-action="test-firewall" data-integration-id="' + escapeHtml(id) + '">Test</button> ' +
+              '<button class="btn btn-sm role-admin" data-integration-action="push-firewall" data-integration-id="' + escapeHtml(id) + '">Force Push</button> ' +
+              '<button class="btn btn-sm role-admin" data-integration-action="edit-firewall" data-integration-id="' + escapeHtml(id) + '">Edit</button> ' +
+              '<button class="btn btn-sm role-admin" data-integration-action="delete-firewall" data-integration-id="' + escapeHtml(id) + '">Delete</button>';
+            return '<tr class="expand-row" data-integration-action="toggle-firewall" data-integration-id="' + escapeHtml(id) + '">' +
+              '<td>' + escapeHtml(t.name || '-') + '<div id="fw-result-' + id + '" class="muted generated-small"></div></td>' +
               '<td>' + firewallTypeBadge(t.firewall_type) + '</td>' +
               '<td>' + escapeHtml((t.host || '-') + ':' + (t.port || '-')) + '</td>' +
               '<td>' + escapeHtml((t.push_interval_secs || '-') + 's') + '</td>' +
@@ -309,7 +313,7 @@ function showNotificationForm() {
               '<td>' + escapeHtml(timeAgo(t.last_push_at)) + '</td>' +
               '<td>' + actions + '</td>' +
               '</tr>' +
-              '<tr id="fw-history-row-' + id + '" style="display:' + (open ? '' : 'none') + ';"><td colspan="7"><div id="fw-history-' + id + '" class="muted">Loading history...</div></td></tr>';
+              '<tr id="fw-history-row-' + id + '"' + (open ? '' : ' hidden') + '><td colspan="7"><div id="fw-history-' + id + '" class="muted">Loading history...</div></td></tr>';
           }).join('');
           applyRoleVisibility(currentUser.role);
           await loadFirewallStats();
@@ -318,7 +322,7 @@ function showNotificationForm() {
           }
         } catch (e) {
           document.getElementById('firewall-body').innerHTML =
-            '<tr><td colspan="7" style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+            '<tr><td colspan="7" class="generated-error">Failed: ' + escapeHtml(e.message) + '</td></tr>';
         }
       }
 
@@ -355,15 +359,15 @@ function showNotificationForm() {
           var el = document.getElementById('fw-result-' + id);
           if (res.ok && data.status === 'ok') {
             el.textContent = 'Connection test: OK';
-            el.style.color = 'var(--status-ok)';
+            setIntegrationStatusClass(el, 'ok');
           } else {
             el.textContent = 'Connection test: ' + (data.message || ('HTTP ' + res.status));
-            el.style.color = 'var(--status-error)';
+            setIntegrationStatusClass(el, 'error');
           }
         } catch (e) {
           var el2 = document.getElementById('fw-result-' + id);
           el2.textContent = 'Connection test failed: ' + e.message;
-          el2.style.color = 'var(--status-error)';
+          setIntegrationStatusClass(el2, 'error');
         }
       }
 
@@ -379,16 +383,16 @@ function showNotificationForm() {
           var el = document.getElementById('fw-result-' + id);
           if (res.ok) {
             el.textContent = 'Push initiated: ' + (data.pushed_count || 0) + ' entries';
-            el.style.color = 'var(--status-ok)';
+            setIntegrationStatusClass(el, 'ok');
           } else {
             el.textContent = 'Push failed: ' + (data.message || ('HTTP ' + res.status));
-            el.style.color = 'var(--status-error)';
+            setIntegrationStatusClass(el, 'error');
           }
           await loadFirewallTargets();
         } catch (e) {
           var el2 = document.getElementById('fw-result-' + id);
           el2.textContent = 'Push failed: ' + e.message;
-          el2.style.color = 'var(--status-error)';
+          setIntegrationStatusClass(el2, 'error');
         }
       }
 
@@ -396,7 +400,7 @@ function showNotificationForm() {
         firewallHistoryOpen[id] = !firewallHistoryOpen[id];
         var row = document.getElementById('fw-history-row-' + id);
         if (!row) return;
-        row.style.display = firewallHistoryOpen[id] ? '' : 'none';
+        row.hidden = !firewallHistoryOpen[id];
         if (firewallHistoryOpen[id]) loadFirewallHistory(id);
       }
 
@@ -423,7 +427,7 @@ function showNotificationForm() {
             }).join('') +
             '</tbody></table>';
         } catch (e) {
-          box.innerHTML = '<span style="color:var(--status-error);">Failed to load history: ' + escapeHtml(e.message) + '</span>';
+          box.innerHTML = '<span class="generated-error">Failed to load history: ' + escapeHtml(e.message) + '</span>';
         }
       }
 
@@ -441,7 +445,7 @@ function showNotificationForm() {
 
       function showSiemForm(item) {
         siemEditingId = item && item.id ? item.id : null;
-        document.getElementById('siem-form-wrap').style.display = '';
+        document.getElementById('siem-form-wrap').hidden = false;
         document.getElementById('siem-name').value = item ? (item.name || '') : '';
         document.getElementById('siem-format').value = item ? (item.format || 'cef') : 'cef';
         document.getElementById('siem-transport').value = item ? (item.transport || 'udp') : 'udp';
@@ -455,7 +459,7 @@ function showNotificationForm() {
 
       function hideSiemForm() {
         siemEditingId = null;
-        document.getElementById('siem-form-wrap').style.display = 'none';
+        document.getElementById('siem-form-wrap').hidden = true;
       }
 
       async function saveSiemTarget() {
@@ -533,14 +537,14 @@ function showNotificationForm() {
               '<td>' + siemTransportBadge(t.transport) + '</td>' +
               '<td>' + escapeHtml((t.host || '-') + ':' + (t.port || '-')) + '</td>' +
               '<td>' + flags + '</td>' +
-              '<td><button class="btn btn-sm role-admin" onclick="editSiemTarget(' + t.id + ')">Edit</button> ' +
-              '<button class="btn btn-sm role-admin" onclick="deleteSiemTarget(' + t.id + ')">Delete</button></td>' +
+              '<td><button class="btn btn-sm role-admin" data-integration-action="edit-siem" data-integration-id="' + escapeHtml(t.id) + '">Edit</button> ' +
+              '<button class="btn btn-sm role-admin" data-integration-action="delete-siem" data-integration-id="' + escapeHtml(t.id) + '">Delete</button></td>' +
               '</tr>';
           }).join('');
           applyRoleVisibility(currentUser.role);
         } catch (e) {
           document.getElementById('siem-body').innerHTML =
-            '<tr><td colspan="6" style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+            '<tr><td colspan="6" class="generated-error">Failed: ' + escapeHtml(e.message) + '</td></tr>';
         }
       }
 
@@ -583,7 +587,7 @@ function showNotificationForm() {
           document.getElementById('ldap-interval').value = cfg.sync_interval_secs || 300;
           var ps = document.getElementById('ldap-pass-status');
           ps.textContent = cfg.password_set ? 'Password saved' : 'Not set';
-          ps.style.color = cfg.password_set ? 'var(--status-ok)' : 'var(--status-error)';
+          setIntegrationStatusClass(ps, cfg.password_set ? 'ok' : 'error');
         } catch (e) {
           document.getElementById('ldap-sync-msg').textContent = 'Failed to load LDAP config: ' + e.message;
         }
@@ -623,7 +627,7 @@ function showNotificationForm() {
           input.value = '';
           var ps = document.getElementById('ldap-pass-status');
           ps.textContent = 'Password saved';
-          ps.style.color = 'var(--status-ok)';
+          setIntegrationStatusClass(ps, 'ok');
         } catch (e) {
           alert('Failed to save password: ' + e.message);
         }
@@ -639,10 +643,10 @@ function showNotificationForm() {
           });
           if (!res.ok) throw new Error('HTTP ' + res.status);
           document.getElementById('ldap-sync-msg').textContent = 'Sync initiated';
-          document.getElementById('ldap-sync-msg').style.color = 'var(--status-ok)';
+          setIntegrationStatusClass(document.getElementById('ldap-sync-msg'), 'ok');
         } catch (e) {
           document.getElementById('ldap-sync-msg').textContent = 'Sync failed: ' + e.message;
-          document.getElementById('ldap-sync-msg').style.color = 'var(--status-error)';
+          setIntegrationStatusClass(document.getElementById('ldap-sync-msg'), 'error');
         }
       }
 
@@ -658,10 +662,10 @@ function showNotificationForm() {
           }
           box.innerHTML = rows.map(function (r) {
             var name = r.group_name || '-';
-            return '<div style="margin:4px 0;"><a class="ip-link" href="#" onclick="loadLdapGroupMembers(\'' + escJs(name) + '\');return false;">' + escapeHtml(name) + '</a></div>';
+            return '<div class="generated-row"><a class="ip-link" href="#" data-integration-action="ldap-group" data-group-name="' + escapeHtml(name) + '">' + escapeHtml(name) + '</a></div>';
           }).join('');
         } catch (e) {
-          document.getElementById('ldap-groups-list').innerHTML = '<span style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</span>';
+          document.getElementById('ldap-groups-list').innerHTML = '<span class="generated-error">Failed: ' + escapeHtml(e.message) + '</span>';
         }
       }
 
@@ -675,12 +679,12 @@ function showNotificationForm() {
             box.innerHTML = '<span class="muted">No members in ' + escapeHtml(group) + '.</span>';
             return;
           }
-          box.innerHTML = '<div class="muted" style="margin-bottom:6px;">Group: ' + escapeHtml(group) + '</div>' +
+          box.innerHTML = '<div class="muted generated-mb-6">Group: ' + escapeHtml(group) + '</div>' +
             rows.map(function (r) {
-              return '<div style="margin:4px 0;">' + escapeHtml(r.username || '-') + '</div>';
+              return '<div class="generated-row">' + escapeHtml(r.username || '-') + '</div>';
             }).join('');
         } catch (e) {
-          document.getElementById('ldap-members-list').innerHTML = '<span style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</span>';
+          document.getElementById('ldap-members-list').innerHTML = '<span class="generated-error">Failed: ' + escapeHtml(e.message) + '</span>';
         }
       }
 
@@ -697,10 +701,10 @@ function showNotificationForm() {
             return;
           }
           box.innerHTML = rows.map(function (r) {
-            return '<div style="margin:4px 0;">' + escapeHtml(r.group_name || '-') + '</div>';
+            return '<div class="generated-row">' + escapeHtml(r.group_name || '-') + '</div>';
           }).join('');
         } catch (e) {
-          document.getElementById('ldap-user-groups').innerHTML = '<span style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</span>';
+          document.getElementById('ldap-user-groups').innerHTML = '<span class="generated-error">Failed: ' + escapeHtml(e.message) + '</span>';
         }
       }
 
@@ -721,21 +725,21 @@ function showNotificationForm() {
           var passStatus = document.getElementById('pass-status');
           if (cfg.sycope_pass_set) {
             passStatus.textContent = 'Password saved';
-            passStatus.style.color = 'var(--status-ok)';
+            setIntegrationStatusClass(passStatus, 'ok');
           } else {
             passStatus.textContent = 'Not set';
-            passStatus.style.color = 'var(--status-error)';
+            setIntegrationStatusClass(passStatus, 'error');
           }
 
           renderSyncStatus(cfg.last_sync);
         } catch (err) {
           console.error('Failed to load Sycope config:', err);
           document.getElementById('sync-status').innerHTML =
-            '<span style="color:var(--status-error);">Failed to load config: ' + err.message + '</span>';
+            '<span class="generated-error">Failed to load config: ' + escapeHtml(err.message) + '</span>';
         }
       }
 
-      async function saveSycopeField(field, value) {
+      async function saveSycopeField(field, value, source) {
         var payload = {};
         payload[field] = value;
         try {
@@ -746,10 +750,10 @@ function showNotificationForm() {
             body: JSON.stringify(payload),
           });
           if (!res.ok) throw new Error('HTTP ' + res.status);
-          flashElement(event.target, true);
+          flashElement(source, true);
         } catch (err) {
           console.error('Save failed:', err);
-          flashElement(event.target, false);
+          flashElement(source, false);
         }
       }
 
@@ -768,7 +772,7 @@ function showNotificationForm() {
           input.value = '';
           var passStatus = document.getElementById('pass-status');
           passStatus.textContent = 'Password saved';
-          passStatus.style.color = 'var(--status-ok)';
+          setIntegrationStatusClass(passStatus, 'ok');
         } catch (err) {
           console.error('Password save failed:', err);
           alert('Failed to save password: ' + err.message);
@@ -779,7 +783,7 @@ function showNotificationForm() {
         var btn = document.getElementById('test-btn');
         btn.disabled = true;
         btn.textContent = 'Testing...';
-        document.getElementById('test-result').style.display = 'none';
+        document.getElementById('test-result').hidden = true;
 
         try {
           var res = await fetch('/api/v1/admin/config/sycope', { credentials: 'include' });
@@ -803,10 +807,9 @@ function showNotificationForm() {
 
       function showTestResult(ok, message) {
         var el = document.getElementById('test-result');
-        el.style.display = 'block';
-        el.style.background = ok ? 'var(--status-ok-soft)' : 'var(--status-error-soft)';
-        el.style.border = '1px solid ' + (ok ? 'var(--status-ok)' : 'var(--status-error)');
-        el.style.color = ok ? 'var(--status-ok)' : 'var(--status-error)';
+        el.hidden = false;
+        el.classList.toggle('generated-test-ok', ok);
+        el.classList.toggle('generated-test-error', !ok);
         el.textContent = (ok ? 'OK: ' : 'Error: ') + message;
       }
 
@@ -815,26 +818,71 @@ function showNotificationForm() {
         if (!sync || !sync.status) {
           el.innerHTML = '<span class="muted">No sync has been performed yet. ' +
             'Configure the settings above and run the connector:<br>' +
-            '<code style="color:var(--green-bright);">cd integrations/sycope && python3 trueid_sync.py</code></span>';
+            '<code class="generated-code">cd integrations/sycope && python3 trueid_sync.py</code></span>';
           return;
         }
         var when = sync.last_run_at ? new Date(sync.last_run_at).toLocaleString() : 'unknown';
         var ok = sync.status === 'ok';
-        var color = ok ? 'var(--status-ok)' : 'var(--status-error)';
-        var html = '<div style="display:flex;gap:16px;align-items:baseline;">' +
-          '<span style="color:' + color + ';font-size:16px;">' + (ok ? '●' : '✗') + '</span>' +
+        var statusClass = ok ? 'generated-status-ok' : 'generated-status-error';
+        var html = '<div class="generated-sync-layout">' +
+          '<span class="generated-sync-icon ' + statusClass + '">' + (ok ? '●' : '✗') + '</span>' +
           '<div>' +
-          '<div>Last sync: <strong>' + when + '</strong></div>' +
-          '<div>Status: <span style="color:' + color + ';">' + sync.status + '</span></div>';
+          '<div>Last sync: <strong>' + escapeHtml(when) + '</strong></div>' +
+          '<div>Status: <span class="' + statusClass + '">' + escapeHtml(sync.status) + '</span></div>';
         if (sync.records_synced !== undefined) {
-          html += '<div>Records synced: ' + sync.records_synced + '</div>';
+          html += '<div>Records synced: ' + escapeHtml(sync.records_synced) + '</div>';
         }
         if (sync.message) {
-          html += '<div style="color:var(--status-error);margin-top:4px;">Message: ' + sync.message + '</div>';
+          html += '<div class="generated-sync-message">Message: ' + escapeHtml(sync.message) + '</div>';
         }
         html += '</div></div>';
         el.innerHTML = html;
       }
+
+      document.addEventListener('click', function (event) {
+        var target = event.target.closest('[data-integration-action]');
+        if (!target) return;
+        var action = target.getAttribute('data-integration-action');
+        var rawId = target.getAttribute('data-integration-id');
+        var id = /^[1-9][0-9]*$/.test(rawId || '') ? Number(rawId) : null;
+        if (action !== 'ldap-group' && (!Number.isSafeInteger(id) || id === null)) return;
+        switch (action) {
+          case 'test-notification':
+            testNotificationChannel(id);
+            break;
+          case 'notification-deliveries':
+            loadChannelDeliveries(id);
+            break;
+          case 'delete-notification':
+            deleteNotificationChannel(id);
+            break;
+          case 'test-firewall':
+            testFirewallTarget(id);
+            break;
+          case 'push-firewall':
+            forceFirewallPush(id);
+            break;
+          case 'edit-firewall':
+            editFirewallTarget(id);
+            break;
+          case 'delete-firewall':
+            deleteFirewallTarget(id);
+            break;
+          case 'toggle-firewall':
+            toggleFirewallHistory(id);
+            break;
+          case 'edit-siem':
+            editSiemTarget(id);
+            break;
+          case 'delete-siem':
+            deleteSiemTarget(id);
+            break;
+          case 'ldap-group':
+            event.preventDefault();
+            loadLdapGroupMembers(target.getAttribute('data-group-name') || '');
+            break;
+        }
+      });
 
 (function () {
   window.TrueID = window.TrueID || {};

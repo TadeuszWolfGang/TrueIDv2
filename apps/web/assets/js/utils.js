@@ -1,5 +1,3 @@
-/* Utility functions extracted from dashboard monolith. */
-
 function escapeHtml(v) {
         if (v === null || v === undefined) return '';
         return String(v)
@@ -76,18 +74,56 @@ function escapeHtml(v) {
         return tags.slice(0, 4).map(function (t) {
           var color = t && t.color ? t.color : 'var(--text-secondary)';
           var label = t && t.tag ? t.tag : '-';
-          return '<span class="badge" style="margin-right:4px;border:1px solid ' + escapeHtml(color) + ';color:' + escapeHtml(color) + ';">' +
+          return '<span class="badge generated-tag-badge" data-tag-color="' + escapeHtml(color) + '">' +
             escapeHtml(label) + '</span>';
         }).join('');
+      }
+
+      function applyGeneratedTagColors(root) {
+        if (!root) return;
+        root.querySelectorAll('.generated-tag-badge[data-tag-color]').forEach(function (badge) {
+          var color = badge.getAttribute('data-tag-color') || 'var(--text-secondary)';
+          badge.style.color = color;
+          badge.style.borderColor = color;
+        });
       }
 
       function renderPager(elId, page, perPage, total, fnName) {
         var totalPages = Math.ceil(total / perPage) || 1;
         var html = 'Page ' + page + ' of ' + totalPages + ' (' + total + ' items) &nbsp;';
-        if (page > 1) html += '<button class="btn btn-sm" onclick="' + fnName + '(' + (page - 1) + ')">← Prev</button> ';
-        if (page < totalPages) html += '<button class="btn btn-sm" onclick="' + fnName + '(' + (page + 1) + ')">Next →</button>';
+        var allowed = ['loadSubnets', 'loadSwitches', 'loadFingerprintList', 'loadFingerprintObservations', 'loadDnsList'];
+        if (allowed.indexOf(fnName) !== -1 && page > 1) {
+          html += '<button class="btn btn-sm" data-pager-action="' + escapeHtml(fnName) + '" data-page="' + (page - 1) + '">← Prev</button> ';
+        }
+        if (allowed.indexOf(fnName) !== -1 && page < totalPages) {
+          html += '<button class="btn btn-sm" data-pager-action="' + escapeHtml(fnName) + '" data-page="' + (page + 1) + '">Next →</button>';
+        }
         document.getElementById(elId).innerHTML = html;
       }
+
+      document.addEventListener('click', function (event) {
+        var target = event.target.closest('[data-pager-action]');
+        if (!target) return;
+        var page = Number(target.getAttribute('data-page'));
+        if (!Number.isSafeInteger(page) || page < 1) return;
+        switch (target.getAttribute('data-pager-action')) {
+          case 'loadSubnets':
+            loadSubnets(page);
+            break;
+          case 'loadSwitches':
+            loadSwitches(page);
+            break;
+          case 'loadFingerprintList':
+            loadFingerprintList(page);
+            break;
+          case 'loadFingerprintObservations':
+            loadFingerprintObservations(page);
+            break;
+          case 'loadDnsList':
+            loadDnsList(page);
+            break;
+        }
+      });
 
       function trimFingerprint(v) {
         if (!v) return '-';
@@ -102,17 +138,8 @@ function escapeHtml(v) {
         el.classList.add(ok ? 'flash-ok' : 'flash-err');
       }
 
-      /**
-       * Stores sort state per tab.
-       * Returns: void.
-       */
       window.sortState = window.sortState || {};
 
-      /**
-       * Toggles sort state for a table tab.
-       * Parameters: tabName - logical tab key, column - selected sort key, reloadFn - tab reload callback.
-       * Returns: void.
-       */
       function handleSort(tabName, column, reloadFn) {
         var state = window.sortState[tabName] || {};
         if (state.column === column) {
@@ -125,11 +152,6 @@ function escapeHtml(v) {
         reloadFn(1);
       }
 
-      /**
-       * Binds sortable behavior and active arrow state to table headers.
-       * Parameters: tableId - table DOM id, tabName - logical tab key, _columnMap - reserved map, reloadFn - tab reload callback.
-       * Returns: void.
-       */
       function applySortHeaders(tableId, tabName, _columnMap, reloadFn) {
         var table = document.getElementById(tableId);
         if (!table) return;
@@ -143,15 +165,14 @@ function escapeHtml(v) {
           if (state.column === col) {
             th.classList.add(state.direction === 'desc' ? 'sort-desc' : 'sort-asc');
           }
-          th.onclick = function () { handleSort(tabName, col, reloadFn); };
+          if (th.trueIdSortHandler) {
+            th.removeEventListener('click', th.trueIdSortHandler);
+          }
+          th.trueIdSortHandler = function () { handleSort(tabName, col, reloadFn); };
+          th.addEventListener('click', th.trueIdSortHandler);
         });
       }
 
-      /**
-       * Builds query params for backend sorting.
-       * Parameters: tabName - logical tab key.
-       * Returns: query string fragment or empty string.
-       */
       function getSortParams(tabName) {
         var state = window.sortState[tabName];
         if (!state || !state.column) return '';
@@ -170,6 +191,7 @@ function escapeHtml(v) {
   if (typeof window.getSortParams === 'function') window.TrueID.getSortParams = window.getSortParams;
   if (typeof window.handleSort === 'function') window.TrueID.handleSort = window.handleSort;
   if (typeof window.applySortHeaders === 'function') window.TrueID.applySortHeaders = window.applySortHeaders;
+  if (typeof window.applyGeneratedTagColors === 'function') window.TrueID.applyGeneratedTagColors = window.applyGeneratedTagColors;
   if (typeof window.renderPager === 'function') window.TrueID.renderPager = window.renderPager;
   if (typeof window.renderTagsBadges === 'function') window.TrueID.renderTagsBadges = window.renderTagsBadges;
   if (typeof window.statusDotClass === 'function') window.TrueID.statusDotClass = window.statusDotClass;

@@ -1,0 +1,147 @@
+.generated-error,
+.generated-status-error {
+  color: var(--status-error);
+}
+
+.generated-status-ok {
+  color: var(--status-ok);
+}
+
+.generated-status-warn {
+  color: var(--status-warn);
+}
+
+.generated-status-neutral {
+  color: var(--text-primary);
+}
+
+.generated-flex-between {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.generated-flex-gap {
+  display: flex;
+  gap: 6px;
+}
+
+.generated-input-110 {
+  width: 110px;
+}
+
+.generated-input-120 {
+  width: 120px;
+}
+
+.generated-chart-scroll {
+  margin-top: 10px;
+  overflow: auto;
+}
+
+.generated-detail-spacer,
+.generated-subtext {
+  margin-top: 4px;
+}
+
+.generated-actions-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.generated-list-row-sm,
+.generated-list-row-md {
+  border-bottom: 1px solid var(--border-dim);
+}
+
+.generated-list-row-sm {
+  padding: 4px 0;
+}
+
+.generated-list-row-md {
+  padding: 6px 0;
+}
+
+.generated-setting-row-sm {
+  padding: 4px 0;
+}
+
+.generated-setting-row-md {
+  padding: 6px 0;
+}
+
+.generated-tag-badge {
+  align-items: center;
+  display: inline-flex;
+  gap: 4px;
+}
+
+.generated-tag-swatch {
+  height: 12px;
+  width: 12px;
+}
+
+.generated-dot-starting {
+  background: var(--status-warn);
+  box-shadow: 0 0 6px var(--status-warn);
+}
+
+.generated-request-id {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.generated-checkbox-label {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+  margin-right: 12px;
+}
+
+.generated-source-down-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.generated-source-down-fields[hidden] {
+  display: none;
+}
+
+.generated-chart-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.generated-legend-swatch {
+  display: inline-block;
+  height: 10px;
+  margin-right: 6px;
+  vertical-align: middle;
+  width: 10px;
+}
+
+.generated-chart-layout {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+}
+
+.generated-compliance-card {
+  min-width: 180px;
+}
+
+.generated-compliance-label {
+  font-size: 11px;
+}
+
+.generated-compliance-value {
+  font-size: 20px;
+  font-weight: 700;
+}

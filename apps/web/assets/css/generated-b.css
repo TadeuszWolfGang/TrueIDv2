@@ -1,0 +1,144 @@
+[hidden] {
+  display: none !important;
+}
+
+.generated-error,
+.generated-status-error {
+  color: var(--status-error);
+}
+
+.generated-status-ok {
+  color: var(--status-ok);
+}
+
+.generated-status-muted {
+  color: var(--text-secondary);
+}
+
+.generated-small {
+  font-size: 11px;
+}
+
+.generated-panel-compact {
+  margin-bottom: 12px;
+  padding: 12px;
+}
+
+.generated-mb-6 {
+  margin-bottom: 6px;
+}
+
+.generated-mb-8 {
+  margin-bottom: 8px;
+}
+
+.generated-detail-list {
+  margin-top: 6px;
+  padding-left: 16px;
+}
+
+.generated-flex-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.generated-pre-wrap {
+  white-space: pre-wrap;
+}
+
+.generated-row {
+  margin: 4px 0;
+}
+
+.generated-inline-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.generated-tag-badge {
+  margin-right: 4px;
+}
+
+.generated-code {
+  color: var(--green-bright);
+}
+
+.generated-sync-layout {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+}
+
+.generated-sync-icon {
+  font-size: 16px;
+}
+
+.generated-sync-message {
+  margin-top: 4px;
+  color: var(--status-error);
+}
+
+.generated-test-ok {
+  border: 1px solid var(--status-ok);
+  background: var(--status-ok-soft);
+  color: var(--status-ok);
+}
+
+.generated-test-error {
+  border: 1px solid var(--status-error);
+  background: var(--status-error-soft);
+  color: var(--status-error);
+}
+
+.generated-matrix-enabled {
+  color: var(--green-bright);
+}
+
+.generated-matrix-disabled {
+  color: var(--text-secondary);
+}
+
+.generated-live-toast {
+  max-width: 320px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  background: var(--bg-panel);
+  font-size: 12px;
+  text-shadow: var(--text-glow);
+}
+
+.generated-toast-ok {
+  color: var(--status-ok);
+}
+
+.generated-toast-error {
+  color: var(--status-error);
+}
+
+.generated-toast-warn {
+  color: var(--status-warn);
+}
+
+.generated-toast-info {
+  color: var(--status-info);
+}
+
+.map-promote-link {
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.generated-w-110 { width: 110px; }
+.generated-w-120 { width: 120px; }
+.generated-w-140 { width: 140px; }
+.generated-w-160 { width: 160px; }
+.generated-w-180 { width: 180px; }
+.generated-w-220 { width: 220px; }
+.generated-w-280 { width: 280px; }
+.generated-w-360 { width: 360px; }
+.generated-w-420 { width: 420px; }
+.generated-w-520 { width: 520px; }

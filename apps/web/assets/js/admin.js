@@ -1,5 +1,3 @@
-/* Admin module (status, retention, security, audit). */
-
 var apiKeysCache = [];
 var usersPasswordPolicy = null;
 
@@ -54,13 +52,14 @@ var usersPasswordPolicy = null;
         var el = document.getElementById('add-user-result');
         if (!el) return;
         el.textContent = msg || '';
-        el.style.color = ok ? 'var(--status-ok)' : 'var(--status-error)';
+        el.classList.toggle('generated-status-ok', !!ok);
+        el.classList.toggle('generated-error', !ok);
       }
 
       function openAddUserModal() {
         var modal = document.getElementById('add-user-modal');
         if (!modal) return;
-        modal.style.display = '';
+        modal.hidden = false;
         document.getElementById('add-user-username').value = '';
         document.getElementById('add-user-password').value = '';
         document.getElementById('add-user-password-confirm').value = '';
@@ -72,7 +71,7 @@ var usersPasswordPolicy = null;
       function closeAddUserModal() {
         var modal = document.getElementById('add-user-modal');
         if (!modal) return;
-        modal.style.display = 'none';
+        modal.hidden = true;
       }
 
       async function createUserFromModal() {
@@ -182,7 +181,7 @@ var usersPasswordPolicy = null;
             var flags = [];
             if (u.force_password_change) flags.push('<span class="badge badge-warning">password reset</span>');
             if (u.locked_until) flags.push('<span class="badge badge-critical">locked</span>');
-            var actions = '<button class="btn btn-sm" onclick="resetUserPassword(' + u.id + ')">Reset Password</button>';
+            var actions = '<button class="btn btn-sm" data-admin-action="reset-user-password" data-id="' + escapeHtml(String(u.id)) + '">Reset Password</button>';
             return '<tr>' +
               '<td>' + escapeHtml(u.username || '-') + '</td>' +
               '<td>' + escapeHtml(u.role || '-') + '</td>' +
@@ -193,7 +192,7 @@ var usersPasswordPolicy = null;
               '</tr>';
           }).join('');
         } catch (e) {
-          bodyEl.innerHTML = '<tr><td colspan="6" style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+          bodyEl.innerHTML = '<tr><td colspan="6" class="generated-error">Failed: ' + escapeHtml(e.message) + '</td></tr>';
         }
       }
 
@@ -268,13 +267,13 @@ var usersPasswordPolicy = null;
               '<td>' + renderUsageSparkline(u && u.usage ? u.usage : []) + '</td>' +
               '<td>' + escapeHtml(err24) + ' <span class="muted">(' + escapeHtml(errRate) + ')</span></td>' +
               '<td>' +
-                '<button class="btn btn-sm" onclick="loadApiKeyUsage(' + k.id + ')">Details</button> ' +
-                '<button class="btn btn-sm btn-danger" onclick="revokeApiKey(' + k.id + ')">Revoke</button>' +
+                '<button class="btn btn-sm" data-admin-action="load-api-key-usage" data-id="' + escapeHtml(String(k.id)) + '">Details</button> ' +
+                '<button class="btn btn-sm btn-danger" data-admin-action="revoke-api-key" data-id="' + escapeHtml(String(k.id)) + '">Revoke</button>' +
               '</td>' +
               '</tr>';
           }).join('');
         } catch (e) {
-          bodyEl.innerHTML = '<tr><td colspan="6" style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+          bodyEl.innerHTML = '<tr><td colspan="6" class="generated-error">Failed: ' + escapeHtml(e.message) + '</td></tr>';
         }
       }
 
@@ -289,17 +288,17 @@ var usersPasswordPolicy = null;
           var err = data.total_errors_7d || 0;
           var errRate = req > 0 ? ((err * 100) / req).toFixed(2) : '0.00';
           detailsEl.innerHTML =
-            '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;">' +
+            '<div class="generated-flex-between">' +
               '<div><strong>' + escapeHtml(data.key_name || ('Key #' + id)) + '</strong> · 7d requests: ' + escapeHtml(req) + ' · errors: ' + escapeHtml(err) + ' (' + escapeHtml(errRate) + '%)</div>' +
-              '<div style="display:flex;gap:6px;">' +
-                '<input id="api-key-limit-rpm-' + id + '" class="setting-input" type="number" min="1" max="10000" style="width:110px;" value="' + escapeHtml(data.rate_limit_rpm || 100) + '">' +
-                '<input id="api-key-limit-burst-' + id + '" class="setting-input" type="number" min="1" max="1000" style="width:110px;" value="' + escapeHtml((apiKeysCache.find(function (k) { return k.id === id; }) || {}).rate_limit_burst || 20) + '">' +
-                '<button class="btn btn-sm" onclick="saveApiKeyLimits(' + id + ')">Save limits</button>' +
+              '<div class="generated-flex-gap">' +
+                '<input id="api-key-limit-rpm-' + id + '" class="setting-input generated-input-110" type="number" min="1" max="10000" value="' + escapeHtml(data.rate_limit_rpm || 100) + '">' +
+                '<input id="api-key-limit-burst-' + id + '" class="setting-input generated-input-110" type="number" min="1" max="1000" value="' + escapeHtml((apiKeysCache.find(function (k) { return k.id === id; }) || {}).rate_limit_burst || 20) + '">' +
+                '<button class="btn btn-sm" data-admin-action="save-api-key-limits" data-id="' + escapeHtml(String(id)) + '">Save limits</button>' +
               '</div>' +
             '</div>' +
-            '<div style="margin-top:10px;overflow:auto;">' + renderUsageChart7d(data.usage || []) + '</div>';
+            '<div class="generated-chart-scroll">' + renderUsageChart7d(data.usage || []) + '</div>';
         } catch (e) {
-          detailsEl.innerHTML = '<span style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</span>';
+          detailsEl.innerHTML = '<span class="generated-error">Failed: ' + escapeHtml(e.message) + '</span>';
         }
       }
 
@@ -372,14 +371,14 @@ var usersPasswordPolicy = null;
       }
 
 async function openSecurityModal() {
-        document.getElementById('security-modal').style.display = '';
-        document.getElementById('totp-setup-box').style.display = 'none';
-        document.getElementById('totp-backup-codes').style.display = 'none';
+        document.getElementById('security-modal').hidden = false;
+        document.getElementById('totp-setup-box').hidden = true;
+        document.getElementById('totp-backup-codes').hidden = true;
         await loadTotpStatus();
       }
 
       function closeSecurityModal() {
-        document.getElementById('security-modal').style.display = 'none';
+        document.getElementById('security-modal').hidden = true;
       }
 
       async function loadTotpStatus() {
@@ -390,15 +389,15 @@ async function openSecurityModal() {
           var data = await resp.json();
           var enabled = !!data.enabled;
           box.innerHTML =
-            '<div>2FA status: <strong style="color:' + (enabled ? 'var(--status-ok)' : 'var(--status-warn)') + ';">' + (enabled ? 'Enabled' : 'Disabled') + '</strong></div>' +
-            '<div class="muted" style="margin-top:6px;">Verified at: ' + escapeHtml(data.verified_at || '-') + '</div>' +
-            '<div style="display:flex;gap:8px;margin-top:10px;">' +
+            '<div>2FA status: <strong class="' + (enabled ? 'generated-status-ok' : 'generated-status-warn') + '">' + (enabled ? 'Enabled' : 'Disabled') + '</strong></div>' +
+            '<div class="muted generated-detail-spacer">Verified at: ' + escapeHtml(data.verified_at || '-') + '</div>' +
+            '<div class="generated-actions-row">' +
               (enabled
-                ? '<button class="btn btn-sm" onclick="disableTotp()">Disable 2FA</button><button class="btn btn-sm" onclick="regenBackupCodes()">Regenerate Backup Codes</button>'
-                : '<button class="btn btn-sm" onclick="startTotpSetup()">Enable 2FA</button>') +
+                ? '<button class="btn btn-sm" data-admin-action="disable-totp">Disable 2FA</button><button class="btn btn-sm" data-admin-action="regen-backup-codes">Regenerate Backup Codes</button>'
+                : '<button class="btn btn-sm" data-admin-action="start-totp-setup">Enable 2FA</button>') +
             '</div>';
         } catch (e) {
-          box.innerHTML = '<span style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</span>';
+          box.innerHTML = '<span class="generated-error">Failed: ' + escapeHtml(e.message) + '</span>';
         }
       }
 
@@ -412,7 +411,7 @@ async function openSecurityModal() {
           });
           if (!resp.ok) throw new Error('HTTP ' + resp.status);
           var data = await resp.json();
-          document.getElementById('totp-setup-box').style.display = '';
+          document.getElementById('totp-setup-box').hidden = false;
           document.getElementById('totp-qr').src = data.qr_code || '';
           document.getElementById('totp-secret-line').textContent = 'Secret: ' + (data.secret || '-');
         } catch (e) {
@@ -436,9 +435,9 @@ async function openSecurityModal() {
           }
           var data = await resp.json();
           var codes = (data.backup_codes || []).join('\n');
-          document.getElementById('totp-backup-codes').style.display = '';
+          document.getElementById('totp-backup-codes').hidden = false;
           document.getElementById('totp-backup-codes').textContent = 'Backup codes (save now):\n' + codes;
-          document.getElementById('totp-setup-box').style.display = 'none';
+          document.getElementById('totp-setup-box').hidden = true;
           await loadTotpStatus();
         } catch (e) {
           alert('TOTP verify failed: ' + e.message);
@@ -456,7 +455,7 @@ async function openSecurityModal() {
             body: JSON.stringify({ code: code })
           });
           if (!resp.ok) throw new Error('HTTP ' + resp.status);
-          document.getElementById('totp-backup-codes').style.display = 'none';
+          document.getElementById('totp-backup-codes').hidden = true;
           await loadTotpStatus();
         } catch (e) {
           alert('Disable failed: ' + e.message);
@@ -473,7 +472,7 @@ async function openSecurityModal() {
           });
           if (!resp.ok) throw new Error('HTTP ' + resp.status);
           var data = await resp.json();
-          document.getElementById('totp-backup-codes').style.display = '';
+          document.getElementById('totp-backup-codes').hidden = false;
           document.getElementById('totp-backup-codes').textContent =
             'New backup codes (save now):\n' + (data.backup_codes || []).join('\n');
         } catch (e) {
@@ -488,14 +487,14 @@ async function openSecurityModal() {
           if (!policyRes.ok) throw new Error('HTTP ' + policyRes.status);
           var p = await policyRes.json();
           document.getElementById('admin-security-policy').innerHTML =
-            '<div class="setting-row"><span class="setting-title">Min Length</span><input id="sec-min-length" class="setting-input" style="width:120px;" type="number" min="8" value="' + escapeHtml(p.min_length) + '"></div>' +
+            '<div class="setting-row"><span class="setting-title">Min Length</span><input id="sec-min-length" class="setting-input generated-input-120" type="number" min="8" value="' + escapeHtml(p.min_length) + '"></div>' +
             '<div class="setting-row"><span class="setting-title">Require Special</span><input id="sec-require-special" type="checkbox" ' + (p.require_special ? 'checked' : '') + '></div>' +
-            '<div class="setting-row"><span class="setting-title">History Count</span><input id="sec-history-count" class="setting-input" style="width:120px;" type="number" min="0" value="' + escapeHtml(p.history_count) + '"></div>' +
-            '<div class="setting-row"><span class="setting-title">Session Idle Minutes</span><input id="sec-idle-minutes" class="setting-input" style="width:120px;" type="number" min="1" value="' + escapeHtml(p.session_max_idle_minutes) + '"></div>' +
-            '<div class="setting-row"><span class="setting-title">Session Max Hours</span><input id="sec-max-hours" class="setting-input" style="width:120px;" type="number" min="1" value="' + escapeHtml(p.session_absolute_max_hours) + '"></div>' +
+            '<div class="setting-row"><span class="setting-title">History Count</span><input id="sec-history-count" class="setting-input generated-input-120" type="number" min="0" value="' + escapeHtml(p.history_count) + '"></div>' +
+            '<div class="setting-row"><span class="setting-title">Session Idle Minutes</span><input id="sec-idle-minutes" class="setting-input generated-input-120" type="number" min="1" value="' + escapeHtml(p.session_max_idle_minutes) + '"></div>' +
+            '<div class="setting-row"><span class="setting-title">Session Max Hours</span><input id="sec-max-hours" class="setting-input generated-input-120" type="number" min="1" value="' + escapeHtml(p.session_absolute_max_hours) + '"></div>' +
             '<div class="setting-row"><span class="setting-title">TOTP Required for Admins</span><input id="sec-totp-required" type="checkbox" ' + (p.totp_required_for_admins ? 'checked' : '') + '></div>';
         } catch (e) {
-          document.getElementById('admin-security-policy').innerHTML = '<span style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</span>';
+          document.getElementById('admin-security-policy').innerHTML = '<span class="generated-error">Failed: ' + escapeHtml(e.message) + '</span>';
         }
         try {
           var sRes = await fetch('/api/v2/admin/security/sessions', { credentials: 'include' });
@@ -506,14 +505,14 @@ async function openSecurityModal() {
             return;
           }
           document.getElementById('admin-security-sessions').innerHTML = sessions.map(function (s) {
-            return '<div style="padding:6px 0;border-bottom:1px solid var(--border-dim);">' +
+            return '<div class="generated-list-row-md">' +
               '<strong>' + escapeHtml(s.username) + '</strong> @ ' + escapeHtml(s.ip_address || '-') +
               ' <span class="muted">' + escapeHtml(timeAgo(s.last_active_at)) + '</span> ' +
-              '<button class="btn btn-sm role-admin" onclick="terminateAdminSession(' + s.id + ')">Terminate</button>' +
+              '<button class="btn btn-sm role-admin" data-admin-action="terminate-session" data-id="' + escapeHtml(String(s.id)) + '">Terminate</button>' +
               '</div>';
           }).join('');
         } catch (e2) {
-          document.getElementById('admin-security-sessions').innerHTML = '<span style="color:var(--status-error);">Failed: ' + escapeHtml(e2.message) + '</span>';
+          document.getElementById('admin-security-sessions').innerHTML = '<span class="generated-error">Failed: ' + escapeHtml(e2.message) + '</span>';
         }
       }
 
@@ -539,12 +538,16 @@ async function openSecurityModal() {
             body: JSON.stringify(body)
           });
           if (!resp.ok) throw new Error('HTTP ' + resp.status);
-          document.getElementById('admin-security-result').textContent = 'Saved';
-          document.getElementById('admin-security-result').style.color = 'var(--status-ok)';
+          var result = document.getElementById('admin-security-result');
+          result.textContent = 'Saved';
+          result.classList.add('generated-status-ok');
+          result.classList.remove('generated-error');
           await loadAdminSecuritySection();
         } catch (e) {
-          document.getElementById('admin-security-result').textContent = 'Failed: ' + e.message;
-          document.getElementById('admin-security-result').style.color = 'var(--status-error)';
+          var resultError = document.getElementById('admin-security-result');
+          resultError.textContent = 'Failed: ' + e.message;
+          resultError.classList.add('generated-error');
+          resultError.classList.remove('generated-status-ok');
         }
       }
 
@@ -583,6 +586,21 @@ async function openSecurityModal() {
         }
       }
 
+      function safeTagColor(value) {
+        var color = String(value || '').trim();
+        if (/^#[0-9a-f]{3}(?:[0-9a-f]{3})?$/i.test(color)) return color;
+        var variables = {
+          'var(--status-info)': '--status-info',
+          'var(--status-ok)': '--status-ok',
+          'var(--status-warn)': '--status-warn',
+          'var(--status-error)': '--status-error',
+          'var(--status-accent)': '--status-accent',
+          'var(--green-mid)': '--green-mid',
+          'var(--text-secondary)': '--text-secondary'
+        };
+        return themeColor(variables[color] || '--text-secondary');
+      }
+
       async function loadStatusTags() {
         if (!currentUser || currentUser.role !== 'Admin') return;
         var el = document.getElementById('status-tags-list');
@@ -596,13 +614,14 @@ async function openSecurityModal() {
             return;
           }
           el.innerHTML = rows.map(function (r) {
-            return '<div style="padding:4px 0;border-bottom:1px solid var(--border-dim);">' +
-              '<span class="badge" style="border:1px solid ' + escapeHtml(r.color || 'var(--text-secondary)') + ';color:' + escapeHtml(r.color || 'var(--text-secondary)') + ';">' + escapeHtml(r.tag) + '</span> ' +
+            var color = safeTagColor(r.color);
+            return '<div class="generated-list-row-sm">' +
+              '<span class="badge generated-tag-badge"><svg class="generated-tag-swatch" viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="6" r="5" fill="' + escapeHtml(color) + '"></circle></svg>' + escapeHtml(r.tag) + '</span> ' +
               '<span class="muted">' + escapeHtml(r.ip_count || 0) + ' IPs</span>' +
               '</div>';
           }).join('');
         } catch (e) {
-          el.innerHTML = '<span style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</span>';
+          el.innerHTML = '<span class="generated-error">Failed: ' + escapeHtml(e.message) + '</span>';
         }
       }
 
@@ -623,18 +642,19 @@ async function openSecurityModal() {
             return;
           }
           document.getElementById('retention-body').innerHTML = rows.map(function (r) {
+            var tableName = escapeHtml(String(r.table_name));
             return '<tr>' +
               '<td>' + escapeHtml(r.table_name) + '</td>' +
-              '<td><input id="ret-days-' + escJs(r.table_name) + '" class="setting-input" style="width:110px;" type="number" min="1" value="' + escapeHtml(r.retention_days) + '"> days</td>' +
-              '<td><input id="ret-enabled-' + escJs(r.table_name) + '" type="checkbox" ' + (r.enabled ? 'checked' : '') + '></td>' +
+              '<td><input id="ret-days-' + tableName + '" class="setting-input generated-input-110" type="number" min="1" value="' + escapeHtml(r.retention_days) + '"> days</td>' +
+              '<td><input id="ret-enabled-' + tableName + '" type="checkbox" ' + (r.enabled ? 'checked' : '') + '></td>' +
               '<td>' + escapeHtml(timeAgo(r.last_run_at)) + '</td>' +
               '<td>' + escapeHtml(r.last_deleted_count || 0) + '</td>' +
-              '<td><button class="btn btn-sm role-admin" onclick="saveRetentionPolicy(\'' + escJs(r.table_name) + '\')">Save</button></td>' +
+              '<td><button class="btn btn-sm role-admin" data-admin-action="save-retention-policy" data-table-name="' + tableName + '">Save</button></td>' +
               '</tr>';
           }).join('');
         } catch (e) {
           document.getElementById('retention-body').innerHTML =
-            '<tr><td colspan="6" style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+            '<tr><td colspan="6" class="generated-error">Failed: ' + escapeHtml(e.message) + '</td></tr>';
         }
       }
 
@@ -678,11 +698,13 @@ async function openSecurityModal() {
           var rows = body.results || [];
           var changed = rows.filter(function (r) { return (r.deleted || 0) > 0; }).length;
           result.textContent = 'Done. Policies with deletions: ' + changed;
-          result.style.color = 'var(--status-ok)';
+          result.classList.add('generated-status-ok');
+          result.classList.remove('generated-error');
           await loadRetentionSection();
         } catch (e) {
           result.textContent = 'Failed: ' + e.message;
-          result.style.color = 'var(--status-error)';
+          result.classList.add('generated-error');
+          result.classList.remove('generated-status-ok');
         }
       }
 
@@ -695,7 +717,7 @@ async function openSecurityModal() {
           var rows = data.tables || [];
           var top = '<div><strong>Database size:</strong> ' + escapeHtml(Math.round(dbSize / 1024 / 1024 * 100) / 100 + ' MB') + '</div>';
           var list = rows.map(function (r) {
-            return '<div class="setting-row" style="padding:4px 0;">' +
+            return '<div class="setting-row generated-setting-row-sm">' +
               '<div class="setting-label"><span class="setting-title">' + escapeHtml(r.table_name) + '</span></div>' +
               '<div>' + escapeHtml(r.row_count) + ' rows, oldest: ' + escapeHtml(r.oldest_row || '-') + '</div>' +
               '</div>';
@@ -703,7 +725,7 @@ async function openSecurityModal() {
           document.getElementById('retention-stats').innerHTML = top + list;
         } catch (e) {
           document.getElementById('retention-stats').innerHTML =
-            '<span style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</span>';
+            '<span class="generated-error">Failed: ' + escapeHtml(e.message) + '</span>';
         }
       }
 
@@ -757,12 +779,16 @@ async function openSecurityModal() {
             var txt = await res.text();
             throw new Error('HTTP ' + res.status + ' ' + txt);
           }
-          document.getElementById('oidc-config-result').textContent = 'OIDC config saved.';
-          document.getElementById('oidc-config-result').style.color = 'var(--status-ok)';
+          var result = document.getElementById('oidc-config-result');
+          result.textContent = 'OIDC config saved.';
+          result.classList.add('generated-status-ok');
+          result.classList.remove('generated-error');
           await loadOidcConfig();
         } catch (e) {
-          document.getElementById('oidc-config-result').textContent = 'Save failed: ' + e.message;
-          document.getElementById('oidc-config-result').style.color = 'var(--status-error)';
+          var resultError = document.getElementById('oidc-config-result');
+          resultError.textContent = 'Save failed: ' + e.message;
+          resultError.classList.add('generated-error');
+          resultError.classList.remove('generated-status-ok');
         }
       }
 
@@ -778,11 +804,15 @@ async function openSecurityModal() {
             var txt = await res.text();
             throw new Error('HTTP ' + res.status + ' ' + txt);
           }
-          document.getElementById('oidc-config-result').textContent = 'Discovery OK';
-          document.getElementById('oidc-config-result').style.color = 'var(--status-ok)';
+          var result = document.getElementById('oidc-config-result');
+          result.textContent = 'Discovery OK';
+          result.classList.add('generated-status-ok');
+          result.classList.remove('generated-error');
         } catch (e) {
-          document.getElementById('oidc-config-result').textContent = 'Discovery failed: ' + e.message;
-          document.getElementById('oidc-config-result').style.color = 'var(--status-error)';
+          var resultError = document.getElementById('oidc-config-result');
+          resultError.textContent = 'Discovery failed: ' + e.message;
+          resultError.classList.add('generated-error');
+          resultError.classList.remove('generated-status-ok');
         }
       }
 
@@ -799,7 +829,7 @@ async function openSecurityModal() {
               var status = a.status || 'unknown';
               var dot = '<span class="dot offline"></span>';
               if (status === 'listening') dot = '<span class="dot online"></span>';
-              if (status === 'starting') dot = '<span class="dot" style="background:var(--status-warn);box-shadow:0 0 6px var(--status-warn);"></span>';
+              if (status === 'starting') dot = '<span class="dot generated-dot-starting"></span>';
               return '<tr>' +
                 '<td>' + escapeHtml(a.name || '-') + '</td>' +
                 '<td>' + escapeHtml(a.bind || '-') + '</td>' +
@@ -811,7 +841,7 @@ async function openSecurityModal() {
           }
         } catch (e) {
           document.getElementById('status-adapters-body').innerHTML =
-            '<tr><td colspan="5" style="color:var(--status-error);">Failed: ' + escapeHtml(e.message) + '</td></tr>';
+            '<tr><td colspan="5" class="generated-error">Failed: ' + escapeHtml(e.message) + '</td></tr>';
         }
 
         try {
@@ -819,24 +849,24 @@ async function openSecurityModal() {
           if (!cfgRes.ok) throw new Error('HTTP ' + cfgRes.status);
           var cfg = await cfgRes.json();
           var rows = [
-            ['database_url', maskedDbUrl(cfg.database_url)],
-            ['radius_bind', cfg.radius_bind || '-'],
-            ['radius_secret_set', yesNoBadge(!!cfg.radius_secret_set)],
-            ['ad_syslog_bind', cfg.ad_syslog_bind || '-'],
-            ['dhcp_syslog_bind', cfg.dhcp_syslog_bind || '-'],
-            ['ad_tls_bind', cfg.ad_tls_bind || '-'],
-            ['dhcp_tls_bind', cfg.dhcp_tls_bind || '-'],
-            ['tls_enabled', yesNoBadge(!!cfg.tls_enabled)],
-            ['oui_csv_path', cfg.oui_csv_path || '-'],
-            ['admin_http_bind', cfg.admin_http_bind || '-']
+            ['database_url', maskedDbUrl(cfg.database_url), false],
+            ['radius_bind', cfg.radius_bind || '-', false],
+            ['radius_secret_set', yesNoBadge(!!cfg.radius_secret_set), true],
+            ['ad_syslog_bind', cfg.ad_syslog_bind || '-', false],
+            ['dhcp_syslog_bind', cfg.dhcp_syslog_bind || '-', false],
+            ['ad_tls_bind', cfg.ad_tls_bind || '-', false],
+            ['dhcp_tls_bind', cfg.dhcp_tls_bind || '-', false],
+            ['tls_enabled', yesNoBadge(!!cfg.tls_enabled), true],
+            ['oui_csv_path', cfg.oui_csv_path || '-', false],
+            ['admin_http_bind', cfg.admin_http_bind || '-', false]
           ];
           document.getElementById('status-runtime').innerHTML = rows.map(function (r) {
-            return '<div class="setting-row" style="padding:6px 0;"><div class="setting-label"><span class="setting-title">' +
-              escapeHtml(r[0]) + '</span></div><div>' + r[1] + '</div></div>';
+            return '<div class="setting-row generated-setting-row-md"><div class="setting-label"><span class="setting-title">' +
+              escapeHtml(r[0]) + '</span></div><div>' + (r[2] ? r[1] : escapeHtml(r[1])) + '</div></div>';
           }).join('');
         } catch (e2) {
           document.getElementById('status-runtime').innerHTML =
-            '<span style="color:var(--status-error);">Failed: ' + escapeHtml(e2.message) + '</span>';
+            '<span class="generated-error">Failed: ' + escapeHtml(e2.message) + '</span>';
         }
 
         await loadRetentionSection();
@@ -847,11 +877,6 @@ async function openSecurityModal() {
         await loadStatusTags();
       }
 
-      /**
-       * Sorts rows using audit tab sort state.
-       * Parameters: rows - audit entries list.
-       * Returns: sorted entries.
-       */
       function sortAuditRows(rows) {
         var state = window.sortState && window.sortState.audit;
         if (!state || !state.column) return rows;
@@ -892,7 +917,7 @@ async function openSecurityModal() {
           applySortHeaders('audit-table', 'audit', null, loadAuditLogs);
         } catch (err) {
           document.getElementById('audit-body').innerHTML =
-            '<tr><td colspan="7" style="color:var(--status-error);">Failed: ' + err.message + '</td></tr>';
+            '<tr><td colspan="7" class="generated-error">Failed: ' + escapeHtml(err.message) + '</td></tr>';
         }
       }
 
@@ -917,13 +942,13 @@ async function openSecurityModal() {
         body.innerHTML = entries.map(function(e) {
           var ts = e.timestamp ? new Date(e.timestamp).toLocaleString() : '-';
           return '<tr>' +
-            '<td>' + ts + '</td>' +
-            '<td>' + (e.username || '-') + '</td>' +
-            '<td>' + (e.principal_type || '-') + '</td>' +
-            '<td>' + (e.action || '-') + '</td>' +
-            '<td>' + (e.target || '-') + '</td>' +
-            '<td>' + (e.ip_address || '-') + '</td>' +
-            '<td style="font-size:11px;color:var(--text-secondary);">' + (e.request_id || '-') + '</td>' +
+            '<td>' + escapeHtml(ts) + '</td>' +
+            '<td>' + escapeHtml(e.username || '-') + '</td>' +
+            '<td>' + escapeHtml(e.principal_type || '-') + '</td>' +
+            '<td>' + escapeHtml(e.action || '-') + '</td>' +
+            '<td>' + escapeHtml(e.target || '-') + '</td>' +
+            '<td>' + escapeHtml(e.ip_address || '-') + '</td>' +
+            '<td class="generated-request-id">' + escapeHtml(e.request_id || '-') + '</td>' +
             '</tr>';
         }).join('');
       }
@@ -932,12 +957,44 @@ async function openSecurityModal() {
         var totalPages = Math.ceil(total / perPage) || 1;
         var el = document.getElementById('audit-paging');
         var html = 'Page ' + page + ' of ' + totalPages + ' (' + total + ' entries) &nbsp;';
-        if (page > 1) html += '<button class="btn btn-sm" onclick="loadAuditLogs(' + (page - 1) + ')">← Prev</button> ';
-        if (page < totalPages) html += '<button class="btn btn-sm" onclick="loadAuditLogs(' + (page + 1) + ')">Next →</button>';
+        if (page > 1) html += '<button class="btn btn-sm" data-admin-action="load-audit-page" data-page="' + (page - 1) + '">← Prev</button> ';
+        if (page < totalPages) html += '<button class="btn btn-sm" data-admin-action="load-audit-page" data-page="' + (page + 1) + '">Next →</button>';
         el.innerHTML = html;
       }
 
 (function () {
+  function dataInteger(el, name) {
+    var value = el.dataset[name];
+    if (!/^[1-9][0-9]*$/.test(value || '')) return null;
+    var parsed = Number(value);
+    return Number.isSafeInteger(parsed) ? parsed : null;
+  }
+
+  var actionHandlers = {
+    'disable-totp': function () { return disableTotp(); },
+    'load-api-key-usage': function (el) { var id = dataInteger(el, 'id'); if (id !== null) return loadApiKeyUsage(id); },
+    'load-audit-page': function (el) { var page = dataInteger(el, 'page'); if (page !== null) return loadAuditLogs(page); },
+    'regen-backup-codes': function () { return regenBackupCodes(); },
+    'reset-user-password': function (el) { var id = dataInteger(el, 'id'); if (id !== null) return resetUserPassword(id); },
+    'revoke-api-key': function (el) { var id = dataInteger(el, 'id'); if (id !== null) return revokeApiKey(id); },
+    'save-api-key-limits': function (el) { var id = dataInteger(el, 'id'); if (id !== null) return saveApiKeyLimits(id); },
+    'save-retention-policy': function (el) {
+      var tableName = el.dataset.tableName || '';
+      if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(tableName)) return saveRetentionPolicy(tableName);
+    },
+    'start-totp-setup': function () { return startTotpSetup(); },
+    'terminate-session': function (el) { var id = dataInteger(el, 'id'); if (id !== null) return terminateAdminSession(id); }
+  };
+
+  document.addEventListener('click', function (event) {
+    var target = event.target.closest('[data-admin-action]');
+    if (!target) return;
+    var handler = actionHandlers[target.dataset.adminAction];
+    if (!handler) return;
+    event.preventDefault();
+    handler(target);
+  });
+
   window.TrueID = window.TrueID || {};
   if (typeof window.closeSecurityModal === 'function') window.TrueID.closeSecurityModal = window.closeSecurityModal;
   if (typeof window.disableTotp === 'function') window.TrueID.disableTotp = window.disableTotp;

@@ -57,7 +57,8 @@ var currentUser = null;
         var btn = document.getElementById('matrix-toggle');
         if (!btn) return;
         btn.textContent = matrixRainEnabled ? '◈' : '◇';
-        btn.style.color = matrixRainEnabled ? 'var(--green-bright)' : 'var(--text-secondary)';
+        btn.classList.toggle('generated-matrix-enabled', matrixRainEnabled);
+        btn.classList.toggle('generated-matrix-disabled', !matrixRainEnabled);
       }
 
       function stopMatrixRain() {
@@ -66,13 +67,13 @@ var currentUser = null;
           matrixRainTimer = null;
         }
         var canvas = document.getElementById('matrix-bg');
-        if (canvas) canvas.style.display = 'none';
+        if (canvas) canvas.hidden = true;
       }
 
       function startMatrixRain() {
         var canvas = document.getElementById('matrix-bg');
         if (!canvas) return;
-        canvas.style.display = '';
+        canvas.hidden = false;
         var ctx = canvas.getContext('2d');
         if (!ctx) return;
         function resize() {
@@ -151,15 +152,12 @@ var currentUser = null;
       function showLiveIndicator(type, message) {
         var host = document.getElementById('live-indicator');
         if (!host) return;
-        var color = 'var(--status-ok)';
-        if (type === 'alert') color = 'var(--status-error)';
-        if (type === 'conflict') color = 'var(--status-warn)';
-        if (type === 'firewall') color = 'var(--status-info)';
         var toast = document.createElement('div');
-        toast.className = 'live-toast';
-        toast.style.cssText = 'background:var(--bg-panel);border:1px solid ' + color +
-          ';border-radius:6px;padding:8px 12px;margin-top:8px;font-size:12px;color:' +
-          color + ';max-width:320px;text-shadow:var(--text-glow);';
+        var stateClass = 'generated-toast-ok';
+        if (type === 'alert') stateClass = 'generated-toast-error';
+        if (type === 'conflict') stateClass = 'generated-toast-warn';
+        if (type === 'firewall') stateClass = 'generated-toast-info';
+        toast.className = 'live-toast generated-live-toast ' + stateClass;
         toast.textContent = '⚡ ' + message;
         host.appendChild(toast);
         setTimeout(function () { toast.remove(); }, 5000);
@@ -196,11 +194,11 @@ var currentUser = null;
         if (evtSource) evtSource.close();
         evtSource = new EventSource('/api/v2/events/stream');
 
-        evtSource.onopen = function () {
+        evtSource.addEventListener('open', function () {
           sseConnected = true;
           updateConnectionStatus(true);
           refreshRealtimeTabPolling();
-        };
+        });
         evtSource.addEventListener('mapping', function (e) {
           handleMappingUpdate(JSON.parse(e.data || '{}'));
         });
@@ -213,14 +211,14 @@ var currentUser = null;
         evtSource.addEventListener('firewall', function (e) {
           handleFirewallEvent(JSON.parse(e.data || '{}'));
         });
-        evtSource.onerror = function () {
+        evtSource.addEventListener('error', function () {
           if (evtSource) evtSource.close();
           evtSource = null;
           sseConnected = false;
           updateConnectionStatus(false);
           refreshRealtimeTabPolling();
           setTimeout(connectSSE, 5000);
-        };
+        });
       }
 
       async function initAuth() {
@@ -237,7 +235,7 @@ var currentUser = null;
 
           document.getElementById('user-info').textContent =
             'Logged in as ' + currentUser.username + ' (' + currentUser.role + ')';
-          document.getElementById('user-bar').style.display = 'flex';
+          document.getElementById('user-bar').hidden = false;
           updateConnectionStatus(false);
           applyRoleVisibility(currentUser.role);
           switchTab('mappings');
@@ -250,20 +248,20 @@ var currentUser = null;
       function applyRoleVisibility(role) {
         var isAdmin = role === 'Admin';
         var isOperatorOrAdmin = role === 'Operator' || role === 'Admin';
-        document.getElementById('tab-btn-status').style.display = isAdmin ? '' : 'none';
-        document.getElementById('tab-btn-firewall').style.display = isOperatorOrAdmin ? '' : 'none';
-        document.getElementById('tab-btn-siem').style.display = isOperatorOrAdmin ? '' : 'none';
-        document.getElementById('tab-btn-ldap').style.display = isOperatorOrAdmin ? '' : 'none';
-        document.getElementById('tab-btn-notifications').style.display = isAdmin ? '' : 'none';
-        document.getElementById('tab-btn-sycope').style.display = isAdmin ? '' : 'none';
-        document.getElementById('tab-btn-audit').style.display = isAdmin ? '' : 'none';
+        document.getElementById('tab-btn-status').hidden = !isAdmin;
+        document.getElementById('tab-btn-firewall').hidden = !isOperatorOrAdmin;
+        document.getElementById('tab-btn-siem').hidden = !isOperatorOrAdmin;
+        document.getElementById('tab-btn-ldap').hidden = !isOperatorOrAdmin;
+        document.getElementById('tab-btn-notifications').hidden = !isAdmin;
+        document.getElementById('tab-btn-sycope').hidden = !isAdmin;
+        document.getElementById('tab-btn-audit').hidden = !isAdmin;
         document.querySelectorAll('.role-operator').forEach(function (el) {
-          el.style.display = isOperatorOrAdmin ? '' : 'none';
+          el.hidden = !isOperatorOrAdmin;
         });
         document.querySelectorAll('.role-admin').forEach(function (el) {
-          el.style.display = isAdmin ? '' : 'none';
+          el.hidden = !isAdmin;
         });
-        document.getElementById('alerts-rules-section').style.display = isAdmin ? '' : 'none';
+        document.getElementById('alerts-rules-section').hidden = !isAdmin;
       }
 
       async function doLogout() {
@@ -310,17 +308,11 @@ var currentUser = null;
         });
       }
 
-      /**
-       * Toggles sidebar group expanded state.
-       * Parameters: name - logical group id.
-       * Returns: void.
-       */
       function toggleGroup(name) {
         var el = document.querySelector('[data-group="' + name + '"]');
         if (el) el.classList.toggle('expanded');
       }
       window.toggleGroup = toggleGroup;
-      // Event delegation for sidebar group headers (more robust than inline onclick)
       document.addEventListener('click', function (e) {
         var header = e.target.closest('.tab-group-header[data-toggle]');
         if (header) {
@@ -330,11 +322,6 @@ var currentUser = null;
         }
       });
 
-      /**
-       * Expands only the group that contains provided tab.
-       * Parameters: tabName - active tab key.
-       * Returns: void.
-       */
       function expandGroupForTab(tabName) {
         var map = {
           mappings: 'core', search: 'core', conflicts: 'core', alerts: 'core',
@@ -360,7 +347,7 @@ var currentUser = null;
         activeTab = name;
         ['mappings', 'search', 'conflicts', 'alerts', 'analytics', 'map', 'subnets', 'switches', 'fingerprints', 'dns', 'status', 'firewall', 'siem', 'ldap', 'notifications', 'sycope', 'audit'].forEach(function (n) {
           var panel = document.getElementById('tab-' + n);
-          if (panel) panel.style.display = n === name ? 'block' : 'none';
+          if (panel) panel.hidden = n !== name;
         });
         document.querySelectorAll('#tabs .tab').forEach(function (btn) {
           btn.classList.remove('active');
