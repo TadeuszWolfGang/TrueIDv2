@@ -145,6 +145,16 @@ jobs:
           [ -n "$trueid_admin_pass" ] || trueid_admin_pass="$(gen_password)"
           [ -n "$metrics_token" ] || metrics_token="$(gen_hex_secret)"
 
+          for secret_value in \
+            "$jwt_secret" \
+            "$engine_service_token" \
+            "$config_encryption_key" \
+            "$radius_secret" \
+            "$trueid_admin_pass" \
+            "$metrics_token"; do
+            echo "::add-mask::$secret_value"
+          done
+
           {
             echo "JWT_SECRET=$jwt_secret"
             echo "ENGINE_SERVICE_TOKEN=$engine_service_token"
@@ -230,6 +240,7 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p security-reports
+          chmod 0777 security-reports
           docker run --rm --network host \
             -v "$PWD/security-reports:/zap/wrk/:rw" \
             ghcr.io/zaproxy/zaproxy:stable \

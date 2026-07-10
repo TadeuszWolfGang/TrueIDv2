@@ -227,6 +227,7 @@ else
     red "login brute-force protection did not produce HTTP 429"
 fi
 
+chmod 0777 "${REPORT_DIR}"
 run_advisory_check "ZAP baseline scan" \
   docker run --rm --network host -v "${REPORT_DIR}:/zap/wrk/:rw" ghcr.io/zaproxy/zaproxy:stable \
   zap-baseline.py -I -t http://127.0.0.1:3000 -r zap-report.html -J zap-report.json -m 5
