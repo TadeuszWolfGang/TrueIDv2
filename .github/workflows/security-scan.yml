@@ -309,6 +309,7 @@ jobs:
 
           api_key="$(python3 -c 'import json,sys; print(json.load(open("/tmp/trueid-api-key.json"))["key"])')"
           [ -n "$api_key" ]
+          echo "::add-mask::$api_key"
           echo "SCHEMATHESIS_API_KEY=$api_key" >> "$GITHUB_ENV"
 
       - name: API property-based fuzzing (Schemathesis)
