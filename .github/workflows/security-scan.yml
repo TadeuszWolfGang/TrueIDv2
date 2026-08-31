@@ -62,7 +62,7 @@ jobs:
         run: cargo deny check advisories
 
       - name: Upload SAST artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: security-reports-sast
@@ -342,7 +342,7 @@ jobs:
           grep -Eq 'Operations:[[:space:]]+5 selected /' security-reports/schemathesis.txt
 
       - name: Upload security artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: security-reports
