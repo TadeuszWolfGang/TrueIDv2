@@ -74,6 +74,7 @@ jobs:
             -e DATABASE_URL=sqlite:///app/data/net-identity.db?mode=rwc \
             -e RUST_LOG=info \
             -e RADIUS_SECRET=glibc-compat-secret \
+            -e ENGINE_SERVICE_TOKEN=ci-smoke-service-token-0123456789abcdef \
             -e RADIUS_BIND=0.0.0.0:1813 \
             -e AD_SYSLOG_BIND=0.0.0.0:5514 \
             -e DHCP_SYSLOG_BIND=0.0.0.0:5516 \
