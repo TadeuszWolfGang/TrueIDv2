@@ -8,13 +8,21 @@ updates:
     schedule:
       interval: weekly
     groups:
+      # Only semver-compatible updates are batched; major bumps arrive as
+      # individual reviewable PRs (a "*" group once produced an unbuildable
+      # axum-0.8 + sqlx-0.9 + jsonwebtoken-11 batch — see closed PR #8).
       rust-dependencies:
-        patterns:
-          - "*"
+        update-types:
+          - "patch"
+          - "minor"
     ignore:
       # rsa enters the lockfile only as a feature-graph artifact of sqlx's
       # macro umbrella (see deny.toml) — never compiled. Keep it pinned.
       - dependency-name: "rsa"
+      # jsonwebtoken 11 is a separate major evaluation; security fix tracked
+      # via the 10.x line (GHSA-h395-gr6q-cpjc).
+      - dependency-name: "jsonwebtoken"
+        versions: [ ">=11.0.0" ]
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
