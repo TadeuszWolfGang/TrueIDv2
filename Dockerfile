@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
-ARG RUST_VERSION=1.88.0
+# sqlx 0.9 requires rustc >= 1.94; keep aligned with local dev (1.95).
+ARG RUST_VERSION=1.95.0
 
 FROM rust:${RUST_VERSION}-bookworm AS builder
 
