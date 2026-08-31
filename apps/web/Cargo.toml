@@ -17,7 +17,7 @@ async-trait = "0.1"
 axum = { workspace = true }
 futures-core = "0.3"
 chrono = { workspace = true }
-dashmap = "5"
+dashmap = "6"
 jsonwebtoken = { version = "11.0", default-features = false, features = ["rust_crypto"] }
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
@@ -25,7 +25,7 @@ urlencoding = "2"
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true }
-totp-rs = { version = "5", features = ["gen_secret", "qr"] }
+totp-rs = { version = "6", features = ["gen_secret", "qr"] }
 trueid-common = { path = "../../crates/common" }
 tokio = { workspace = true }
 axum-server = { version = "0.8", features = ["tls-rustls"] }

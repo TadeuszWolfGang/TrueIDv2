@@ -65,8 +65,8 @@ pub(crate) async fn setup(
                 .with_request_id(&auth.request_id)
         })?;
 
-    let generated = Secret::generate_secret();
-    let secret_encoded = generated.to_encoded().to_string();
+    let generated = Secret::generate();
+    let secret_encoded = generated.to_base32();
     let totp = build_totp(&secret_encoded, &user.username).map_err(|e| {
         ApiError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -417,19 +417,18 @@ pub(crate) async fn verify_user_totp_or_backup(
 /// Parameters: `secret_base32` - base32 secret, `username` - account name.
 /// Returns: configured TOTP object.
 fn build_totp(secret_base32: &str, username: &str) -> anyhow::Result<TOTP> {
-    let secret = Secret::Encoded(secret_base32.to_string())
-        .to_bytes()
+    let secret = Secret::try_from_base32(secret_base32)
         .map_err(|e| anyhow::anyhow!("invalid secret: {e}"))?;
-    TOTP::new(
-        Algorithm::SHA1,
-        6,
-        1,
-        30,
-        secret,
-        Some("TrueID".to_string()),
-        username.to_string(),
-    )
-    .map_err(|e| anyhow::anyhow!("totp init failed: {e}"))
+    totp_rs::Builder::new()
+        .with_algorithm(totp_rs::Algorithm::SHA1)
+        .with_digits(6)
+        .with_skew(1)
+        .with_step_duration(30)
+        .with_secret(secret)
+        .with_issuer(Some("TrueID".to_string()))
+        .with_account_name(username.to_string())
+        .build()
+        .map_err(|e| anyhow::anyhow!("invalid TOTP parameters: {e}"))
 }
 
 /// Verifies one TOTP code for given secret and returns the matched timestep.
@@ -456,7 +455,7 @@ pub(crate) fn totp_matched_timestep(
         if step < 0 {
             continue;
         }
-        let candidate = totp.generate((step * 30) as u64);
+        let candidate = totp.generate((step * 30) as u64).to_string();
         if trueid_common::constant_time_eq(candidate.as_bytes(), clean.as_bytes()) {
             return Some(step);
         }
@@ -537,7 +536,7 @@ mod tests {
     fn matched_timestep_accepts_current_code() {
         let secret = test_secret();
         let totp = build_totp(&secret, "alice").unwrap();
-        let code = totp.generate_current().unwrap();
+        let code = totp.generate_current().to_string();
         let step = chrono::Utc::now().timestamp().div_euclid(30);
         let matched = totp_matched_timestep(&secret, "alice", &code);
         assert!(matched.is_some());
@@ -558,7 +557,7 @@ mod tests {
         let secret = test_secret();
         let totp = build_totp(&secret, "alice").unwrap();
         let prev_step = chrono::Utc::now().timestamp().div_euclid(30) - 1;
-        let code = totp.generate((prev_step * 30) as u64);
+        let code = totp.generate((prev_step * 30) as u64).to_string();
         assert_eq!(
             totp_matched_timestep(&secret, "alice", &code),
             Some(prev_step)

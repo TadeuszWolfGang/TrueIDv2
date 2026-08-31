@@ -655,6 +655,25 @@ async fn seed_analytics_events(db: &trueid_common::db::Db) {
     }
 }
 
+/// Builds a TOTP from the base32 setup secret and returns the current code
+/// (totp-rs 6 Builder API; code depends only on secret+time+parameters).
+fn current_totp_code(secret_base32: &str) -> String {
+    totp_rs::Builder::new()
+        .with_algorithm(totp_rs::Algorithm::SHA1)
+        .with_digits(6)
+        .with_skew(1)
+        .with_step_duration(30)
+        .with_secret(
+            totp_rs::Secret::try_from_base32(secret_base32).expect("invalid secret encoding"),
+        )
+        .with_issuer(Some("TrueID".to_string()))
+        .with_account_name("testadmin".to_string())
+        .build()
+        .expect("failed to build totp")
+        .generate_current()
+        .to_string()
+}
+
 #[tokio::test]
 async fn test_search_requires_auth() {
     let (app, _) = build_test_app().await;
@@ -4412,21 +4431,7 @@ async fn test_totp_setup_and_verify() {
         .as_str()
         .expect("missing totp setup secret")
         .to_string();
-    let totp = totp_rs::TOTP::new(
-        totp_rs::Algorithm::SHA1,
-        6,
-        1,
-        30,
-        totp_rs::Secret::Encoded(secret)
-            .to_bytes()
-            .expect("invalid secret encoding"),
-        Some("TrueID".to_string()),
-        "testadmin".to_string(),
-    )
-    .expect("failed to build totp");
-    let code = totp
-        .generate_current()
-        .expect("failed to generate current code");
+    let code = current_totp_code(&secret);
     let (status, verify) = auth_post(
         &app,
         &cookie,
@@ -4456,21 +4461,7 @@ async fn test_totp_login_requires_code() {
         .as_str()
         .expect("missing totp setup secret")
         .to_string();
-    let totp = totp_rs::TOTP::new(
-        totp_rs::Algorithm::SHA1,
-        6,
-        1,
-        30,
-        totp_rs::Secret::Encoded(secret)
-            .to_bytes()
-            .expect("invalid secret encoding"),
-        Some("TrueID".to_string()),
-        "testadmin".to_string(),
-    )
-    .expect("failed to build totp");
-    let code = totp
-        .generate_current()
-        .expect("failed to generate current code");
+    let code = current_totp_code(&secret);
     let (status, _) = auth_post(
         &app,
         &cookie,
@@ -5197,21 +5188,7 @@ async fn test_admin_totp_policy_blocks_privileged_routes_until_totp_enabled() {
         .as_str()
         .expect("missing totp setup secret")
         .to_string();
-    let totp = totp_rs::TOTP::new(
-        totp_rs::Algorithm::SHA1,
-        6,
-        1,
-        30,
-        totp_rs::Secret::Encoded(secret)
-            .to_bytes()
-            .expect("invalid secret encoding"),
-        Some("TrueID".to_string()),
-        "testadmin".to_string(),
-    )
-    .expect("failed to build totp");
-    let code = totp
-        .generate_current()
-        .expect("failed to generate current code");
+    let code = current_totp_code(&secret);
     let (status, _) = auth_post(
         &app,
         &cookie,
