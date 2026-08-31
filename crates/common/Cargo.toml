@@ -4,23 +4,23 @@ version = "0.8.0"
 edition = "2021"
 
 [dependencies]
-aes-gcm = "0.10"
+aes-gcm = "0.11"
 anyhow = { workspace = true }
-argon2 = "0.5"
+argon2 = "0.6"
 async-trait = "0.1"
-base64 = "0.22"
+base64 = "0.23"
 chrono = { workspace = true }
-rand = "0.8"
+rand = "0.10"
 serde = { workspace = true }
 serde_json = { workspace = true }
-sha2 = "0.10"
+sha2 = "0.11"
 sqlx = { workspace = true }
 subtle = "2"
 tracing = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
-criterion = { version = "0.5", features = ["async_tokio"] }
+criterion = { version = "0.8", features = ["async_tokio"] }
 
 [[bench]]
 name = "ingestion_throughput"
