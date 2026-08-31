@@ -674,7 +674,7 @@ pub(crate) async fn top_n(
                  ORDER BY c DESC
                  LIMIT ?"
             );
-            sqlx::query(&sql)
+            sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
                 .bind(-days)
                 .bind(limit)
                 .fetch_all(db_ref.pool())

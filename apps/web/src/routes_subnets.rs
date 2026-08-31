@@ -387,7 +387,7 @@ pub(crate) async fn update_subnet(
     sets.push("updated_at = datetime('now')".to_string());
 
     let sql = format!("UPDATE subnets SET {} WHERE id = ?", sets.join(", "));
-    let mut q = sqlx::query(&sql);
+    let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
     for bind in binds {
         q = match bind {
             serde_json::Value::String(v) => q.bind(v),
@@ -660,7 +660,7 @@ pub(crate) async fn subnet_mappings(
          ORDER BY m.last_seen DESC
          LIMIT ? OFFSET ?"
     );
-    let rows = sqlx::query(&sql)
+    let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(id)
         .bind(per_page)
         .bind(offset)

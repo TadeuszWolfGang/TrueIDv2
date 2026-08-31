@@ -251,7 +251,7 @@ impl Db {
              LEFT JOIN dns_cache d ON m.ip = d.ip
              WHERE m.ip = ?"
         );
-        let row = sqlx::query(&sql)
+        let row = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .bind(ip)
             .fetch_optional(&self.pool)
             .await?;
@@ -311,7 +311,9 @@ impl Db {
              WHERE m.is_active = true
              ORDER BY m.last_seen DESC"
         );
-        let rows = sqlx::query(&sql).fetch_all(&self.pool).await?;
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+            .fetch_all(&self.pool)
+            .await?;
 
         let mut results = Vec::with_capacity(rows.len());
         for row in rows {
@@ -602,7 +604,10 @@ impl Db {
              ORDER BY m.last_seen DESC
              LIMIT ?"
         );
-        let rows = sqlx::query(&sql).bind(limit).fetch_all(&self.pool).await?;
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?;
 
         let mut results = Vec::with_capacity(rows.len());
         for row in rows {

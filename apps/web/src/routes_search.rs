@@ -232,9 +232,9 @@ fn events_sort_column(raw: Option<&str>) -> &'static str {
 /// Parameters: `query` - SQLx raw query, `binds` - parameters in placeholder order.
 /// Returns: query with all bind values attached.
 fn apply_binds<'q>(
-    mut query: sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'q>>,
+    mut query: sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments>,
     binds: &'q [BindParam],
-) -> sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'q>> {
+) -> sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments> {
     for bind in binds {
         query = match bind {
             BindParam::Text(v) => query.bind(v),
@@ -469,7 +469,7 @@ pub async fn search(
             order
         );
 
-        let total: i64 = apply_binds(sqlx::query(&count_sql), &binds)
+        let total: i64 = apply_binds(sqlx::query(sqlx::AssertSqlSafe(count_sql.as_str())), &binds)
             .fetch_one(pool)
             .await
             .map_err(|e| {
@@ -486,7 +486,7 @@ pub async fn search(
 
         binds.push(BindParam::I64(i64::from(limit)));
         binds.push(BindParam::I64(offset));
-        let rows = apply_binds(sqlx::query(&data_sql), &binds)
+        let rows = apply_binds(sqlx::query(sqlx::AssertSqlSafe(data_sql.as_str())), &binds)
             .fetch_all(pool)
             .await
             .map_err(|e| {
@@ -531,7 +531,7 @@ pub async fn search(
             order
         );
 
-        let total: i64 = apply_binds(sqlx::query(&count_sql), &binds)
+        let total: i64 = apply_binds(sqlx::query(sqlx::AssertSqlSafe(count_sql.as_str())), &binds)
             .fetch_one(pool)
             .await
             .map_err(|e| {
@@ -548,7 +548,7 @@ pub async fn search(
 
         binds.push(BindParam::I64(i64::from(limit)));
         binds.push(BindParam::I64(offset));
-        let rows = apply_binds(sqlx::query(&data_sql), &binds)
+        let rows = apply_binds(sqlx::query(sqlx::AssertSqlSafe(data_sql.as_str())), &binds)
             .fetch_all(pool)
             .await
             .map_err(|e| {
@@ -629,7 +629,7 @@ pub async fn export_mappings(
          LEFT JOIN dns_cache d ON m.ip = d.ip
          {where_clause}"
     );
-    let total: i64 = apply_binds(sqlx::query(&count_sql), &binds)
+    let total: i64 = apply_binds(sqlx::query(sqlx::AssertSqlSafe(count_sql.as_str())), &binds)
         .fetch_one(db.pool())
         .await
         .map_err(|e| {
@@ -654,18 +654,21 @@ pub async fn export_mappings(
     let mut export_binds = binds;
     export_binds.push(BindParam::I64(EXPORT_MAPPINGS_MAX_ROWS));
 
-    let rows = apply_binds(sqlx::query(&sql), &export_binds)
-        .fetch_all(db.pool())
-        .await
-        .map_err(|e| {
-            warn!(error = %e, "Export mappings query failed");
-            ApiError::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                error::INTERNAL_ERROR,
-                "Failed to export mappings",
-            )
-            .with_request_id(&auth.request_id)
-        })?;
+    let rows = apply_binds(
+        sqlx::query(sqlx::AssertSqlSafe(sql.as_str())),
+        &export_binds,
+    )
+    .fetch_all(db.pool())
+    .await
+    .map_err(|e| {
+        warn!(error = %e, "Export mappings query failed");
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error::INTERNAL_ERROR,
+            "Failed to export mappings",
+        )
+        .with_request_id(&auth.request_id)
+    })?;
 
     let mut data = Vec::with_capacity(rows.len());
     for row in rows {
@@ -780,7 +783,7 @@ pub async fn export_events(
     };
 
     let count_sql = format!("SELECT COUNT(*) as c FROM events {where_clause}");
-    let total: i64 = apply_binds(sqlx::query(&count_sql), &binds)
+    let total: i64 = apply_binds(sqlx::query(sqlx::AssertSqlSafe(count_sql.as_str())), &binds)
         .fetch_one(db.pool())
         .await
         .map_err(|e| {
@@ -801,7 +804,7 @@ pub async fn export_events(
          FROM events {where_clause} ORDER BY timestamp DESC LIMIT ?"
     );
     binds.push(BindParam::I64(EXPORT_EVENTS_MAX_ROWS));
-    let rows = apply_binds(sqlx::query(&sql), &binds)
+    let rows = apply_binds(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), &binds)
         .fetch_all(db.pool())
         .await
         .map_err(|e| {

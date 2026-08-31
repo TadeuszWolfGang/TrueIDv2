@@ -45,7 +45,10 @@ pub async fn count_events_by_period(
     }
     sql.push_str(" GROUP BY bucket ORDER BY bucket ASC");
 
-    let mut q = sqlx::query(&sql).bind(start).bind(end);
+    // SQL text is built from fixed fragments; values are bound parameters.
+    let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+        .bind(start)
+        .bind(end);
     if let Some(src) = source {
         q = q.bind(src);
     }
@@ -76,12 +79,13 @@ pub async fn count_conflicts_by_period(
         "week" => "strftime('%Y-W%W', detected_at)",
         _ => return Err(anyhow::anyhow!("unsupported interval: {interval}")),
     };
-    let rows = sqlx::query(&format!(
+    // bucket_expr comes from the fixed interval match above; values are bound.
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {bucket_expr} AS bucket, COUNT(*) AS c
          FROM conflicts
          WHERE detected_at >= ? AND detected_at < ?
          GROUP BY bucket ORDER BY bucket ASC"
-    ))
+    )))
     .bind(start)
     .bind(end)
     .fetch_all(pool)
@@ -112,12 +116,13 @@ pub async fn count_alerts_by_period(
         "week" => "strftime('%Y-W%W', fired_at)",
         _ => return Err(anyhow::anyhow!("unsupported interval: {interval}")),
     };
-    let rows = sqlx::query(&format!(
+    // bucket_expr comes from the fixed interval match above; values are bound.
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {bucket_expr} AS bucket, COUNT(*) AS c
          FROM alert_history
          WHERE fired_at >= ? AND fired_at < ?
          GROUP BY bucket ORDER BY bucket ASC"
-    ))
+    )))
     .bind(start)
     .bind(end)
     .fetch_all(pool)
@@ -148,12 +153,13 @@ pub async fn count_firewall_pushes_by_period(
         "week" => "strftime('%Y-W%W', pushed_at)",
         _ => return Err(anyhow::anyhow!("unsupported interval: {interval}")),
     };
-    let rows = sqlx::query(&format!(
+    // bucket_expr comes from the fixed interval match above; values are bound.
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT {bucket_expr} AS bucket, COUNT(*) AS c
          FROM firewall_push_history
          WHERE pushed_at >= ? AND pushed_at < ?
          GROUP BY bucket ORDER BY bucket ASC"
-    ))
+    )))
     .bind(start)
     .bind(end)
     .fetch_all(pool)

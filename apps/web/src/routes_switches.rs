@@ -679,7 +679,7 @@ pub(crate) async fn list_port_mappings(
     } else {
         format!("SELECT COUNT(*) as c FROM switch_port_mappings sp {where_clause}")
     };
-    let mut count_q = sqlx::query(&count_sql);
+    let mut count_q = sqlx::query(sqlx::AssertSqlSafe(count_sql.as_str()));
     for b in &binds {
         count_q = count_q.bind(b);
     }
@@ -721,7 +721,7 @@ pub(crate) async fn list_port_mappings(
         )
     };
 
-    let mut data_q = sqlx::query(&data_sql);
+    let mut data_q = sqlx::query(sqlx::AssertSqlSafe(data_sql.as_str()));
     for b in &binds {
         data_q = data_q.bind(b);
     }

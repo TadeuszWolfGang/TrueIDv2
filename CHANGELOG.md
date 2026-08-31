@@ -3,6 +3,19 @@
 All notable changes to TrueID are documented here.  
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
+## [Unreleased] — dependency majors & CodeQL 2026-08-31 (2)
+
+### Changed
+- sqlx 0.8 → 0.9: dynamic-SQL call sites now wrap strings in `sqlx::AssertSqlSafe` (all use bound parameters; fixed fragments only); `SqliteArguments` lifetime removed by upstream
+- argon2 0.5 → 0.6: salt generation moved into `hash_password` (OS RNG); no parameter changes (Argon2id 19 MiB / t=2 / p=1)
+- jsonwebtoken 10.4 → 11.0.0 (no API impact for our usage)
+- criterion 0.5 → 0.8 (dev-dep, benches compatible)
+- axum-server 0.7 → 0.8 — drops the last transitive `rustls-pemfile` (RUSTSEC-2025-0134 resolved)
+- tabled 0.16 → 0.21 in CLI — drops `proc-macro-error` (RUSTSEC-2024-0370 resolved); successor fork `proc-macro-error2` is flagged unmaintained (RUSTSEC-2026-0173, warning-level, documented in `deny.toml`)
+
+### Added
+- CodeQL code scanning workflow (Rust, security-extended query set, weekly schedule)
+
 ## [Unreleased] — security remediation 2026-08-31
 
 ### Security

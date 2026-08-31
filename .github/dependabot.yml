@@ -19,10 +19,6 @@ updates:
       # rsa enters the lockfile only as a feature-graph artifact of sqlx's
       # macro umbrella (see deny.toml) — never compiled. Keep it pinned.
       - dependency-name: "rsa"
-      # jsonwebtoken 11 is a separate major evaluation; security fix tracked
-      # via the 10.x line (GHSA-h395-gr6q-cpjc).
-      - dependency-name: "jsonwebtoken"
-        versions: [ ">=11.0.0" ]
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
