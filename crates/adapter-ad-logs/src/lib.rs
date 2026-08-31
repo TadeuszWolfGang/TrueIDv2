@@ -3,7 +3,9 @@
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
+use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::mpsc::Sender;
@@ -11,6 +13,13 @@ use tracing::warn;
 use trueid_common::model::{IdentityEvent, SourceType};
 
 const MAX_PACKET_SIZE: usize = 8192;
+/// Hard cap on a single TCP syslog line — `lines()` would otherwise buffer
+/// unbounded input in memory (remote DoS vector).
+const MAX_TCP_LINE_BYTES: usize = 65_536;
+/// Global concurrent TCP syslog connection cap (memory-exhaustion guard).
+const MAX_TCP_CONNECTIONS: usize = 64;
+/// Per-source-IP concurrent connection cap (single-host fan-out guard).
+const MAX_TCP_CONNECTIONS_PER_IP: usize = 16;
 
 /// Syslog listener that extracts identity events from AD logs.
 pub struct AdLogsAdapter {
@@ -73,14 +82,42 @@ async fn run_udp(bind_addr: SocketAddr, sender: Sender<IdentityEvent>) -> Result
 
 /// Runs the TCP syslog listener loop.
 ///
+/// Enforces global and per-IP connection limits; excess connections are
+/// refused with a warning instead of exhausting memory.
+///
 /// Parameters: `bind_addr` - TCP bind address, `sender` - event channel.
 /// Returns: `Ok(())` on clean shutdown or an error.
 async fn run_tcp(bind_addr: SocketAddr, sender: Sender<IdentityEvent>) -> Result<()> {
     let listener = TcpListener::bind(bind_addr).await?;
+    let global_sem = Arc::new(tokio::sync::Semaphore::new(MAX_TCP_CONNECTIONS));
+    let per_ip: Arc<Mutex<HashMap<IpAddr, usize>>> = Arc::new(Mutex::new(HashMap::new()));
     loop {
         let (stream, peer) = listener.accept().await?;
+        let permit = match global_sem.clone().try_acquire_owned() {
+            Ok(permit) => permit,
+            Err(_) => {
+                warn!(?peer, "TCP syslog connection refused: global limit reached");
+                continue;
+            }
+        };
+        {
+            let mut counts = per_ip.lock().unwrap_or_else(|e| e.into_inner());
+            let entry = counts.entry(peer.ip()).or_insert(0);
+            if *entry >= MAX_TCP_CONNECTIONS_PER_IP {
+                warn!(?peer, "TCP syslog connection refused: per-IP limit reached");
+                drop(permit);
+                continue;
+            }
+            *entry += 1;
+        }
         let sender = sender.clone();
+        let per_ip_clone = per_ip.clone();
         tokio::spawn(async move {
+            let _permit = permit;
+            let _ip_guard = PerIpGuard {
+                map: per_ip_clone,
+                ip: peer.ip(),
+            };
             if let Err(err) = handle_tcp_client(stream, sender).await {
                 warn!(?peer, error = %err, "TCP syslog client error");
             }
@@ -88,7 +125,28 @@ async fn run_tcp(bind_addr: SocketAddr, sender: Sender<IdentityEvent>) -> Result
     }
 }
 
+/// Decrements a per-IP connection counter when dropped.
+struct PerIpGuard {
+    map: Arc<Mutex<HashMap<IpAddr, usize>>>,
+    ip: IpAddr,
+}
+
+impl Drop for PerIpGuard {
+    fn drop(&mut self) {
+        let mut counts = self.map.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(count) = counts.get_mut(&self.ip) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                counts.remove(&self.ip);
+            }
+        }
+    }
+}
+
 /// Handles an individual TCP client connection.
+///
+/// Caps each line at `MAX_TCP_LINE_BYTES`; overlong lines are discarded up to
+/// the next newline and reported.
 ///
 /// Parameters: `stream` - TCP stream, `sender` - event channel.
 /// Returns: `Ok(())` on client disconnect or an error.
@@ -96,13 +154,83 @@ async fn handle_tcp_client(
     stream: tokio::net::TcpStream,
     sender: Sender<IdentityEvent>,
 ) -> Result<()> {
-    let mut reader = BufReader::new(stream).lines();
-    while let Some(line) = reader.next_line().await? {
-        if let Err(err) = handle_message(line.as_bytes(), &sender).await {
+    let mut reader = BufReader::new(stream);
+    let mut line: Vec<u8> = Vec::with_capacity(1024);
+    loop {
+        line.clear();
+        let newline_found = read_capped_line(&mut reader, &mut line).await?;
+        if line.is_empty() && !newline_found {
+            return Ok(()); // clean EOF
+        }
+        if !newline_found {
+            warn!(
+                bytes = line.len(),
+                "TCP syslog line exceeds {} bytes — discarding remainder", MAX_TCP_LINE_BYTES
+            );
+            discard_until_newline(&mut reader).await?;
+        }
+        if let Err(err) = handle_message(&line, &sender).await {
             warn!(error = %err, "Invalid TCP syslog message");
         }
     }
-    Ok(())
+}
+
+/// Reads one line into `line`, stopping at newline or the byte cap.
+///
+/// Parameters: `reader` - buffered stream, `line` - output buffer.
+/// Returns: whether a newline terminated this line.
+async fn read_capped_line<R: tokio::io::AsyncBufRead + Unpin>(
+    reader: &mut R,
+    line: &mut Vec<u8>,
+) -> Result<bool> {
+    loop {
+        let buf = reader.fill_buf().await?;
+        if buf.is_empty() {
+            return Ok(false); // EOF
+        }
+        let remaining = MAX_TCP_LINE_BYTES.saturating_sub(line.len());
+        if remaining == 0 {
+            return Ok(false); // cap reached without newline
+        }
+        match buf.iter().position(|&b| b == b'\n') {
+            Some(pos) => {
+                let take = (pos + 1).min(remaining);
+                line.extend_from_slice(&buf[..take]);
+                let newline_consumed = take > pos; // newline itself within cap
+                reader.consume(take);
+                return Ok(newline_consumed);
+            }
+            None => {
+                let take = buf.len().min(remaining);
+                line.extend_from_slice(&buf[..take]);
+                let consumed = take;
+                reader.consume(consumed);
+            }
+        }
+    }
+}
+
+/// Consumes and discards stream data until the next newline or EOF.
+///
+/// Parameters: `reader` - buffered stream.
+/// Returns: `Ok(())` on newline or EOF.
+async fn discard_until_newline<R: tokio::io::AsyncBufRead + Unpin>(reader: &mut R) -> Result<()> {
+    loop {
+        let buf = reader.fill_buf().await?;
+        if buf.is_empty() {
+            return Ok(());
+        }
+        match buf.iter().position(|&b| b == b'\n') {
+            Some(pos) => {
+                reader.consume(pos + 1);
+                return Ok(());
+            }
+            None => {
+                let len = buf.len();
+                reader.consume(len);
+            }
+        }
+    }
 }
 
 /// Parses a syslog message and forwards an event if matched.
@@ -293,4 +421,62 @@ fn extract_text_value(payload: &str, key: &str) -> Option<String> {
         start = idx;
     }
     None
+}
+
+#[cfg(test)]
+mod tcp_hardening_tests {
+    use super::*;
+    use std::io::Cursor;
+
+    async fn collect_lines(input: &[u8]) -> Vec<Vec<u8>> {
+        let mut reader = Cursor::new(input.to_vec());
+        let mut out = Vec::new();
+        loop {
+            let mut line = Vec::new();
+            let complete = read_capped_line(&mut reader, &mut line).await.unwrap();
+            if line.is_empty() && !complete {
+                break;
+            }
+            if !complete {
+                discard_until_newline(&mut reader).await.unwrap();
+            }
+            out.push(line);
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn short_lines_are_read_intact() {
+        let lines = collect_lines(b"first\nsecond\nthird-without-newline").await;
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0], b"first\n");
+        assert_eq!(lines[1], b"second\n");
+        assert_eq!(lines[2], b"third-without-newline");
+    }
+
+    #[tokio::test]
+    async fn oversized_line_is_truncated_and_discarded() {
+        let mut input = vec![b'a'; MAX_TCP_LINE_BYTES + 4096];
+        input.push(b'\n');
+        input.extend_from_slice(b"next-valid\n");
+        let lines = collect_lines(&input).await;
+        assert_eq!(lines.len(), 2, "truncated line + following line");
+        assert_eq!(
+            lines[0].len(),
+            MAX_TCP_LINE_BYTES,
+            "first line capped at limit"
+        );
+        assert_eq!(lines[1], b"next-valid\n", "following line unaffected");
+    }
+
+    #[tokio::test]
+    async fn line_exactly_at_cap_with_newline_is_kept() {
+        let mut input = vec![b'b'; MAX_TCP_LINE_BYTES - 1];
+        input.push(b'\n');
+        input.extend_from_slice(b"tail\n");
+        let lines = collect_lines(&input).await;
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].len(), MAX_TCP_LINE_BYTES);
+        assert_eq!(lines[1], b"tail\n");
+    }
 }

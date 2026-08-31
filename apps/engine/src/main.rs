@@ -29,6 +29,7 @@ mod tls_listener;
 mod tls_parsers;
 mod vendor;
 mod vpn_adapters;
+mod webhook_guard;
 
 use anyhow::Result;
 use axum::Router;
@@ -45,7 +46,7 @@ use std::time::Duration;
 use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 use trueid_common::db::Db;
 use trueid_common::live_event::LiveEvent;
@@ -532,11 +533,32 @@ async fn main() -> Result<()> {
     });
 
     // Admin HTTP API (:8080).
+    let dev_mode = std::env::var("TRUEID_DEV_MODE")
+        .map(|v| v == "true")
+        .unwrap_or(false);
     let service_token = std::env::var("ENGINE_SERVICE_TOKEN")
         .ok()
         .filter(|s| !s.is_empty());
-    if service_token.is_none() {
-        warn!("ENGINE_SERVICE_TOKEN not set — admin API is unprotected.");
+    match service_token.as_deref() {
+        Some(tok) if tok.len() >= 32 => {}
+        Some(_) => {
+            if !dev_mode {
+                error!("FATAL: ENGINE_SERVICE_TOKEN must be at least 32 chars in production. See docs/DEPLOYMENT.md (secrets).");
+                std::process::exit(1);
+            }
+            warn!("ENGINE_SERVICE_TOKEN shorter than 32 chars in dev mode — treat as insecure.");
+        }
+        None => {
+            if !dev_mode {
+                error!("FATAL: ENGINE_SERVICE_TOKEN must be set in production — the admin API would be unprotected. See docs/DEPLOYMENT.md (secrets).");
+                std::process::exit(1);
+            }
+            if !admin_addr.ip().is_loopback() {
+                error!("FATAL: ENGINE_SERVICE_TOKEN unset and ADMIN_HTTP_BIND ({admin_bind_str}) is not loopback — refusing to expose an unprotected admin API.");
+                std::process::exit(1);
+            }
+            warn!("DEV MODE: ENGINE_SERVICE_TOKEN not set; admin API is loopback-only and accepts unauthenticated requests.");
+        }
     }
 
     let admin_state = EngineAdminState {

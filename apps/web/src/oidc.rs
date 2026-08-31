@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result};
 use chrono::Utc;
-use jsonwebtoken::{decode, decode_header, jwk::Jwk, DecodingKey, Validation};
+use jsonwebtoken::{decode, decode_header, jwk::Jwk, Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::Row;
@@ -11,6 +11,10 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use trueid_common::db::Db;
+
+/// ID-token algorithms accepted from providers (asymmetric families only).
+const ALLOWED_ID_TOKEN_ALGS: [Algorithm; 3] =
+    [Algorithm::RS256, Algorithm::ES256, Algorithm::EdDSA];
 
 static DISCOVERY_CACHE: OnceLock<RwLock<HashMap<String, CachedDiscovery>>> = OnceLock::new();
 
@@ -92,9 +96,14 @@ fn cache() -> &'static RwLock<HashMap<String, CachedDiscovery>> {
 impl OidcProvider {
     /// Discovers OIDC endpoints from `.well-known/openid-configuration`.
     ///
-    /// Parameters: `db` - database handle, `http` - HTTP client.
+    /// Parameters: `db` - database handle, `http` - HTTP client,
+    /// `allow_insecure_loopback` - permit plain-HTTP loopback issuers (dev mode).
     /// Returns: ready-to-use provider metadata and credentials.
-    pub async fn discover(db: &Db, http: &reqwest::Client) -> Result<Self> {
+    pub async fn discover(
+        db: &Db,
+        http: &reqwest::Client,
+        allow_insecure_loopback: bool,
+    ) -> Result<Self> {
         let config = load_oidc_config(db).await?;
         anyhow::ensure!(config.enabled, "OIDC is disabled");
         anyhow::ensure!(
@@ -110,7 +119,30 @@ impl OidcProvider {
             "OIDC redirect_uri is required"
         );
         let issuer = config.issuer_url.trim_end_matches('/').to_string();
-        let discovery = discover_document(http, &issuer).await?;
+        let discovery = discover_document(http, &issuer, allow_insecure_loopback).await?;
+
+        // The JWKS URL comes from the (validated) issuer's discovery document;
+        // require it to stay on the issuer's origin so a compromised or
+        // malicious document cannot swap key material from elsewhere.
+        let issuer_url = reqwest::Url::parse(&issuer)?;
+        let jwks_url = reqwest::Url::parse(&discovery.jwks_uri)?;
+        anyhow::ensure!(
+            same_origin(&issuer_url, &jwks_url),
+            "discovery jwks_uri ({}) must share the issuer origin ({issuer})",
+            discovery.jwks_uri
+        );
+        for (name, endpoint) in [
+            ("authorization_endpoint", &discovery.authorization_endpoint),
+            ("token_endpoint", &discovery.token_endpoint),
+        ] {
+            let url = reqwest::Url::parse(endpoint)
+                .with_context(|| format!("invalid discovery {name}"))?;
+            anyhow::ensure!(
+                url.scheme() == "https" || (allow_insecure_loopback && url.scheme() == "http"),
+                "discovery {name} must use HTTPS"
+            );
+        }
+
         Ok(Self {
             issuer,
             authorization_endpoint: discovery.authorization_endpoint,
@@ -202,6 +234,10 @@ impl OidcProvider {
         let jwk: Jwk = serde_json::from_value(jwk_value.clone()).context("invalid jwk format")?;
         let decoding_key = DecodingKey::from_jwk(&jwk).context("failed to build decoding key")?;
         let alg = header.alg;
+        anyhow::ensure!(
+            ALLOWED_ID_TOKEN_ALGS.contains(&alg),
+            "id_token algorithm not allowed: {alg:?} (allowed: RS256/ES256/EdDSA)"
+        );
         let mut validation = Validation::new(alg);
         validation.set_issuer(&[self.issuer.as_str()]);
         validation.set_audience(&[self.client_id.as_str()]);
@@ -264,11 +300,53 @@ pub async fn load_oidc_config(db: &Db) -> Result<OidcConfig> {
     })
 }
 
+/// Validates an issuer URL: must be HTTPS, or plain HTTP only when the host
+/// is loopback AND `allow_insecure_loopback` (dev mode) is set.
+///
+/// Parameters: `issuer` - configured issuer URL, `allow_insecure_loopback` - dev flag.
+/// Returns: Ok for acceptable URLs.
+pub fn validate_issuer_url(issuer: &str, allow_insecure_loopback: bool) -> Result<()> {
+    let url = reqwest::Url::parse(issuer).context("issuer_url is not a valid URL")?;
+    let host = url
+        .host_str()
+        .context("issuer_url is missing a host")?
+        .to_string();
+    match url.scheme() {
+        "https" => Ok(()),
+        "http" => {
+            let is_loopback = host
+                .parse::<std::net::IpAddr>()
+                .map(|ip| ip.is_loopback())
+                .unwrap_or(false)
+                || host == "localhost";
+            anyhow::ensure!(
+                is_loopback && allow_insecure_loopback,
+                "issuer_url must use HTTPS (plain HTTP is allowed only for loopback hosts in dev mode)"
+            );
+            Ok(())
+        }
+        other => anyhow::bail!("issuer_url scheme must be https, got '{other}'"),
+    }
+}
+
+/// Whether two URLs share scheme, host and effective port.
+fn same_origin(a: &reqwest::Url, b: &reqwest::Url) -> bool {
+    a.scheme() == b.scheme()
+        && a.host_str() == b.host_str()
+        && a.port_or_known_default() == b.port_or_known_default()
+}
+
 /// Fetches and caches OIDC discovery document for one hour.
 ///
-/// Parameters: `http` - HTTP client, `issuer` - issuer URL.
+/// Parameters: `http` - HTTP client, `issuer` - issuer URL,
+/// `allow_insecure_loopback` - permit plain-HTTP loopback issuers (dev mode).
 /// Returns: discovery endpoints.
-pub async fn discover_document(http: &reqwest::Client, issuer: &str) -> Result<OidcDiscovery> {
+pub async fn discover_document(
+    http: &reqwest::Client,
+    issuer: &str,
+    allow_insecure_loopback: bool,
+) -> Result<OidcDiscovery> {
+    validate_issuer_url(issuer, allow_insecure_loopback)?;
     let now = Instant::now();
     {
         let guard = cache().read().await;
@@ -300,7 +378,37 @@ pub async fn discover_document(http: &reqwest::Client, issuer: &str) -> Result<O
 
 #[cfg(test)]
 mod tests {
-    use super::OidcProvider;
+    use super::{validate_issuer_url, OidcProvider};
+
+    #[test]
+    fn issuer_must_be_https_in_production() {
+        assert!(validate_issuer_url("https://sso.example.com/realms/main", false).is_ok());
+        assert!(validate_issuer_url("http://sso.example.com", false).is_err());
+        assert!(validate_issuer_url("ftp://sso.example.com", false).is_err());
+        assert!(validate_issuer_url("http://127.0.0.1:8080", false).is_err());
+        assert!(validate_issuer_url("not-a-url", false).is_err());
+    }
+
+    #[test]
+    fn issuer_allows_loopback_http_only_in_dev() {
+        assert!(validate_issuer_url("http://127.0.0.1:8080/realms/x", true).is_ok());
+        assert!(validate_issuer_url("http://localhost:8080", true).is_ok());
+        assert!(validate_issuer_url("http://192.168.1.10:8080", true).is_err());
+        assert!(validate_issuer_url("http://127.0.0.1:8080", false).is_err());
+    }
+
+    #[test]
+    fn same_origin_compares_scheme_host_port() {
+        let a = reqwest::Url::parse("https://sso.example.com").unwrap();
+        let b = reqwest::Url::parse("https://sso.example.com/jwks").unwrap();
+        let c = reqwest::Url::parse("https://evil.example.com/jwks").unwrap();
+        let d = reqwest::Url::parse("http://sso.example.com/jwks").unwrap();
+        let e = reqwest::Url::parse("https://sso.example.com:8443/jwks").unwrap();
+        assert!(super::same_origin(&a, &b));
+        assert!(!super::same_origin(&a, &c));
+        assert!(!super::same_origin(&a, &d));
+        assert!(!super::same_origin(&a, &e));
+    }
 
     /// Verifies authorization URL contains required OIDC query parameters.
     ///

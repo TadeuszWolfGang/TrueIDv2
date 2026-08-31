@@ -4,7 +4,10 @@ global:
 scrape_configs:
   - job_name: trueid
     metrics_path: /metrics
-    params:
-      token: ["set-a-strong-metrics-token"]
+    # Bearer-header auth (query-string ?token= is deprecated and leaks into logs).
+    # Set METRICS_TOKEN in web's environment to the same value.
+    authorization:
+      type: Bearer
+      credentials: "set-a-strong-metrics-token"
     static_configs:
       - targets: ["web:3000"]

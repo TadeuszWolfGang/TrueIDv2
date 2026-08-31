@@ -3,6 +3,29 @@
 All notable changes to TrueID are documented here.  
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
+## [Unreleased] — security remediation 2026-08-31
+
+### Security
+- **Dependencies**: h2 upgraded to 0.4.16 (RUSTSEC-2026-0258, HTTP/2 empty-DATA DoS); lockfile regenerated; direct `rustls-pemfile` usage replaced with `rustls-pki-types` (RUSTSEC-2025-0134) — remaining copy is transitive via axum-server (documented in `deny.toml`); rsa/sqlx-mysql lockfile artifact verified as never-compiled and documented
+- **TOTP 2FA**: RFC 6238 §5.2 replay protection (atomic last-used timestep tracking), constant-time code comparison, TOTP failures now count toward account lockout on login/verify/disable; backup-code consumption made race-safe via compare-and-swap
+- **Notification SSRF**: engine dispatcher routes Slack/Teams/generic/report webhooks through the shared `webhook_guard` (scheme allowlist, private/loopback/link-local rejection, DNS pinning, redirect-following disabled, `Host` header passthrough blocked); Teams/Slack/webhook channel creation now host-validated (substring bypass closed)
+- **Firewall push**: TLS certificate verification ON by default for PAN-OS/FortiGate targets (DB migration flips existing `verify_tls=0` rows); runtime warning when pushing to an unverified target
+- **Engine admin API**: refuses to start in production without `ENGINE_SERVICE_TOKEN` (dev mode allowed only on loopback bind); service-token compare made constant-time
+- **Client IP trust**: new `TRUSTED_PROXIES` config (IPs/CIDRs/`loopback`); `X-Forwarded-For` ignored from untrusted peers for login rate limiting, audit IPs, and session IP binding; spoofable `X-Real-IP` support removed
+- **OIDC**: issuer must be HTTPS (loopback HTTP only in dev mode); discovery `jwks_uri`/endpoints must share issuer origin and use HTTPS; ID-token algorithms pinned to RS256/ES256/EdDSA; SSO sessions now bound to client IP + user-agent; admin config validates `issuer_url`/`redirect_uri` schemes; OIDC `state` compare constant-time
+- **LDAP**: `ldap://` connections upgraded via STARTTLS before bind (AD password never in cleartext); `ldap_url` restricted to `ldaps://`/`ldap://` schemes at validation
+- **TCP syslog**: per-line 64 KiB cap, global (64) and per-IP (16) connection limits on the AD syslog TCP listener
+- **Dev mode**: web refuses non-loopback bind while `TRUEID_DEV_MODE=true`; FATAL messages point to docs instead of suggesting the bypass flag
+- **Session/auth hardening**: dummy Argon2 verify for unknown usernames (timing-based account enumeration closed); `locked_until` no longer disclosed on 423; `/api/auth/refresh` re-checks account lock and revokes sessions of locked users
+- **SSE resource caps**: global + per-user stream limits on web proxy and engine stream (429 on excess)
+- **Metrics**: `Authorization: Bearer` auth for `/metrics` (constant-time); query-string token deprecated with warning; `prometheus.yml` migrated to Bearer
+- **Secrets at rest**: `set_config` fails closed for sensitive Sycope keys without `CONFIG_ENCRYPTION_KEY` (no silent plaintext); engine returns 500 with a clear message
+- **Email**: all alert/report fields HTML-escaped (rule names, usernames, IPs)
+- **Repos/CI**: real-looking admin password removed from `seed-mac.sh` (now env-driven) — **rotate the old password on any deployment where it was used**; `.gitignore` covers generated PKI material; workflows run with `permissions: contents: read`; Dependabot (alerts + weekly updates) and secret scanning with push protection enabled; `.trivyignore` entries must carry `# Review by:` dates and the pipeline fails on expired exceptions (CVE-2026-0861 removed — fixed in Debian 12 glibc 2.36-9+deb12u14)
+
+### Tests
+- New unit/regression coverage: TOTP timestep matching + skew, webhook URL validation (Teams substring bypass, generic schemes), `TrustedProxies`/effective-client-IP resolution matrix, OIDC issuer/same-origin validation, `set_config` fail-closed, TCP syslog line cap/truncation — workspace total 410 passing
+
 ## [0.8.0] — 2026-02-08
 
 ### Added

@@ -94,6 +94,8 @@ async fn build_test_app_with_settings(
         auth_chain: Some(Arc::new(
             trueid_common::auth_provider::AuthProviderChain::default_chain(db.clone()),
         )),
+        trusted_proxies: Arc::new(trueid_web::client_addr::TrustedProxies::default()),
+        dev_mode: true,
     };
     (build_router(state), db)
 }
@@ -4513,13 +4515,13 @@ async fn test_session_info_includes_ip() {
         .method("POST")
         .uri("/api/auth/login")
         .header("content-type", "application/json")
-        .header("x-real-ip", "10.10.10.10")
+        .header("x-forwarded-for", "10.10.10.10")
         .body(Body::from(
             serde_json::to_string(&json!({
                 "username": "testadmin",
                 "password": "testpassword123"
             }))
-            .expect("serialize login body failed"),
+            .expect("serialize login body"),
         ))
         .expect("build login request failed");
     let resp = app
@@ -4546,7 +4548,7 @@ async fn test_session_info_includes_ip() {
         .method("GET")
         .uri("/api/auth/sessions")
         .header("cookie", cookie)
-        .header("x-real-ip", "10.10.10.10")
+        .header("x-forwarded-for", "10.10.10.10")
         .body(Body::empty())
         .expect("build list sessions request failed");
     let resp = app
@@ -5840,6 +5842,8 @@ async fn build_test_app_with_strict_rate_limit() -> (Router, Arc<trueid_common::
         auth_chain: Some(Arc::new(
             trueid_common::auth_provider::AuthProviderChain::default_chain(db.clone()),
         )),
+        trusted_proxies: Arc::new(trueid_web::client_addr::TrustedProxies::default()),
+        dev_mode: true,
     };
     (build_router(state), db)
 }

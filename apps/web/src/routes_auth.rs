@@ -68,18 +68,26 @@ struct MeResponse {
 
 // ── Helpers ────────────────────────────────────────────────
 
-/// Extracts client IP from X-Forwarded-For or peer address.
-fn client_ip(headers: &axum::http::HeaderMap) -> Option<String> {
-    headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .map(|v| v.split(',').next().unwrap_or("").trim().to_string())
-        .or_else(|| {
-            headers
-                .get("x-real-ip")
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.to_string())
-        })
+/// Resolves the effective client IP for session binding.
+///
+/// Uses X-Forwarded-For only when trusted (dev mode or TRUSTED_PROXIES);
+/// otherwise the TCP peer address. The login handler receives the resolved
+/// peer via the ConnectInfo extension.
+fn client_ip(
+    headers: &axum::http::HeaderMap,
+    connect_info: Option<&axum::extract::ConnectInfo<std::net::SocketAddr>>,
+    state: &AppState,
+) -> Option<String> {
+    let _ = headers;
+    Some(
+        crate::client_addr::effective_client_ip(
+            headers,
+            connect_info.map(|ci| ci.0),
+            &state.trusted_proxies,
+            state.dev_mode,
+        )
+        .to_string(),
+    )
 }
 
 // extract_cookie is imported from crate::auth
@@ -128,11 +136,14 @@ fn clear_cookies(dev_mode: bool) -> Vec<(header::HeaderName, String)> {
 pub async fn login(
     State(state): State<AppState>,
     Extension(request_id): Extension<RequestId>,
+    connect_info: Option<
+        axum::extract::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>,
+    >,
     headers: axum::http::HeaderMap,
     Json(body): Json<LoginRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let rid = request_id.0;
-    let ip = client_ip(&headers);
+    let ip = client_ip(&headers, connect_info.as_deref(), &state);
     let ua = headers
         .get(header::USER_AGENT)
         .and_then(|v| v.to_str().ok())
@@ -197,11 +208,11 @@ pub async fn login(
                 Some(&rid),
             )
             .await;
+            let _ = until; // intentionally not disclosed: prevents account enumeration
             let body = serde_json::json!({
                 "error": "Account is locked due to too many failed attempts",
                 "code": error::ACCOUNT_LOCKED,
                 "request_id": &rid,
-                "locked_until": until.to_rfc3339(),
             });
             return Ok((StatusCode::LOCKED, Json(body)).into_response());
         }
@@ -237,6 +248,17 @@ pub async fn login(
                 .into_response());
         };
         if !verify_user_totp_or_backup(db, &user, code).await {
+            let _ = db.record_failed_login(&body.username).await;
+            helpers::audit_system(
+                db,
+                &body.username,
+                "login_failed_totp",
+                None,
+                None,
+                ip.as_deref(),
+                Some(&rid),
+            )
+            .await;
             return Err(ApiError::new(
                 StatusCode::UNAUTHORIZED,
                 error::INVALID_CREDENTIALS,
@@ -314,10 +336,13 @@ pub async fn login(
 pub async fn logout(
     auth: AuthUser,
     State(state): State<AppState>,
+    connect_info: Option<
+        axum::extract::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>,
+    >,
     headers: axum::http::HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
     let db = helpers::require_db(&state, &auth.request_id)?;
-    let ip = client_ip(&headers);
+    let ip = client_ip(&headers, connect_info.as_deref(), &state);
 
     // Revoke the specific refresh session.
     let cookie_header = headers
@@ -360,10 +385,13 @@ pub async fn logout(
 pub async fn logout_all(
     auth: AuthUser,
     State(state): State<AppState>,
+    connect_info: Option<
+        axum::extract::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>,
+    >,
     headers: axum::http::HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
     let db = helpers::require_db(&state, &auth.request_id)?;
-    let ip = client_ip(&headers);
+    let ip = client_ip(&headers, connect_info.as_deref(), &state);
 
     let count = db.revoke_all_sessions(auth.user_id).await.unwrap_or(0);
     let _ = db.bump_token_version(auth.user_id).await;
@@ -468,6 +496,19 @@ pub async fn refresh(
             .with_request_id(&rid)
         })?;
 
+    // Re-check account state at refresh time: a locked account must not be
+    // able to mint fresh access tokens even with a valid refresh cookie.
+    if db.is_account_locked(&user) {
+        let _ = db.revoke_session(new_session.id).await;
+        warn!(user_id = user.id, "Refresh refused: account is locked");
+        return Err(ApiError::new(
+            StatusCode::UNAUTHORIZED,
+            error::AUTH_REQUIRED,
+            "Account is locked",
+        )
+        .with_request_id(&rid));
+    }
+
     let access_token = create_access_token(&state.jwt_config, &user).map_err(|_| {
         ApiError::new(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -531,6 +572,9 @@ pub async fn me(
 pub async fn change_password(
     auth: AuthUser,
     State(state): State<AppState>,
+    connect_info: Option<
+        axum::extract::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>,
+    >,
     headers: axum::http::HeaderMap,
     Json(body): Json<ChangePasswordRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -568,7 +612,7 @@ pub async fn change_password(
             "Auth not available",
         )
     })?;
-    let ip = client_ip(&headers);
+    let ip = client_ip(&headers, connect_info.as_deref(), &state);
 
     // Determine user's auth source.
     let user_rec = db
@@ -746,11 +790,14 @@ pub async fn list_sessions(
 pub async fn revoke_session(
     auth: AuthUser,
     State(state): State<AppState>,
+    connect_info: Option<
+        axum::extract::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>,
+    >,
     headers: axum::http::HeaderMap,
     Path(session_id): Path<i64>,
 ) -> Result<impl IntoResponse, ApiError> {
     let db = helpers::require_db(&state, &auth.request_id)?;
-    let ip = client_ip(&headers);
+    let ip = client_ip(&headers, connect_info.as_deref(), &state);
 
     // Ensure session belongs to user.
     let sessions = db

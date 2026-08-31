@@ -171,8 +171,25 @@ pub(crate) async fn verify(
         .flatten()
         .map(|u| u.username)
         .unwrap_or_else(|| auth.username.clone());
-    let ok = verify_totp_code_for_user_secret(&secret, &username, &body.code);
+    let ok = match totp_matched_timestep(&secret, &username, &body.code) {
+        Some(timestep) => db
+            .check_and_set_totp_timestep(auth.user_id, timestep)
+            .await
+            .unwrap_or(false),
+        None => false,
+    };
     if !ok {
+        let _ = db.record_failed_login(&username).await;
+        helpers::audit_system(
+            db,
+            &username,
+            "totp_verify_failed",
+            None,
+            None,
+            None,
+            Some(&auth.request_id),
+        )
+        .await;
         return Err(ApiError::new(
             StatusCode::UNAUTHORIZED,
             error::INVALID_CREDENTIALS,
@@ -268,6 +285,15 @@ pub(crate) async fn disable(
         return Ok(StatusCode::OK);
     }
     if !verify_user_totp_or_backup(db, &user, &body.code).await {
+        let _ = db.record_failed_login(&user.username).await;
+        helpers::audit(
+            db,
+            &auth,
+            "totp_disable_failed",
+            Some(&format!("user:{}", auth.user_id)),
+            None,
+        )
+        .await;
         return Err(ApiError::new(
             StatusCode::UNAUTHORIZED,
             error::INVALID_CREDENTIALS,
@@ -360,8 +386,11 @@ pub(crate) async fn regenerate_backup_codes(
 
 /// Verifies provided code against user TOTP secret and one-time backup codes.
 ///
+/// Enforces RFC 6238 §5.2 replay protection: a TOTP code is accepted only for
+/// a timestep newer than the last accepted one (atomic compare-and-set).
+///
 /// Parameters: `db` - database handle, `user` - user record, `code` - submitted code.
-/// Returns: `true` when code is valid.
+/// Returns: `true` when code is valid and fresh.
 pub(crate) async fn verify_user_totp_or_backup(
     db: &trueid_common::db::Db,
     user: &trueid_common::model::User,
@@ -372,8 +401,11 @@ pub(crate) async fn verify_user_totp_or_backup(
     }
     if let Ok(Some(secret_enc)) = db.get_user_totp_secret_enc(user.id).await {
         if let Ok(secret) = db.decrypt_config_value(&secret_enc) {
-            if verify_totp_code_for_user_secret(&secret, &user.username, code) {
-                return true;
+            if let Some(timestep) = totp_matched_timestep(&secret, &user.username, code) {
+                if let Ok(true) = db.check_and_set_totp_timestep(user.id, timestep).await {
+                    return true;
+                }
+                warn!(user_id = user.id, timestep, "Rejected replayed TOTP code");
             }
         }
     }
@@ -400,24 +432,36 @@ fn build_totp(secret_base32: &str, username: &str) -> anyhow::Result<TOTP> {
     .map_err(|e| anyhow::anyhow!("totp init failed: {e}"))
 }
 
-/// Verifies one TOTP code for given secret.
+/// Verifies one TOTP code for given secret and returns the matched timestep.
+///
+/// Equivalent to `check_current` with ±1 step skew, but returns the matched
+/// 30-second timestep so callers can enforce replay protection, and uses a
+/// constant-time comparison.
 ///
 /// Parameters: `secret_base32` - encoded secret, `username` - account label, `code` - user code.
-/// Returns: true when code is valid.
-pub(crate) fn verify_totp_code_for_user_secret(
+/// Returns: matched timestep when the code is valid.
+pub(crate) fn totp_matched_timestep(
     secret_base32: &str,
     username: &str,
     code: &str,
-) -> bool {
+) -> Option<i64> {
     let clean = code.trim().replace(' ', "");
-    if clean.len() < 6 {
-        return false;
+    if clean.len() != 6 || !clean.chars().all(|c| c.is_ascii_digit()) {
+        return None;
     }
-    let totp = match build_totp(secret_base32, username) {
-        Ok(v) => v,
-        Err(_) => return false,
-    };
-    totp.check_current(&clean).unwrap_or(false)
+    let totp = build_totp(secret_base32, username).ok()?;
+    let now_step = chrono::Utc::now().timestamp().div_euclid(30);
+    for delta in -1i64..=1 {
+        let step = now_step + delta;
+        if step < 0 {
+            continue;
+        }
+        let candidate = totp.generate((step * 30) as u64);
+        if trueid_common::constant_time_eq(candidate.as_bytes(), clean.as_bytes()) {
+            return Some(step);
+        }
+    }
+    None
 }
 
 /// Generates 10 random one-time backup codes.
@@ -473,7 +517,51 @@ async fn consume_backup_code(db: &trueid_common::db::Db, user_id: i64, input: &s
         Some(v) => v,
         None => return false,
     };
-    db.set_user_totp_backup_codes_enc(user_id, Some(&new_enc))
+    // Compare-and-swap prevents two concurrent requests from consuming the
+    // same one-time code (read-modify-write race).
+    db.cas_user_totp_backup_codes_enc(user_id, Some(&enc), Some(&new_enc))
         .await
-        .is_ok()
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_secret() -> String {
+        // RFC 6238 test vector secret (base32 of "12345678901234567890").
+        "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ".to_string()
+    }
+
+    #[test]
+    fn matched_timestep_accepts_current_code() {
+        let secret = test_secret();
+        let totp = build_totp(&secret, "alice").unwrap();
+        let code = totp.generate_current().unwrap();
+        let step = chrono::Utc::now().timestamp().div_euclid(30);
+        let matched = totp_matched_timestep(&secret, "alice", &code);
+        assert!(matched.is_some());
+        assert!((step - 1..=step + 1).contains(&matched.unwrap()));
+    }
+
+    #[test]
+    fn matched_timestep_rejects_garbage() {
+        let secret = test_secret();
+        assert!(totp_matched_timestep(&secret, "alice", "abcde").is_none());
+        assert!(totp_matched_timestep(&secret, "alice", "12345").is_none());
+        assert!(totp_matched_timestep(&secret, "alice", "12345678").is_none());
+        assert!(totp_matched_timestep(&secret, "alice", "000000x").is_none());
+    }
+
+    #[test]
+    fn matched_timestep_accepts_previous_step_with_skew() {
+        let secret = test_secret();
+        let totp = build_totp(&secret, "alice").unwrap();
+        let prev_step = chrono::Utc::now().timestamp().div_euclid(30) - 1;
+        let code = totp.generate((prev_step * 30) as u64);
+        assert_eq!(
+            totp_matched_timestep(&secret, "alice", &code),
+            Some(prev_step)
+        );
+    }
 }

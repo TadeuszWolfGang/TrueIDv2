@@ -1,9 +1,8 @@
 //! TLS configuration — loading certificates and building rustls config.
 
 use anyhow::{Context, Result};
+use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use std::fs::File;
-use std::io::BufReader;
 use std::path::Path;
 use std::sync::Arc;
 use tokio_rustls::TlsConnector;
@@ -43,12 +42,10 @@ pub fn build_tls_connector(
 /// Parameters: `path` - filesystem path to PEM file.
 /// Returns: vector of parsed certificates or an error.
 fn load_certs(path: &Path) -> Result<Vec<CertificateDer<'static>>> {
-    let file = File::open(path).with_context(|| format!("opening cert: {}", path.display()))?;
-    let mut reader = BufReader::new(file);
-    let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut reader)
+    CertificateDer::pem_file_iter(path)
+        .with_context(|| format!("parsing certs from: {}", path.display()))?
         .collect::<Result<Vec<_>, _>>()
-        .with_context(|| format!("parsing certs from: {}", path.display()))?;
-    Ok(certs)
+        .with_context(|| format!("parsing certs from: {}", path.display()))
 }
 
 /// Loads a PEM-encoded private key from a file.
@@ -56,10 +53,10 @@ fn load_certs(path: &Path) -> Result<Vec<CertificateDer<'static>>> {
 /// Parameters: `path` - filesystem path to key PEM file.
 /// Returns: parsed private key or an error.
 fn load_private_key(path: &Path) -> Result<PrivateKeyDer<'static>> {
-    let file = File::open(path).with_context(|| format!("opening key: {}", path.display()))?;
-    let mut reader = BufReader::new(file);
-    let key = rustls_pemfile::private_key(&mut reader)
+    PrivateKeyDer::pem_file_iter(path)
         .with_context(|| format!("parsing key from: {}", path.display()))?
-        .with_context(|| format!("no private key found in: {}", path.display()))?;
-    Ok(key)
+        .next()
+        .transpose()
+        .with_context(|| format!("parsing key from: {}", path.display()))?
+        .with_context(|| format!("no private key found in: {}", path.display()))
 }

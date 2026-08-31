@@ -211,22 +211,23 @@ where
             .with_request_id(&rid));
         }
 
+        // Session IP binding: compare against the effective client IP
+        // (peer address, or XFF only when the peer is a trusted proxy).
+        // Skipped in dev mode where XFF semantics are relaxed.
         if let Some(bound_ip) = session.ip_address.as_deref() {
-            let request_ip = parts
-                .headers
-                .get("x-forwarded-for")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.split(',').next())
-                .map(str::trim)
-                .or_else(|| {
-                    parts
-                        .headers
-                        .get("x-real-ip")
-                        .and_then(|v| v.to_str().ok())
-                        .map(str::trim)
-                });
-            if let Some(ip) = request_ip {
-                if ip != bound_ip {
+            if !app_state.dev_mode {
+                let peer = parts
+                    .extensions
+                    .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+                    .map(|ci| ci.0);
+                let effective = crate::client_addr::effective_client_ip(
+                    &parts.headers,
+                    peer,
+                    &app_state.trusted_proxies,
+                    false,
+                )
+                .to_string();
+                if effective != bound_ip {
                     return Err(ApiError::new(
                         StatusCode::UNAUTHORIZED,
                         error::AUTH_REQUIRED,
@@ -343,7 +344,10 @@ pub async fn csrf_guard(req: Request, next: Next) -> Result<Response, ApiError> 
         .unwrap_or("")
         .to_string();
 
-    if csrf_cookie.is_empty() || csrf_header.is_empty() || csrf_cookie != csrf_header {
+    if csrf_cookie.is_empty()
+        || csrf_header.is_empty()
+        || !trueid_common::constant_time_eq(csrf_cookie.as_bytes(), csrf_header.as_bytes())
+    {
         return Err(ApiError::new(
             StatusCode::FORBIDDEN,
             error::CSRF_FAILED,

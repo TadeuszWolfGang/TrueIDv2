@@ -5,10 +5,9 @@
 //! into the same `mpsc::Sender<IdentityEvent>` pipeline as UDP.
 
 use anyhow::{Context, Result};
+use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::server::WebPkiClientVerifier;
-use std::fs::File;
-use std::io::BufReader;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
@@ -180,18 +179,18 @@ fn parse_octet_frame(buf: &[u8]) -> Option<(String, usize)> {
 
 /// Loads PEM certificates from a file.
 fn load_certs(path: &Path) -> Result<Vec<CertificateDer<'static>>> {
-    let file = File::open(path).with_context(|| format!("opening: {}", path.display()))?;
-    let mut reader = BufReader::new(file);
-    rustls_pemfile::certs(&mut reader)
+    CertificateDer::pem_file_iter(path)
+        .with_context(|| format!("parsing certs: {}", path.display()))?
         .collect::<Result<Vec<_>, _>>()
         .with_context(|| format!("parsing certs: {}", path.display()))
 }
 
 /// Loads a PEM private key from a file.
 fn load_private_key(path: &Path) -> Result<PrivateKeyDer<'static>> {
-    let file = File::open(path).with_context(|| format!("opening: {}", path.display()))?;
-    let mut reader = BufReader::new(file);
-    rustls_pemfile::private_key(&mut reader)
+    PrivateKeyDer::pem_file_iter(path)
+        .with_context(|| format!("parsing key: {}", path.display()))?
+        .next()
+        .transpose()
         .with_context(|| format!("parsing key: {}", path.display()))?
         .with_context(|| format!("no key found in: {}", path.display()))
 }

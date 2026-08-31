@@ -350,7 +350,7 @@ fn map_target_row(row: &sqlx::sqlite::SqliteRow) -> FirewallTargetResponse {
         host: row.try_get("host").unwrap_or_default(),
         port: row.try_get("port").unwrap_or(443),
         username: row.try_get("username").ok(),
-        verify_tls: row.try_get("verify_tls").unwrap_or(false),
+        verify_tls: row.try_get("verify_tls").unwrap_or(true),
         enabled: row.try_get("enabled").unwrap_or(true),
         push_interval_secs: row.try_get("push_interval_secs").unwrap_or(60),
         subnet_filter: row.try_get("subnet_filter").ok(),
@@ -399,7 +399,7 @@ async fn load_target_internal(
         port: u16::try_from(row.try_get::<i64, _>("port").unwrap_or(443)).unwrap_or(443),
         username: row.try_get("username").ok(),
         password,
-        verify_tls: row.try_get("verify_tls").unwrap_or(false),
+        verify_tls: row.try_get("verify_tls").unwrap_or(true),
         push_interval_secs: row.try_get("push_interval_secs").unwrap_or(60).max(10),
         subnet_filter: parse_subnet_filter(row.try_get("subnet_filter").ok()),
     }))
@@ -821,7 +821,7 @@ pub(crate) async fn create_target(
     .bind(req.port.unwrap_or(443))
     .bind(req.username.as_deref().map(str::trim))
     .bind(encrypted)
-    .bind(req.verify_tls.unwrap_or(false))
+    .bind(req.verify_tls.unwrap_or(true))
     .bind(req.push_interval_secs.unwrap_or(60))
     .bind(subnet_filter)
     .execute(db.pool())

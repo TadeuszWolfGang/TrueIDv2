@@ -15,6 +15,7 @@ path = "src/main.rs"
 anyhow = { workspace = true }
 async-trait = "0.1"
 axum = { workspace = true }
+futures-core = "0.3"
 chrono = { workspace = true }
 dashmap = "5"
 jsonwebtoken = "9"
@@ -31,6 +32,7 @@ axum-server = { version = "0.7", features = ["tls-rustls"] }
 tower-http = { version = "0.5", features = ["fs"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+ipnet = "2"
 uuid = { version = "1", features = ["v4"] }
 dotenvy = "0.15"
 

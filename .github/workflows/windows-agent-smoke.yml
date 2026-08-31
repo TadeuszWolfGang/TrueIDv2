@@ -1,5 +1,9 @@
 name: windows-agent-smoke
 
+permissions:
+  contents: read
+
+
 on:
   push:
     branches: [main]

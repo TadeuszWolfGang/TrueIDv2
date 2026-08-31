@@ -38,21 +38,21 @@ async fn main() -> Result<()> {
         .unwrap_or(false);
 
     if dev_mode {
-        warn!("DEV MODE ENABLED — relaxed security. Do NOT use in production.");
+        warn!("DEV MODE ENABLED — relaxed security (ephemeral JWT secret, XFF trusted, session IP binding disabled). NEVER use in production; see docs/DEPLOYMENT.md.");
     } else {
         let jwt = std::env::var("JWT_SECRET").unwrap_or_default();
         if jwt.len() < 32 {
-            error!("FATAL: JWT_SECRET must be set and at least 32 chars in production. Set TRUEID_DEV_MODE=true to bypass.");
+            error!("FATAL: JWT_SECRET must be set and at least 32 chars in production. See docs/DEPLOYMENT.md (secrets).");
             std::process::exit(1);
         }
         let est = std::env::var("ENGINE_SERVICE_TOKEN").unwrap_or_default();
         if est.len() < 32 {
-            error!("FATAL: ENGINE_SERVICE_TOKEN must be set and at least 32 chars in production. Set TRUEID_DEV_MODE=true to bypass.");
+            error!("FATAL: ENGINE_SERVICE_TOKEN must be set and at least 32 chars in production. See docs/DEPLOYMENT.md (secrets).");
             std::process::exit(1);
         }
         let cek = std::env::var("CONFIG_ENCRYPTION_KEY").unwrap_or_default();
         if cek.len() != 64 || !cek.chars().all(|c| c.is_ascii_hexdigit()) {
-            error!("FATAL: CONFIG_ENCRYPTION_KEY must be 64 hex chars (32 bytes) in production. Set TRUEID_DEV_MODE=true to bypass.");
+            error!("FATAL: CONFIG_ENCRYPTION_KEY must be 64 hex chars (32 bytes) in production. See docs/DEPLOYMENT.md (secrets).");
             std::process::exit(1);
         }
         info!("Production mode: all required secrets verified.");
@@ -73,6 +73,17 @@ async fn main() -> Result<()> {
         &env_or_default("HTTP_BIND", DEFAULT_HTTP_ADDR),
         DEFAULT_HTTP_ADDR,
     )?;
+    // Dev mode intentionally relaxes security — confine it to loopback so an
+    // insecure instance can never be exposed on a network interface.
+    if dev_mode && !http_addr.ip().is_loopback() {
+        error!(
+            "FATAL: TRUEID_DEV_MODE=true refuses to bind non-loopback address {}. \
+             Bind loopback (HTTP_BIND=127.0.0.1:3000) or disable dev mode and provide \
+             all required secrets. See docs/DEPLOYMENT.md.",
+            http_addr
+        );
+        std::process::exit(1);
+    }
     let engine_url = env_or_default("ENGINE_API_URL", DEFAULT_ENGINE_URL);
 
     info!(db_url = %db_url, "Initializing database (read-only dashboard)");
@@ -174,6 +185,18 @@ async fn main() -> Result<()> {
     let auth_chain = db.as_ref().map(|d| {
         Arc::new(trueid_common::auth_provider::AuthProviderChain::default_chain(Arc::clone(d)))
     });
+    let trusted_proxies = {
+        let spec = std::env::var("TRUSTED_PROXIES").unwrap_or_default();
+        let parsed = trueid_web::client_addr::TrustedProxies::parse(&spec);
+        if spec.trim().is_empty() && !dev_mode {
+            warn!(
+                "TRUSTED_PROXIES not set — X-Forwarded-For is ignored; rate limiting and \
+                 session binding use the TCP peer address. Configure it when running behind \
+                 a reverse proxy."
+            );
+        }
+        Arc::new(parsed)
+    };
     let runtime_config = if let Some(ref db_ref) = db {
         trueid_common::app_config::AppConfig::load(db_ref.as_ref()).await
     } else {
@@ -192,6 +215,8 @@ async fn main() -> Result<()> {
         per_key_limiter: per_key_limiter.clone(),
         session_limiter: session_limiter.clone(),
         auth_chain,
+        trusted_proxies,
+        dev_mode,
     };
 
     // ── Background: rate limiter cleanup every 5 min ─────
@@ -238,7 +263,7 @@ async fn main() -> Result<()> {
             });
             axum_server::bind_rustls(http_addr, tls_config)
                 .handle(handle)
-                .serve(app.into_make_service())
+                .serve(app.into_make_service_with_connect_info::<std::net::SocketAddr>())
                 .await?;
         }
         _ => {
@@ -247,9 +272,12 @@ async fn main() -> Result<()> {
             }
             info!(%http_addr, "Starting HTTP server");
             let listener = tokio::net::TcpListener::bind(http_addr).await?;
-            axum::serve(listener, app)
-                .with_graceful_shutdown(shutdown_signal())
-                .await?;
+            axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .with_graceful_shutdown(shutdown_signal())
+            .await?;
         }
     }
 

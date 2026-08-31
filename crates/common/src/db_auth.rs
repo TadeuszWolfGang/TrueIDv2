@@ -344,7 +344,7 @@ impl Db {
     pub async fn set_user_totp_secret_enc(&self, user_id: i64, secret_enc: &str) -> Result<()> {
         sqlx::query(
             "UPDATE users
-             SET totp_secret_enc = ?, totp_enabled = 0, totp_verified_at = NULL, totp_backup_codes_enc = NULL, updated_at = datetime('now')
+             SET totp_secret_enc = ?, totp_enabled = 0, totp_verified_at = NULL, totp_backup_codes_enc = NULL, totp_last_timestep = NULL, updated_at = datetime('now')
              WHERE id = ?",
         )
         .bind(secret_enc)
@@ -352,6 +352,27 @@ impl Db {
         .execute(self.pool())
         .await?;
         Ok(())
+    }
+
+    /// Atomically advances the last accepted TOTP timestep for a user.
+    ///
+    /// Fails (returns false) when `timestep` was already used or is older than
+    /// the stored one, preventing code replay within the validity window.
+    ///
+    /// Parameters: `user_id` - user id, `timestep` - matched 30s timestep.
+    /// Returns: true when the timestep was fresh and has been recorded.
+    pub async fn check_and_set_totp_timestep(&self, user_id: i64, timestep: i64) -> Result<bool> {
+        let result = sqlx::query(
+            "UPDATE users
+             SET totp_last_timestep = ?
+             WHERE id = ? AND (totp_last_timestep IS NULL OR totp_last_timestep < ?)",
+        )
+        .bind(timestep)
+        .bind(user_id)
+        .bind(timestep)
+        .execute(self.pool())
+        .await?;
+        Ok(result.rows_affected() == 1)
     }
 
     /// Enables TOTP and persists encrypted backup codes.
@@ -378,7 +399,7 @@ impl Db {
     pub async fn disable_user_totp(&self, user_id: i64) -> Result<()> {
         sqlx::query(
             "UPDATE users
-             SET totp_enabled = 0, totp_secret_enc = NULL, totp_verified_at = NULL, totp_backup_codes_enc = NULL, updated_at = datetime('now')
+             SET totp_enabled = 0, totp_secret_enc = NULL, totp_verified_at = NULL, totp_backup_codes_enc = NULL, totp_last_timestep = NULL, updated_at = datetime('now')
              WHERE id = ?",
         )
         .bind(user_id)
@@ -397,6 +418,30 @@ impl Db {
             .fetch_optional(self.pool())
             .await?;
         Ok(row.and_then(|r| r.try_get("totp_backup_codes_enc").ok()))
+    }
+
+    /// Atomically replaces backup codes via compare-and-swap.
+    ///
+    /// Parameters: `user_id` - user id, `expected_enc` - currently stored blob,
+    ///   `new_enc` - replacement blob.
+    /// Returns: true when the stored blob still matched and was replaced.
+    pub async fn cas_user_totp_backup_codes_enc(
+        &self,
+        user_id: i64,
+        expected_enc: Option<&str>,
+        new_enc: Option<&str>,
+    ) -> Result<bool> {
+        let result = sqlx::query(
+            "UPDATE users
+             SET totp_backup_codes_enc = ?, updated_at = datetime('now')
+             WHERE id = ? AND totp_backup_codes_enc IS ?",
+        )
+        .bind(new_enc)
+        .bind(user_id)
+        .bind(expected_enc)
+        .execute(self.pool())
+        .await?;
+        Ok(result.rows_affected() == 1)
     }
 
     /// Updates encrypted TOTP backup codes value.

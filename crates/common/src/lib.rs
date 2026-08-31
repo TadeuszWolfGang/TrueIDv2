@@ -13,6 +13,18 @@ pub mod pagination;
 use anyhow::Result;
 use std::env;
 use std::net::SocketAddr;
+use subtle::ConstantTimeEq;
+
+/// Compares two byte strings in constant time (timing-attack resistant).
+///
+/// Parameters: `a` - first value, `b` - second value.
+/// Returns: true when equal; length mismatch always returns false.
+pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() || a.is_empty() {
+        return false;
+    }
+    bool::from(a.ct_eq(b))
+}
 
 /// Reads an environment variable or returns the default.
 ///

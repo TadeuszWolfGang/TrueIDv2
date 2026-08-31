@@ -152,6 +152,23 @@ else
 fi
 
 info "Container scan (Trivy)"
+
+# Fail when a .trivyignore exception has passed its review date.
+# Expected per-entry format: "# Review by: YYYY-MM-DD"
+check_trivyignore_expiry() {
+  local today entry_date
+  today="$(date +%Y-%m-%d)"
+  while IFS= read -r line; do
+    entry_date="$(printf '%s\n' "$line" | sed -n 's/^# Review by: \([0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}\).*/\1/p')"
+    if [ -n "$entry_date" ] && [ "$entry_date" \< "$today" ]; then
+      red "trivyignore exception expired (Review by: $entry_date): $line"
+      red "Re-test the CVE and remove or re-date the entry."
+      FAILURES=$((FAILURES+1))
+    fi
+  done < "${ROOT_DIR}/.trivyignore"
+}
+check_trivyignore_expiry
+
 run_and_check "trivy engine image (HIGH/CRITICAL)" \
   docker run --rm \
   -v /var/run/docker.sock:/var/run/docker.sock \

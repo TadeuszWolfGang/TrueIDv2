@@ -2,13 +2,15 @@
 # === TrueID — generowanie danych testowych v3 ===
 # Tworzy subnety PRZED eventami, dopisuje MAC, tagi, DNS, alerty.
 
-BASE="http://localhost:3000"
+BASE="${TRUEID_BASE_URL:-http://localhost:3000}"
+SEED_USER="${TRUEID_ADMIN_USER:?Set TRUEID_ADMIN_USER (env) before running}"
+SEED_PASS="${TRUEID_ADMIN_PASS:?Set TRUEID_ADMIN_PASS (env) before running}"
 
 # ─── 1. Login ───
 echo "Logowanie..."
 LOGIN=$(curl -s -c cookies.txt -X POST "$BASE/api/auth/login" \
   -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"8611Mnpm8611"}')
+  -d "$(printf '{"username":"%s","password":"%s"}' "$SEED_USER" "$SEED_PASS")")
 
 CSRF=$(grep trueid_csrf_token cookies.txt | awk '{print $NF}')
 echo ""

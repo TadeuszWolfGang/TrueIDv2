@@ -3,6 +3,7 @@
 //! The binary crate (`main.rs`) handles startup and server binding.
 
 pub mod auth;
+pub mod client_addr;
 pub mod cursor;
 pub mod error;
 pub mod helpers;
@@ -75,6 +76,10 @@ pub struct AppState {
     pub per_key_limiter: Arc<rate_limit::PerKeyLimiter>,
     pub session_limiter: Arc<rate_limit::PerKeyLimiter>,
     pub auth_chain: Option<Arc<trueid_common::auth_provider::AuthProviderChain>>,
+    /// Trusted reverse-proxy networks for X-Forwarded-For resolution.
+    pub trusted_proxies: Arc<client_addr::TrustedProxies>,
+    /// Dev mode relaxes proxy-trust and session IP binding (never enable in production).
+    pub dev_mode: bool,
 }
 
 /// Middleware that generates a UUID v4 request_id for each request,
@@ -93,20 +98,25 @@ async fn request_id_layer(mut req: Request, next: axum_mw::Next) -> Response {
 
 /// Middleware that rate-limits login attempts by client IP.
 ///
-/// Extracts client IP from X-Forwarded-For header or peer address.
+/// Keys on the effective client IP: TCP peer address, or X-Forwarded-For when
+/// the peer is a trusted proxy (TRUSTED_PROXIES) / dev mode.
 /// Returns 429 Too Many Requests with Retry-After header when limit exceeded.
 pub(crate) async fn login_rate_limit(
     State(state): State<AppState>,
     req: Request,
     next: axum_mw::Next,
 ) -> Response {
-    let ip = req
-        .headers()
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
+    let peer = req
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|ci| ci.0);
+    let ip = client_addr::effective_client_ip(
+        req.headers(),
+        peer,
+        &state.trusted_proxies,
+        state.dev_mode,
+    )
+    .to_string();
 
     if !state.login_limiter.check(&ip) {
         let body = serde_json::json!({
