@@ -148,7 +148,7 @@ pub(crate) async fn api_v1_mappings(
     let pool = db.pool();
 
     let total: i64 = {
-        let mut q = sqlx::query_scalar::<_, i64>(&count_sql);
+        let mut q = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_sql.as_str()));
         for b in &binds {
             q = q.bind(b.clone());
         }
@@ -162,7 +162,7 @@ pub(crate) async fn api_v1_mappings(
     };
 
     let rows = {
-        let mut q = sqlx::query(&data_sql);
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(data_sql.as_str()));
         for b in &binds {
             q = q.bind(b.clone());
         }
@@ -251,7 +251,7 @@ pub(crate) async fn api_v1_events(
 
     let pool = db.pool();
     let rows = {
-        let mut q = sqlx::query(&sql).bind(since_dt);
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str())).bind(since_dt);
         for b in &str_binds {
             q = q.bind(b.clone());
         }

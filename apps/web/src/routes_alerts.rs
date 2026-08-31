@@ -280,9 +280,9 @@ fn parse_datetime_param(
 /// Parameters: `query` - SQL query object, `binds` - bind values.
 /// Returns: query with binds attached.
 fn apply_binds<'q>(
-    mut query: sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'q>>,
+    mut query: sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments>,
     binds: &'q [BindParam],
-) -> sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'q>> {
+) -> sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments> {
     for bind in binds {
         query = match bind {
             BindParam::Text(v) => query.bind(v),
@@ -498,7 +498,7 @@ async fn load_rule_channels(
          WHERE arc.rule_id IN ({placeholders})
          ORDER BY nc.name ASC"
     );
-    let mut q = sqlx::query(&sql);
+    let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
     for id in rule_ids {
         q = q.bind(*id);
     }
@@ -912,7 +912,7 @@ pub async fn update_rule(
 
     let sql = format!("UPDATE alert_rules SET {} WHERE id = ?", sets.join(", "));
     binds.push(BindParam::I64(id));
-    apply_binds(sqlx::query(&sql), &binds)
+    apply_binds(sqlx::query(sqlx::AssertSqlSafe(sql.as_str())), &binds)
         .execute(db.pool())
         .await
         .map_err(|e| {
@@ -1077,7 +1077,7 @@ pub async fn alert_history(
         format!("WHERE {}", conditions.join(" AND "))
     };
     let count_sql = format!("SELECT COUNT(*) as c FROM alert_history {where_clause}");
-    let total_row = apply_binds(sqlx::query(&count_sql), &binds)
+    let total_row = apply_binds(sqlx::query(sqlx::AssertSqlSafe(count_sql.as_str())), &binds)
         .fetch_one(db.pool())
         .await
         .map_err(|e| {
@@ -1109,18 +1109,21 @@ pub async fn alert_history(
          ORDER BY julianday(fired_at) DESC, id DESC
          {pagination_clause}"
     );
-    let rows = apply_binds(sqlx::query(&data_sql), &data_binds)
-        .fetch_all(db.pool())
-        .await
-        .map_err(|e| {
-            warn!(error = %e, "Failed to list alert history");
-            ApiError::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                error::INTERNAL_ERROR,
-                "Failed to query alert history",
-            )
-            .with_request_id(&auth.request_id)
-        })?;
+    let rows = apply_binds(
+        sqlx::query(sqlx::AssertSqlSafe(data_sql.as_str())),
+        &data_binds,
+    )
+    .fetch_all(db.pool())
+    .await
+    .map_err(|e| {
+        warn!(error = %e, "Failed to list alert history");
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error::INTERNAL_ERROR,
+            "Failed to query alert history",
+        )
+        .with_request_id(&auth.request_id)
+    })?;
 
     let mut data = Vec::with_capacity(rows.len().min(limit as usize));
     for row in rows {

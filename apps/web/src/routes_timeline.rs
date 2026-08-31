@@ -329,9 +329,9 @@ fn decode_mac_mapping_cursor(raw: &str, request_id: &str) -> Result<MacMappingCu
 /// Parameters: `query` - SQL query object, `binds` - bind values in placeholder order.
 /// Returns: query with all binds attached.
 fn apply_binds<'q>(
-    mut query: sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'q>>,
+    mut query: sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments>,
     binds: &'q [BindParam],
-) -> sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'q>> {
+) -> sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments> {
     for bind in binds {
         query = match bind {
             BindParam::Text(v) => query.bind(v),

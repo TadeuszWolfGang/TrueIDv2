@@ -278,7 +278,7 @@ pub(crate) async fn stats(
             continue;
         };
         let count_sql = format!("SELECT COUNT(*) as c FROM {table_name}");
-        let count_row = sqlx::query(&count_sql)
+        let count_row = sqlx::query(sqlx::AssertSqlSafe(count_sql.as_str()))
             .fetch_one(db.pool())
             .await
             .map_err(|e| {
@@ -291,7 +291,7 @@ pub(crate) async fn stats(
                 .with_request_id(&auth.request_id)
             })?;
         let oldest_sql = format!("SELECT MIN({ts_col}) as oldest FROM {table_name}");
-        let oldest_row = sqlx::query(&oldest_sql)
+        let oldest_row = sqlx::query(sqlx::AssertSqlSafe(oldest_sql.as_str()))
             .fetch_one(db.pool())
             .await
             .map_err(|e| {

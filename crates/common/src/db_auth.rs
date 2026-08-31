@@ -5,7 +5,7 @@
 
 use anyhow::{Context, Result};
 use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier},
     Algorithm, Argon2, Params, Version,
 };
 use chrono::{DateTime, Duration, Utc};
@@ -45,10 +45,10 @@ fn argon2_hasher(pepper: Option<&str>) -> Argon2<'_> {
 /// Parameters: `password` — plaintext password, `pepper` — optional pepper.
 /// Returns: PHC-format hash string.
 pub fn hash_password(password: &str, pepper: Option<&str>) -> Result<String> {
-    let salt = SaltString::generate(&mut OsRng);
     let hasher = argon2_hasher(pepper);
+    // argon2 0.6: salt is generated automatically from the OS RNG.
     let hash = hasher
-        .hash_password(password.as_bytes(), &salt)
+        .hash_password(password.as_bytes())
         .map_err(|e| anyhow::anyhow!("password hashing failed: {e}"))?;
     Ok(hash.to_string())
 }
@@ -1130,7 +1130,7 @@ impl Db {
         }
         sql.push_str(" ORDER BY timestamp DESC LIMIT ? OFFSET ?");
 
-        let mut q = sqlx::query(&sql);
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
         if let Some(a) = action_filter {
             q = q.bind(a);
         }
@@ -1164,7 +1164,7 @@ impl Db {
             sql.push_str(" AND username = ?");
         }
 
-        let mut q = sqlx::query(&sql);
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
         if let Some(a) = action_filter {
             q = q.bind(a);
         }
@@ -1209,7 +1209,7 @@ impl Db {
         }
         sql.push_str(" ORDER BY timestamp DESC LIMIT ? OFFSET ?");
 
-        let mut q = sqlx::query(&sql);
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
         if let Some(v) = action {
             q = q.bind(v);
         }
@@ -1254,7 +1254,7 @@ impl Db {
             sql.push_str(" AND timestamp <= ?");
         }
 
-        let mut q = sqlx::query(&sql);
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
         if let Some(v) = action {
             q = q.bind(v);
         }

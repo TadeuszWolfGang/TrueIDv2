@@ -185,9 +185,9 @@ fn parse_datetime_param(
 /// Parameters: `query` - SQLx query object, `binds` - parameters in placeholder order.
 /// Returns: query with all bind values attached.
 fn apply_binds<'q>(
-    mut query: sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'q>>,
+    mut query: sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments>,
     binds: &'q [BindParam],
-) -> sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments<'q>> {
+) -> sqlx::query::Query<'q, sqlx::Sqlite, sqlx::sqlite::SqliteArguments> {
     for bind in binds {
         query = match bind {
             BindParam::Text(v) => query.bind(v),
@@ -267,7 +267,7 @@ pub async fn list_conflicts(
     };
 
     let count_sql = format!("SELECT COUNT(*) as c FROM conflicts {where_clause}");
-    let total_row = apply_binds(sqlx::query(&count_sql), &binds)
+    let total_row = apply_binds(sqlx::query(sqlx::AssertSqlSafe(count_sql.as_str())), &binds)
         .fetch_one(db.pool())
         .await
         .map_err(|e| {
@@ -300,18 +300,21 @@ pub async fn list_conflicts(
          ORDER BY julianday(detected_at) DESC, id DESC
          {pagination_clause}"
     );
-    let rows = apply_binds(sqlx::query(&data_sql), &data_binds)
-        .fetch_all(db.pool())
-        .await
-        .map_err(|e| {
-            tracing::warn!(error = %e, "Conflicts list query failed");
-            ApiError::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                error::INTERNAL_ERROR,
-                "Failed to query conflicts",
-            )
-            .with_request_id(&auth.request_id)
-        })?;
+    let rows = apply_binds(
+        sqlx::query(sqlx::AssertSqlSafe(data_sql.as_str())),
+        &data_binds,
+    )
+    .fetch_all(db.pool())
+    .await
+    .map_err(|e| {
+        tracing::warn!(error = %e, "Conflicts list query failed");
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error::INTERNAL_ERROR,
+            "Failed to query conflicts",
+        )
+        .with_request_id(&auth.request_id)
+    })?;
 
     let mut data = Vec::with_capacity(rows.len().min(limit as usize));
     for row in rows {

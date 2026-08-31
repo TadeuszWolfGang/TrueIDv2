@@ -1,32 +1,22 @@
 # cargo-deny configuration for TrueIDv2.
 #
-# RUSTSEC-2023-0071 (rsa "Marvin Attack"): Cargo.lock is feature-agnostic and
-# records ALL optional dependencies of resolved packages, so sqlx's optional
-# sqlx-mysql -> rsa edge appears in the lockfile even though TrueID enables
-# only the SQLite backend. Verified 2026-08-31 that rsa is NOT in the build
-# graph (cargo tree -e features shows sqlx features = runtime-tokio, sqlite,
-# chrono, migrate only; `rsa` is never compiled). This is a cargo-audit
-# lockfile artifact, not a shipped vulnerability; ignored in CI
-# (.github/workflows/security-scan.yml) until cargo-audit resolves against the
-# feature graph or sqlx drops the macro-crate umbrella.
-# Re-verify: whenever sqlx is upgraded (cargo tree -i rsa must stay empty).
+# RUSTSEC-2023-0071 (rsa "Marvin Attack"): since jsonwebtoken's rust_crypto
+# backend the rsa crate is compiled for RS256/ES256 ID-token SIGNATURE
+# VERIFICATION in OIDC — public-key operations only; TrueID never performs
+# rsa private-key operations (signing/decryption), which is what the advisory
+# affects. No fixed upstream version exists. Re-review when rsa ships a fix.
 #
-# RUSTSEC-2025-0134 (rustls-pemfile unmaintained): direct usage removed
-# 2026-08-31 (migrated to rustls-pki-types PemObject in engine tls_listener
-# and agent TLS config). Remaining copy is a transitive dependency of
-# axum-server 0.7; ignored until axum-server ships pki-types-based PEM loading.
-#
-# RUSTSEC-2024-0370 (proc-macro-error unmaintained): transitive via
-# tabled -> tabled_derive in the CLI only. No fixed version; tracked upstream.
+# Resolved 2026-08-31 (no longer in graph; notes kept for history):
+# - RUSTSEC-2025-0134 rustls-pemfile: direct usage migrated to
+#   rustls-pki-types; last transitive copy dropped by axum-server 0.8.
+# - RUSTSEC-2024-0370 proc-macro-error: dropped by tabled 0.21 — but its
+#   successor fork proc-macro-error2 is itself flagged unmaintained
+#   (RUSTSEC-2026-0173, warning-level, CLI table rendering only). Tracked
+#   until tabled swaps the derive backend.
 
 [advisories]
 unmaintained = "none"
 ignore = [
-    # rsa "Marvin Attack" (timing sidechannel on PRIVATE-key operations).
-    # Since jsonwebtoken 10 (rust_crypto backend) the rsa crate is compiled
-    # for RS256/ES256 ID-token SIGNATURE VERIFICATION in OIDC — public-key
-    # operations only; TrueID never performs rsa private-key operations
-    # (signing/decryption), which is what the advisory affects. No fixed
-    # upstream version exists. Re-review when rsa ships a fix.
+    # rsa "Marvin Attack" — see header note: verify-only usage.
     "RUSTSEC-2023-0071",
 ]

@@ -191,7 +191,10 @@ impl RetentionExecutor {
                     LIMIT 1000
                 )"
             );
-            let result = sqlx::query(&sql).bind(days).execute(&self.pool).await;
+            let result = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
+                .bind(days)
+                .execute(&self.pool)
+                .await;
             match result {
                 Ok(r) => {
                     let deleted = r.rows_affected() as i64;

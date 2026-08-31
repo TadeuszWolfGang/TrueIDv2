@@ -172,7 +172,7 @@ async fn load_cache_entries(pool: &SqlitePool, ips: &[String]) -> Result<Vec<Dns
          WHERE ip IN ({placeholders})"
     );
 
-    let mut query = sqlx::query(&sql);
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
     for ip in ips {
         query = query.bind(ip);
     }

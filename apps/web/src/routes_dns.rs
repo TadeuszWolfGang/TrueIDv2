@@ -129,7 +129,7 @@ pub(crate) async fn list_dns(
     };
 
     let count_sql = format!("SELECT COUNT(*) as c FROM dns_cache {where_clause}");
-    let mut count_q = sqlx::query(&count_sql);
+    let mut count_q = sqlx::query(sqlx::AssertSqlSafe(count_sql.as_str()));
     for bind in &binds {
         count_q = count_q.bind(bind);
     }
@@ -155,7 +155,7 @@ pub(crate) async fn list_dns(
          ORDER BY COALESCE(resolved_at, first_seen) DESC
          LIMIT ? OFFSET ?"
     );
-    let mut data_q = sqlx::query(&data_sql);
+    let mut data_q = sqlx::query(sqlx::AssertSqlSafe(data_sql.as_str()));
     for bind in &binds {
         data_q = data_q.bind(bind);
     }
