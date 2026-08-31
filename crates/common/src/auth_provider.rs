@@ -11,8 +11,17 @@ use chrono::{DateTime, Utc};
 use std::sync::Arc;
 
 use crate::db::Db;
-use crate::db_auth::verify_password;
+use crate::db_auth::{hash_password, verify_password};
 use crate::model::User;
+
+/// Precomputed Argon2id hash used to equalize timing for unknown usernames
+/// (account-enumeration defense). Lazy so it inherits current hasher params.
+static DUMMY_PASSWORD_HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+fn dummy_password_hash() -> &'static str {
+    DUMMY_PASSWORD_HASH
+        .get_or_init(|| hash_password("trueid-timing-equalizer", None).unwrap_or_default())
+}
 
 // ── AuthResult ──────────────────────────────────────────────
 
@@ -75,10 +84,14 @@ impl LocalAuthProvider {
 #[async_trait]
 impl AuthProvider for LocalAuthProvider {
     async fn authenticate(&self, username: &str, password: &str) -> AuthResult {
-        // 1) Look up user.
+        // 1) Look up user. Unknown users still pay a full Argon2 verification
+        // against a dummy hash so response timing cannot enumerate accounts.
         let user = match self.db.get_user_by_username(username).await {
             Ok(Some(u)) => u,
-            Ok(None) => return AuthResult::InvalidCredentials,
+            Ok(None) => {
+                let _ = verify_password(password, dummy_password_hash(), self.db.pepper());
+                return AuthResult::InvalidCredentials;
+            }
             Err(e) => return AuthResult::Error(format!("DB error: {e:#}")),
         };
 

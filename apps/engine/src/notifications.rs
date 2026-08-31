@@ -65,6 +65,28 @@ impl NotificationDispatcher {
         Self { db, http_client }
     }
 
+    /// Builds an outbound webhook client guarded against SSRF.
+    ///
+    /// Resolves the destination through the shared `webhook_guard` (scheme
+    /// allowlist, private/loopback/link-local rejection, DNS pinning) and
+    /// disables redirect-following so a validated host cannot bounce the
+    /// request to an internal address.
+    ///
+    /// Parameters: `url` - destination webhook URL.
+    /// Returns: hardened per-target HTTP client.
+    async fn guarded_webhook_client(&self, url: &str) -> Result<reqwest::Client> {
+        let target = crate::webhook_guard::resolve_webhook_target(url)
+            .await
+            .map_err(|e| anyhow!("webhook destination rejected: {e}"))?;
+        let mut builder = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .redirect(reqwest::redirect::Policy::none());
+        if target.requires_dns_pinning {
+            builder = builder.resolve_to_addrs(&target.host, &target.addrs);
+        }
+        builder.build().context("webhook client build failed")
+    }
+
     /// Sends alert to all channels linked to the given rule.
     ///
     /// Parameters: `rule_id` - alert rule id, `alert` - alert payload, `alert_history_id` - optional history reference.
@@ -380,12 +402,8 @@ impl NotificationDispatcher {
                 "ts": alert.timestamp.timestamp(),
             }]
         });
-        let resp = self
-            .http_client
-            .post(webhook_url)
-            .json(&payload)
-            .send()
-            .await?;
+        let client = self.guarded_webhook_client(webhook_url).await?;
+        let resp = client.post(webhook_url).json(&payload).send().await?;
         if !resp.status().is_success() {
             return Err(anyhow!("Slack webhook returned HTTP {}", resp.status()));
         }
@@ -425,12 +443,8 @@ impl NotificationDispatcher {
                 }
             }]
         });
-        let resp = self
-            .http_client
-            .post(webhook_url)
-            .json(&payload)
-            .send()
-            .await?;
+        let client = self.guarded_webhook_client(webhook_url).await?;
+        let resp = client.post(webhook_url).json(&payload).send().await?;
         if !resp.status().is_success() {
             return Err(anyhow!("Teams webhook returned HTTP {}", resp.status()));
         }
@@ -470,9 +484,15 @@ impl NotificationDispatcher {
             "details": alert.details,
             "timestamp": alert.timestamp.to_rfc3339(),
         });
-        let mut req = self.http_client.request(req_method, url).json(&payload);
+        let client = self.guarded_webhook_client(url).await?;
+        let mut req = client.request(req_method, url).json(&payload);
         if let Some(map) = headers {
             for (k, v) in map {
+                // Host override could redirect routing to an attacker-chosen
+                // virtual host on a CDN — never forward it.
+                if k.eq_ignore_ascii_case("host") {
+                    continue;
+                }
                 req = req.header(k, v);
             }
         }
@@ -573,12 +593,8 @@ impl NotificationDispatcher {
                 }}
             ]
         });
-        let resp = self
-            .http_client
-            .post(webhook_url)
-            .json(&payload)
-            .send()
-            .await?;
+        let client = self.guarded_webhook_client(webhook_url).await?;
+        let resp = client.post(webhook_url).json(&payload).send().await?;
         if !resp.status().is_success() {
             return Err(anyhow!("Slack webhook returned HTTP {}", resp.status()));
         }
@@ -616,12 +632,8 @@ impl NotificationDispatcher {
                 }
             }]
         });
-        let resp = self
-            .http_client
-            .post(webhook_url)
-            .json(&payload)
-            .send()
-            .await?;
+        let client = self.guarded_webhook_client(webhook_url).await?;
+        let resp = client.post(webhook_url).json(&payload).send().await?;
         if !resp.status().is_success() {
             return Err(anyhow!("Teams webhook returned HTTP {}", resp.status()));
         }
@@ -659,9 +671,15 @@ impl NotificationDispatcher {
             "period_end": report.period_end,
             "sections": report.sections,
         });
-        let mut req = self.http_client.request(req_method, url).json(&payload);
+        let client = self.guarded_webhook_client(url).await?;
+        let mut req = client.request(req_method, url).json(&payload);
         if let Some(map) = headers {
             for (k, v) in map {
+                // Host override could redirect routing to an attacker-chosen
+                // virtual host on a CDN — never forward it.
+                if k.eq_ignore_ascii_case("host") {
+                    continue;
+                }
                 req = req.header(k, v);
             }
         }
@@ -673,22 +691,33 @@ impl NotificationDispatcher {
     }
 }
 
+/// Escapes a value for safe interpolation into HTML email bodies.
+///
+/// Parameters: `value` - untrusted text (rule names, usernames, IPs).
+/// Returns: HTML-escaped string.
+fn html_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('\"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
 /// Renders a compact HTML email body for alert notifications.
 ///
 /// Parameters: `alert` - alert payload.
 /// Returns: HTML email body string.
 fn format_email_body(alert: &AlertPayload) -> String {
     let mut rows = HashMap::new();
-    rows.insert("Rule", alert.rule_name.clone());
-    rows.insert("Type", alert.rule_type.clone());
-    rows.insert("Severity", alert.severity.clone());
-    rows.insert("IP", alert.ip.clone().unwrap_or_else(|| "-".to_string()));
-    rows.insert(
-        "User",
-        alert.user.clone().unwrap_or_else(|| "-".to_string()),
-    );
-    rows.insert("Time", alert.timestamp.to_rfc3339());
-    let details = alert.details.replace('<', "&lt;").replace('>', "&gt;");
+    // Identity fields ultimately derive from network feeds — escape everything.
+    rows.insert("Rule", html_escape(&alert.rule_name));
+    rows.insert("Type", html_escape(&alert.rule_type));
+    rows.insert("Severity", html_escape(&alert.severity));
+    rows.insert("IP", html_escape(alert.ip.as_deref().unwrap_or("-")));
+    rows.insert("User", html_escape(alert.user.as_deref().unwrap_or("-")));
+    rows.insert("Time", html_escape(&alert.timestamp.to_rfc3339()));
+    let details = html_escape(&alert.details);
     let mut fields_html = String::new();
     for (k, v) in rows {
         fields_html.push_str(&format!(
@@ -713,16 +742,17 @@ fn format_email_body(alert: &AlertPayload) -> String {
 fn format_report_email_body(report: &ScheduledReportPayload) -> String {
     let sections_pretty =
         serde_json::to_string_pretty(&report.sections).unwrap_or_else(|_| "{}".to_string());
-    let escaped_sections = sections_pretty
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;");
+    let escaped_sections = html_escape(&sections_pretty);
     format!(
         "<html><body style=\"background:#020a06;color:#c8f7d0;font-family:Consolas,Menlo,monospace;padding:14px;\">\
          <h2 style=\"color:#00ff41;margin:0 0 10px;\">{}</h2>\
          <div style=\"margin-bottom:10px;color:#5a9a6b;\">type={} · period={} → {}</div>\
          <pre style=\"background:#091a11;border:1px solid #0a8a2e;padding:10px;border-radius:4px;color:#c8f7d0;overflow:auto;\">{}</pre>\
          </body></html>",
-        report.title, report.report_type, report.period_start, report.period_end, escaped_sections
+        html_escape(&report.title),
+        html_escape(&report.report_type),
+        html_escape(&report.period_start),
+        html_escape(&report.period_end),
+        escaped_sections
     )
 }

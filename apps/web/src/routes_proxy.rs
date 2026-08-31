@@ -230,16 +230,26 @@ pub(crate) async fn proxy_delete_mapping(
 
 /// Proxies Prometheus metrics endpoint from engine.
 ///
-/// Parameters: `auth` - optional authenticated user, `query` - optional static token,
+/// Parameters: `auth` - optional authenticated user, `query` - deprecated static token,
+/// `headers` - request headers (Authorization: Bearer METRICS_TOKEN supported),
 /// `s` - shared app state.
 /// Returns: plain-text Prometheus metrics payload.
 pub(crate) async fn proxy_metrics(
     auth: OptionalAuthUser,
     Query(query): Query<MetricsQuery>,
+    headers: axum::http::HeaderMap,
     State(s): State<AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
-    if let Some(token) = query.token.as_deref() {
-        if s.metrics_token.as_deref() == Some(token) {
+    // Preferred auth: Authorization: Bearer <token> (header, constant-time).
+    if let Some(configured) = s.metrics_token.as_deref() {
+        let bearer = headers
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .unwrap_or("");
+        if !bearer.is_empty()
+            && trueid_common::constant_time_eq(bearer.as_bytes(), configured.as_bytes())
+        {
             return proxy_text_to_engine(&s, reqwest::Method::GET, "/engine/metrics")
                 .await
                 .map_err(|status| {
@@ -249,6 +259,24 @@ pub(crate) async fn proxy_metrics(
                         "Failed to proxy metrics endpoint",
                     )
                 });
+        }
+    }
+    // Deprecated: query-string token. Kept one release for compatibility;
+    // leaks into proxy/access logs — migrate scrapers to the Bearer header.
+    if let Some(token) = query.token.as_deref() {
+        if let Some(configured) = s.metrics_token.as_deref() {
+            if trueid_common::constant_time_eq(token.as_bytes(), configured.as_bytes()) {
+                warn!("METRICS_TOKEN passed via query string is deprecated — use 'Authorization: Bearer' instead");
+                return proxy_text_to_engine(&s, reqwest::Method::GET, "/engine/metrics")
+                    .await
+                    .map_err(|status| {
+                        ApiError::new(
+                            status,
+                            error::INTERNAL_ERROR,
+                            "Failed to proxy metrics endpoint",
+                        )
+                    });
+            }
         }
     }
 

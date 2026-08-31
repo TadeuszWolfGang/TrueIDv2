@@ -1,0 +1,25 @@
+# Dependabot: dependency and GitHub Actions version updates.
+# Security alerts (advisory DB) are additionally enabled in repo settings —
+# see security_and_analysis (dependabot_security_updates, secret_scanning).
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      rust-dependencies:
+        patterns:
+          - "*"
+    ignore:
+      # rsa enters the lockfile only as a feature-graph artifact of sqlx's
+      # macro umbrella (see deny.toml) — never compiled. Keep it pinned.
+      - dependency-name: "rsa"
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: monthly

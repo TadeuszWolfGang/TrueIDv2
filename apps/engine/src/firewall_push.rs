@@ -167,7 +167,7 @@ async fn load_target(db: &Db, target_id: i64) -> Result<Option<FirewallTarget>> 
         port,
         username: row.try_get("username").ok(),
         password,
-        verify_tls: row.try_get("verify_tls").unwrap_or(false),
+        verify_tls: row.try_get("verify_tls").unwrap_or(true),
         enabled: row.try_get("enabled").unwrap_or(false),
         push_interval_secs,
         subnet_filter: parse_subnet_filter(row.try_get("subnet_filter").ok()),
@@ -496,6 +496,12 @@ async fn update_target_status(
 /// Parameters: `db` - database handle, `target` - decrypted target config.
 /// Returns: pushed count.
 async fn run_push_once(db: &Db, target: &FirewallTarget) -> Result<u32> {
+    if !target.verify_tls {
+        tracing::warn!(
+            target = %target.name,
+            "Firewall target has TLS certificate verification DISABLED — credentials are exposed to network MITM. Re-enable verify_tls unless the target uses a trusted self-signed CA."
+        );
+    }
     let client = build_client(target.verify_tls)?;
     let entries = load_push_entries(db, target).await?;
     if entries.is_empty() {

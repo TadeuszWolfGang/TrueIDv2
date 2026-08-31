@@ -111,7 +111,7 @@ pub async fn login(State(state): State<AppState>) -> Result<impl IntoResponse, A
             "OIDC is disabled",
         ));
     }
-    let provider = OidcProvider::discover(db, &state.http_client)
+    let provider = OidcProvider::discover(db, &state.http_client, state.dev_mode)
         .await
         .map_err(|e| {
             ApiError::new(
@@ -150,6 +150,9 @@ pub async fn login(State(state): State<AppState>) -> Result<impl IntoResponse, A
 pub async fn callback(
     State(state): State<AppState>,
     Query(query): Query<OidcCallbackQuery>,
+    connect_info: Option<
+        axum::extract::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>,
+    >,
     headers: axum::http::HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
     if let Some(err) = query.error.as_deref() {
@@ -168,9 +171,10 @@ pub async fn callback(
     })?;
     let expected_state = cookie_value(&headers, OIDC_STATE_COOKIE).unwrap_or_default();
     let expected_nonce = cookie_value(&headers, OIDC_NONCE_COOKIE).unwrap_or_default();
+    let provided_state = query.state.as_deref().unwrap_or_default();
     if expected_state.is_empty()
         || expected_nonce.is_empty()
-        || query.state.as_deref().unwrap_or_default() != expected_state
+        || !trueid_common::constant_time_eq(provided_state.as_bytes(), expected_state.as_bytes())
     {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
@@ -194,7 +198,7 @@ pub async fn callback(
             "OIDC is disabled",
         ));
     }
-    let provider = OidcProvider::discover(db, &state.http_client)
+    let provider = OidcProvider::discover(db, &state.http_client, state.dev_mode)
         .await
         .map_err(|e| {
             ApiError::new(
@@ -285,9 +289,29 @@ pub async fn callback(
     let refresh_raw = generate_refresh_token();
     let refresh_hash = sha256_hex(&refresh_raw);
     let expires_at = chrono::Utc::now() + REFRESH_TOKEN_TTL;
-    db.create_session(user.id, &refresh_hash, None, None, expires_at)
-        .await
-        .map_err(internal_db_error)?;
+    // Bind the OIDC session to the effective client IP and user-agent so the
+    // standard middleware hardening applies to SSO logins as well.
+    let peer = connect_info.as_deref().map(|ci| ci.0);
+    let session_ip = crate::client_addr::effective_client_ip(
+        &headers,
+        peer,
+        &state.trusted_proxies,
+        state.dev_mode,
+    )
+    .to_string();
+    let session_ua = headers
+        .get(axum::http::header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    db.create_session(
+        user.id,
+        &refresh_hash,
+        Some(session_ip.as_str()),
+        session_ua.as_deref(),
+        expires_at,
+    )
+    .await
+    .map_err(internal_db_error)?;
     let csrf_token = generate_csrf_token();
 
     let mut resp = Redirect::to("/").into_response();
@@ -369,6 +393,40 @@ pub async fn update_config(
             "role_mapping must be valid JSON",
         ));
     }
+    // Issuer must be HTTPS (loopback HTTP allowed only in dev mode).
+    crate::oidc::validate_issuer_url(body.issuer_url.trim(), state.dev_mode).map_err(|e| {
+        ApiError::new(
+            StatusCode::BAD_REQUEST,
+            error::INVALID_INPUT,
+            &format!("issuer_url invalid: {e}"),
+        )
+    })?;
+    // Redirect URI must be an absolute HTTPS URL (loopback HTTP in dev mode).
+    let redirect_ok = reqwest::Url::parse(body.redirect_uri.trim())
+        .ok()
+        .map(|u| match u.scheme() {
+            "https" => true,
+            "http" => {
+                state.dev_mode
+                    && u.host_str()
+                        .map(|h| {
+                            h == "localhost"
+                                || h.parse::<std::net::IpAddr>()
+                                    .map(|ip| ip.is_loopback())
+                                    .unwrap_or(false)
+                        })
+                        .unwrap_or(false)
+            }
+            _ => false,
+        })
+        .unwrap_or(false);
+    if !redirect_ok {
+        return Err(ApiError::new(
+            StatusCode::BAD_REQUEST,
+            error::INVALID_INPUT,
+            "redirect_uri must be an absolute HTTPS URL",
+        ));
+    }
     let existing = load_oidc_config(db).await.map_err(internal_db_error)?;
     let secret_plain = body
         .client_secret
@@ -430,7 +488,7 @@ pub async fn test_discovery(
         ));
     }
     let issuer = cfg.issuer_url.trim_end_matches('/').to_string();
-    discover_document(&state.http_client, &issuer)
+    discover_document(&state.http_client, &issuer, state.dev_mode)
         .await
         .map_err(|e| {
             ApiError::new(

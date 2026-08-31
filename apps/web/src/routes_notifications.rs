@@ -142,23 +142,38 @@ fn parse_config(
             }
         }
         ChannelConfig::Teams { webhook_url } => {
-            let ok = webhook_url.contains("webhook.office.com")
-                || webhook_url.contains("logic.azure.com");
+            // Host-suffix validation: a substring check is trivially bypassed
+            // (e.g. https://attacker.com/webhook.office.com).
+            let ok = reqwest::Url::parse(webhook_url)
+                .ok()
+                .filter(|u| u.scheme() == "https")
+                .and_then(|u| u.host_str().map(str::to_ascii_lowercase))
+                .map(|host| {
+                    host == "outlook.office.com"
+                        || host == "webhook.office.com"
+                        || host.ends_with(".webhook.office.com")
+                        || host.ends_with(".logic.azure.com")
+                })
+                .unwrap_or(false);
             if !ok {
                 return Err(ApiError::new(
                     StatusCode::BAD_REQUEST,
                     error::INVALID_INPUT,
-                    "Teams webhook_url must contain webhook.office.com or logic.azure.com",
+                    "Teams webhook_url must be an HTTPS URL on outlook.office.com, *.webhook.office.com, or *.logic.azure.com",
                 )
                 .with_request_id(request_id));
             }
         }
         ChannelConfig::Webhook { url, .. } => {
-            if !url.starts_with("http://") && !url.starts_with("https://") {
+            let ok = reqwest::Url::parse(url)
+                .ok()
+                .filter(|u| matches!(u.scheme(), "http" | "https") && u.host().is_some())
+                .is_some();
+            if !ok {
                 return Err(ApiError::new(
                     StatusCode::BAD_REQUEST,
                     error::INVALID_INPUT,
-                    "Webhook url must start with http:// or https://",
+                    "Webhook url must be a valid absolute http:// or https:// URL",
                 )
                 .with_request_id(request_id));
             }
@@ -614,4 +629,68 @@ pub(crate) async fn channel_deliveries(
         });
     }
     Ok(Json(out))
+}
+
+#[cfg(test)]
+mod webhook_validation_tests {
+    use super::*;
+
+    #[test]
+    fn teams_rejects_substring_bypass() {
+        for url in [
+            "https://attacker.com/webhook.office.com",
+            "https://attacker.com/?x=webhook.office.com",
+            "https://webhook.office.com.evil.io/hook",
+            "http://outlook.office.com/webhook/abc",
+            "not-a-url",
+        ] {
+            let err = parse_config(
+                "teams",
+                serde_json::json!({ "webhook_url": url }),
+                "test-rid",
+            )
+            .err()
+            .unwrap_or_else(|| panic!("{url} should be rejected"));
+            assert_eq!(err.status, axum::http::StatusCode::BAD_REQUEST, "{url}");
+        }
+    }
+
+    #[test]
+    fn teams_accepts_legitimate_hosts() {
+        for url in [
+            "https://outlook.office.com/webhook/abc",
+            "https://webhook.office.com/webhookb2/tenant/IncomingWebhook/abc/def",
+            "https://mytenant.webhook.office.com/webhook/abc",
+            "https://prod-01.eastus.logic.azure.com/trigger",
+        ] {
+            let parsed = parse_config(
+                "teams",
+                serde_json::json!({ "webhook_url": url }),
+                "test-rid",
+            )
+            .unwrap_or_else(|_| panic!("{url} should be accepted"));
+            assert!(matches!(parsed, ChannelConfig::Teams { .. }), "{url}");
+        }
+    }
+
+    #[test]
+    fn generic_webhook_requires_absolute_http_url() {
+        assert!(parse_config(
+            "webhook",
+            serde_json::json!({ "url": "https://example.com/hook" }),
+            "test-rid",
+        )
+        .is_ok());
+        for url in [
+            "ftp://example.com/hook",
+            "file:///etc/passwd",
+            "example.com/hook",
+            "javascript:alert(1)",
+        ] {
+            assert!(
+                parse_config("webhook", serde_json::json!({ "url": url }), "test-rid",).is_err(),
+                "{url}"
+            );
+        }
+    }
 }

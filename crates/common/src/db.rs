@@ -383,13 +383,23 @@ impl Db {
             .unwrap_or(default)
     }
 
+    /// Whether a CONFIG_ENCRYPTION_KEY is loaded (Some) or not (None).
+    pub fn encryption_key_present(&self) -> Option<()> {
+        self.encryption_key.map(|_| ())
+    }
+
     /// Writes a config key-value pair (upsert).
+    ///
+    /// Sensitive keys fail closed when CONFIG_ENCRYPTION_KEY is absent:
+    /// storing them in plaintext is never acceptable (legacy plaintext rows
+    /// are still auto-encrypted at next startup with a key present).
     pub async fn set_config(&self, key: &str, value: &str) -> Result<()> {
         let stored = if SENSITIVE_CONFIG_KEYS.contains(&key) {
-            if let Some(ref enc_key) = self.encryption_key {
-                encrypt_value(enc_key, value)?
-            } else {
-                value.to_string()
+            match self.encryption_key.as_ref() {
+                Some(ref enc_key) => encrypt_value(enc_key, value)?,
+                None => anyhow::bail!(
+                    "CONFIG_ENCRYPTION_KEY is not set — refusing to store sensitive config key '{key}' in plaintext"
+                ),
             }
         } else {
             value.to_string()
@@ -1140,6 +1150,29 @@ mod tests {
             path.file_name().and_then(|name| name.to_str()),
             Some("migrations")
         );
+    }
+
+    #[tokio::test]
+    async fn set_config_sensitive_key_fails_closed_without_encryption_key() {
+        let db = init_db("sqlite::memory:").await.expect("init failed");
+        assert!(db.encryption_key_present().is_none());
+
+        // Non-sensitive keys still work.
+        db.set_config("sycope_host", "sycope.example.com")
+            .await
+            .expect("non-sensitive key must store without encryption key");
+
+        // Sensitive keys fail closed.
+        let err = db
+            .set_config("sycope_pass", "super-secret")
+            .await
+            .expect_err("sensitive key must fail without encryption key");
+        assert!(err.to_string().contains("plaintext"), "{err}");
+
+        // And nothing was stored.
+        let stored = db.get_config("sycope_pass").await.ok().flatten();
+        assert!(stored.is_none(), "sensitive value must not be stored");
+        db.close().await;
     }
 
     #[tokio::test]

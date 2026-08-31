@@ -2,7 +2,7 @@
 
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
-use ldap3::{LdapConnAsync, Scope, SearchEntry};
+use ldap3::{LdapConnAsync, LdapConnSettings, Scope, SearchEntry};
 use sqlx::Row;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -108,7 +108,15 @@ async fn sync_once(pool: &sqlx::SqlitePool, config: &LdapSyncConfig) -> Result<u
     if config.bind_password.is_empty() {
         return Err(anyhow!("LDAP bind password is not configured"));
     }
-    let (conn, mut ldap) = LdapConnAsync::new(&config.ldap_url).await?;
+    // Upgrade plain ldap:// connections with STARTTLS before binding so the
+    // AD password never crosses the network in cleartext. ldaps:// URLs are
+    // already TLS-wrapped by LdapConnAsync.
+    let settings = if config.ldap_url.trim().starts_with("ldap://") {
+        LdapConnSettings::new().set_starttls(true)
+    } else {
+        LdapConnSettings::new()
+    };
+    let (conn, mut ldap) = LdapConnAsync::with_settings(settings, &config.ldap_url).await?;
     ldap3::drive!(conn);
 
     ldap.simple_bind(&config.bind_dn, &config.bind_password)

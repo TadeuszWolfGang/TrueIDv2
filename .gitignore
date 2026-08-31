@@ -25,3 +25,11 @@ __pycache__/
 # Private repo metadata
 REPO_INFO.md
 security-reports/
+
+# Generated PKI material (scripts/gen-certs.sh) — never commit private keys
+certs/*.pem
+tls/*.pem
+certs/*.key
+tls/*.key
+!certs/.gitkeep
+!tls/.gitkeep

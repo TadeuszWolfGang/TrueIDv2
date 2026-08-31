@@ -76,7 +76,7 @@ async fn service_token_guard(
             .get("x-service-token")
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
-        if provided != expected {
+        if !trueid_common::constant_time_eq(provided.as_bytes(), expected.as_bytes()) {
             return Err((
                 StatusCode::UNAUTHORIZED,
                 Json(serde_json::json!({
@@ -148,9 +148,46 @@ fn live_event_kind(event: &LiveEvent) -> &'static str {
 ///
 /// Parameters: `s` - shared admin API state with broadcast sender.
 /// Returns: SSE stream with JSON payloads.
-async fn sse_stream(
-    State(s): State<EngineAdminState>,
-) -> Sse<impl futures::Stream<Item = Result<Event, Infallible>>> {
+/// Global concurrent SSE stream cap on the engine (resource-exhaustion guard).
+static ENGINE_SSE_STREAMS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+const MAX_ENGINE_SSE_STREAMS: usize = 64;
+
+/// Stream wrapper releasing the global SSE slot when the client disconnects.
+struct CountedSseStream<S> {
+    inner: std::pin::Pin<Box<S>>,
+}
+
+impl<S: futures::Stream> futures::Stream for CountedSseStream<S> {
+    type Item = S::Item;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.inner.as_mut().poll_next(cx)
+    }
+}
+
+impl<S> Drop for CountedSseStream<S> {
+    fn drop(&mut self) {
+        ENGINE_SSE_STREAMS.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
+}
+
+async fn sse_stream(State(s): State<EngineAdminState>) -> axum::response::Response {
+    if ENGINE_SSE_STREAMS.fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+        >= MAX_ENGINE_SSE_STREAMS
+    {
+        ENGINE_SSE_STREAMS.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+        warn!("SSE stream refused: engine concurrent stream limit reached");
+        return (
+            axum::http::StatusCode::TOO_MANY_REQUESTS,
+            axum::Json(serde_json::json!({
+                "error": "Too many concurrent event streams"
+            })),
+        )
+            .into_response();
+    }
     let stream = BroadcastStream::new(s.live_tx.subscribe()).filter_map(|msg| async move {
         let event = match msg {
             Ok(event) => event,
@@ -160,11 +197,16 @@ async fn sse_stream(
             Ok(json) => json,
             Err(_) => return None,
         };
-        Some(Ok(Event::default()
-            .event(live_event_kind(&event))
-            .data(json)))
+        Some(Ok::<_, std::convert::Infallible>(
+            Event::default().event(live_event_kind(&event)).data(json),
+        ))
     });
-    Sse::new(stream).keep_alive(KeepAlive::default())
+    let counted = CountedSseStream {
+        inner: Box::pin(stream),
+    };
+    Sse::new(counted)
+        .keep_alive(KeepAlive::default())
+        .into_response()
 }
 
 /// Returns Prometheus metrics in text exposition format.
@@ -544,8 +586,23 @@ struct SycopeConfigRequest {
 async fn set_sycope_config(
     State(s): State<EngineAdminState>,
     Json(body): Json<SycopeConfigRequest>,
-) -> impl IntoResponse {
+) -> axum::response::Response {
     let db = &s.db;
+    // Sensitive keys fail closed when CONFIG_ENCRYPTION_KEY is absent.
+    let sensitive = [
+        body.sycope_login.as_deref().filter(|v| !v.is_empty()),
+        body.sycope_pass.as_deref().filter(|v| !v.is_empty()),
+    ];
+    if sensitive.iter().any(|v| v.is_some()) && db.encryption_key_present().is_none() {
+        warn!("Refusing Sycope config update: CONFIG_ENCRYPTION_KEY not set");
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": "CONFIG_ENCRYPTION_KEY is not set — cannot securely store Sycope credentials"
+            })),
+        )
+            .into_response();
+    }
     if let Some(v) = body.enabled {
         let _ = db.set_config("sycope_enabled", &v.to_string()).await;
     }
@@ -553,11 +610,31 @@ async fn set_sycope_config(
         let _ = db.set_config("sycope_host", v).await;
     }
     if let Some(ref v) = body.sycope_login {
-        let _ = db.set_config("sycope_login", v).await;
+        if !v.is_empty() {
+            if let Err(err) = db.set_config("sycope_login", v).await {
+                warn!(error = %err, "Failed to store sycope_login");
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({
+                        "error": "Failed to store Sycope credentials securely"
+                    })),
+                )
+                    .into_response();
+            }
+        }
     }
     if let Some(ref v) = body.sycope_pass {
         if !v.is_empty() {
-            let _ = db.set_config("sycope_pass", v).await;
+            if let Err(err) = db.set_config("sycope_pass", v).await {
+                warn!(error = %err, "Failed to store sycope_pass");
+                return (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({
+                        "error": "Failed to store Sycope credentials securely"
+                    })),
+                )
+                    .into_response();
+            }
         }
     }
     if let Some(ref v) = body.lookup_name {
@@ -577,7 +654,7 @@ async fn set_sycope_config(
         let _ = db.set_config("sycope_index_name", v).await;
     }
     info!("Sycope config updated");
-    get_sycope_config(State(s)).await
+    get_sycope_config(State(s)).await.into_response()
 }
 
 /// Sends test message to a notification channel.

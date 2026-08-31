@@ -1,5 +1,9 @@
 name: security-scan
 
+permissions:
+  contents: read
+
+
 on:
   push:
     branches: [main]

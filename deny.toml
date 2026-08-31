@@ -1,10 +1,23 @@
 # cargo-deny configuration for TrueIDv2.
 #
-# RUSTSEC-2023-0071 is carried by the sqlx umbrella crate through sqlx-mysql.
-# TrueID only enables SQLite, but sqlx still includes the MySQL backend in the
-# resolved graph. There is no fixed upstream version for rsa, so this exception
-# is documented explicitly until the sqlx dependency model is refactored.
-# Last reviewed: 2026-04-04.
+# RUSTSEC-2023-0071 (rsa "Marvin Attack"): Cargo.lock is feature-agnostic and
+# records ALL optional dependencies of resolved packages, so sqlx's optional
+# sqlx-mysql -> rsa edge appears in the lockfile even though TrueID enables
+# only the SQLite backend. Verified 2026-08-31 that rsa is NOT in the build
+# graph (cargo tree -e features shows sqlx features = runtime-tokio, sqlite,
+# chrono, migrate only; `rsa` is never compiled). This is a cargo-audit
+# lockfile artifact, not a shipped vulnerability; ignored in CI
+# (.github/workflows/security-scan.yml) until cargo-audit resolves against the
+# feature graph or sqlx drops the macro-crate umbrella.
+# Re-verify: whenever sqlx is upgraded (cargo tree -i rsa must stay empty).
+#
+# RUSTSEC-2025-0134 (rustls-pemfile unmaintained): direct usage removed
+# 2026-08-31 (migrated to rustls-pki-types PemObject in engine tls_listener
+# and agent TLS config). Remaining copy is a transitive dependency of
+# axum-server 0.7; ignored until axum-server ships pki-types-based PEM loading.
+#
+# RUSTSEC-2024-0370 (proc-macro-error unmaintained): transitive via
+# tabled -> tabled_derive in the CLI only. No fixed version; tracked upstream.
 
 [advisories]
 unmaintained = "none"

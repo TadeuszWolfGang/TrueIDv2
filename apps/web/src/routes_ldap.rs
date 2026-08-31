@@ -216,11 +216,37 @@ pub(crate) async fn update_ldap_config(
     }
 
     if let Some(ref v) = body.ldap_url {
-        if v.trim().is_empty() {
+        let url = v.trim();
+        if url.is_empty() {
             return Err(ApiError::new(
                 StatusCode::BAD_REQUEST,
                 error::INVALID_INPUT,
                 "ldap_url cannot be empty",
+            )
+            .with_request_id(&auth.request_id));
+        }
+        // Bind credentials transit the connection: require ldaps:// (TLS) or
+        // ldap:// (upgraded via STARTTLS by the engine) and reject other schemes.
+        let scheme_ok = url.starts_with("ldaps://") || url.starts_with("ldap://");
+        if !scheme_ok {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                error::INVALID_INPUT,
+                "ldap_url must use ldaps:// (TLS) or ldap:// (STARTTLS-upgraded) — plaintext credentials are not accepted",
+            )
+            .with_request_id(&auth.request_id));
+        }
+        let host = url
+            .trim_start_matches("ldaps://")
+            .trim_start_matches("ldap://")
+            .split([':', '/'])
+            .next()
+            .unwrap_or("");
+        if host.is_empty() {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                error::INVALID_INPUT,
+                "ldap_url must contain a host",
             )
             .with_request_id(&auth.request_id));
         }

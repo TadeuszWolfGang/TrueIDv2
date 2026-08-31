@@ -1,7 +1,8 @@
 # Distroless runtime baseline.
 # Keep this file minimal and review exceptions frequently.
 #
-# CVE-2026-0861 currently has no fixed Debian 12 package in Trivy's database.
-# Re-check after the next distroless Debian 12 refresh.
-# Review by: 2026-05-04
-CVE-2026-0861
+# Every entry MUST carry "# Review by: YYYY-MM-DD" — scripts/security-pipeline.sh
+# fails the build once that date passes.
+#
+# CVE-2026-0861 (glibc memalign) was removed 2026-08-31: fixed in Debian 12
+# as glibc 2.36-9+deb12u14; refreshed distroless base no longer matches.
