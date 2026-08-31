@@ -21,3 +21,12 @@
 
 [advisories]
 unmaintained = "none"
+ignore = [
+    # rsa "Marvin Attack" (timing sidechannel on PRIVATE-key operations).
+    # Since jsonwebtoken 10 (rust_crypto backend) the rsa crate is compiled
+    # for RS256/ES256 ID-token SIGNATURE VERIFICATION in OIDC — public-key
+    # operations only; TrueID never performs rsa private-key operations
+    # (signing/decryption), which is what the advisory affects. No fixed
+    # upstream version exists. Re-review when rsa ships a fix.
+    "RUSTSEC-2023-0071",
+]
