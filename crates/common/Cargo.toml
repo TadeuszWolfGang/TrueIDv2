@@ -10,7 +10,7 @@ argon2 = "0.6"
 async-trait = "0.1"
 base64 = "0.23"
 chrono = { workspace = true }
-rand = "0.8"
+rand = "0.10"
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.10"
