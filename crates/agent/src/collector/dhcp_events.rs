@@ -43,7 +43,7 @@ pub fn parse_dhcp_xml(xml: &str) -> Result<DhcpEvent> {
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) => {
-                let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                let name = e.name().as_ref().to_string();
                 match name.as_str() {
                     "System" => in_system = true,
                     "EventID" if in_system => {
@@ -56,13 +56,9 @@ pub fn parse_dhcp_xml(xml: &str) -> Result<DhcpEvent> {
                         current_data_value.clear();
                         for attr in e.attributes() {
                             let attr = attr?;
-                            if attr.key.as_ref() == b"Name" {
+                            if attr.key.as_ref() == "Name" {
                                 current_data_name = Some(
-                                    attr.decoded_and_normalized_value(
-                                        XmlVersion::Implicit1_0,
-                                        e.decoder(),
-                                    )?
-                                    .into_owned(),
+                                    attr.normalized_value(XmlVersion::Implicit1_0)?.into_owned(),
                                 );
                             }
                         }
@@ -71,7 +67,7 @@ pub fn parse_dhcp_xml(xml: &str) -> Result<DhcpEvent> {
                 }
             }
             Ok(Event::End(ref e)) => {
-                let name = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                let name = e.name().as_ref().to_string();
                 match name.as_str() {
                     "System" => in_system = false,
                     "EventID" if capture_event_id => {
@@ -104,18 +100,18 @@ pub fn parse_dhcp_xml(xml: &str) -> Result<DhcpEvent> {
             }
             Ok(Event::Text(ref e)) => {
                 if capture_event_id {
-                    event_id_text.push_str(&e.xml10_content()?);
+                    event_id_text.push_str(&e.xml10_content());
                 }
                 if current_data_name.is_some() {
-                    current_data_value.push_str(&e.xml10_content()?);
+                    current_data_value.push_str(&e.xml10_content());
                 }
             }
             Ok(Event::CData(ref e)) => {
                 if capture_event_id {
-                    event_id_text.push_str(&e.xml10_content()?);
+                    event_id_text.push_str(&e.xml10_content());
                 }
                 if current_data_name.is_some() {
-                    current_data_value.push_str(&e.xml10_content()?);
+                    current_data_value.push_str(&e.xml10_content());
                 }
             }
             Ok(Event::GeneralRef(ref e)) => {

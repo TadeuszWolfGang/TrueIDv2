@@ -9,7 +9,7 @@ use argon2::{
     Algorithm, Argon2, Params, Version,
 };
 use chrono::{DateTime, Duration, Utc};
-use rand::Rng;
+use rand::RngExt; // RngExt provides random_range on the generator
 use sha2::{Digest, Sha256};
 use sqlx::Row;
 use tracing::info;
@@ -72,7 +72,12 @@ pub fn verify_password(password: &str, hash: &str, pepper: Option<&str>) -> Resu
 pub fn sha256_hex(input: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(input.as_bytes());
-    format!("{:x}", hasher.finalize())
+    // digest 0.11 dropped LowerHex on the output — format bytes manually.
+    hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 // ── Helper: parse a User row ───────────────────────────────
@@ -1372,10 +1377,10 @@ fn audit_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<AuditEntry> {
 ///
 /// Returns: raw API key string.
 fn generate_api_key() -> String {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let chars: Vec<char> = (0..48)
         .map(|_| {
-            let idx = rng.gen_range(0..36);
+            let idx = rng.random_range(0..36);
             if idx < 10 {
                 (b'0' + idx) as char
             } else {

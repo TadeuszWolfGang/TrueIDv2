@@ -12,8 +12,8 @@ pub(super) fn decode_xml_reference(reference: &BytesRef<'_>) -> Result<String> {
         return Ok(ch.to_string());
     }
 
-    let name = reference.decode()?;
-    resolve_xml_entity(name.as_ref())
+    let name: &str = reference.as_ref();
+    resolve_xml_entity(name)
         .map(str::to_owned)
         .ok_or_else(|| anyhow!("unsupported XML entity reference: &{};", name))
 }

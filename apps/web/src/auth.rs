@@ -166,8 +166,9 @@ pub fn generate_csrf_token() -> String {
 /// Parameters: `bytes` — number of random bytes.
 /// Returns: lowercase hex string (2 × bytes chars).
 pub fn generate_random_hex(bytes: usize) -> String {
-    let mut rng = rand::thread_rng();
-    let random_bytes: Vec<u8> = (0..bytes).map(|_| rng.gen()).collect();
+    use rand::Rng;
+    let mut random_bytes = vec![0_u8; bytes];
+    rand::rng().fill_bytes(&mut random_bytes);
     random_bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 

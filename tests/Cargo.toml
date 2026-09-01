@@ -16,7 +16,7 @@ path = "rbac_matrix.rs"
 
 [dependencies]
 anyhow = { workspace = true }
-reqwest = { version = "0.12", features = ["json", "cookies"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "cookies"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }

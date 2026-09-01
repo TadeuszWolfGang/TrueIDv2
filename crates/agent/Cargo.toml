@@ -16,7 +16,7 @@ anyhow = { workspace = true }
 chrono = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 hostname = "0.4"
-quick-xml = "0.41"
+quick-xml = "0.42"
 serde = { workspace = true }
 tokio = { workspace = true }
 tokio-rustls = "0.26"

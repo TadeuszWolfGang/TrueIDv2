@@ -1,9 +1,9 @@
 //! TOTP 2FA setup, verification, and backup-code endpoints.
 
 use axum::{http::StatusCode, response::IntoResponse, Json};
-use rand::Rng;
+use rand::RngExt;
 use serde::{Deserialize, Serialize};
-use totp_rs::{Algorithm, Secret, TOTP};
+use totp_rs::{Secret, TOTP};
 use tracing::warn;
 
 use crate::error::{self, ApiError};
@@ -468,14 +468,14 @@ pub(crate) fn totp_matched_timestep(
 /// Returns: vector of codes in `XXXX-XXXX` format.
 fn generate_backup_codes() -> Vec<String> {
     const CHARS: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let mut out = Vec::with_capacity(10);
     for _ in 0..10 {
         let left: String = (0..4)
-            .map(|_| CHARS[rng.gen_range(0..CHARS.len())] as char)
+            .map(|_| CHARS[rng.random_range(0..CHARS.len())] as char)
             .collect();
         let right: String = (0..4)
-            .map(|_| CHARS[rng.gen_range(0..CHARS.len())] as char)
+            .map(|_| CHARS[rng.random_range(0..CHARS.len())] as char)
             .collect();
         out.push(format!("{left}-{right}"));
     }

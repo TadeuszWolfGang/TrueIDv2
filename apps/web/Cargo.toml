@@ -19,8 +19,8 @@ futures-core = "0.3"
 chrono = { workspace = true }
 dashmap = "6"
 jsonwebtoken = { version = "11.0", default-features = false, features = ["rust_crypto"] }
-rand = "0.8"
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+rand = "0.10"
+reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "form", "query", "rustls"] }
 urlencoding = "2"
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -29,7 +29,7 @@ totp-rs = { version = "6", features = ["gen_secret", "qr"] }
 trueid-common = { path = "../../crates/common" }
 tokio = { workspace = true }
 axum-server = { version = "0.8", features = ["tls-rustls"] }
-tower-http = { version = "0.5", features = ["fs"] }
+tower-http = { version = "0.6", features = ["fs"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 ipnet = "2"

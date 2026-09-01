@@ -15,7 +15,7 @@ path = "src/bin/trueid-probe.rs"
 anyhow = { workspace = true }
 chrono = { workspace = true }
 clap = { version = "4", features = ["derive", "env"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "cookies"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "cookies"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
