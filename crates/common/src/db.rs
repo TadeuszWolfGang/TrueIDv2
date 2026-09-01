@@ -1,7 +1,7 @@
 //! Data access layer for TrueID (SQLite via sqlx).
 
-use aes_gcm::aead::{Aead, OsRng};
-use aes_gcm::{AeadCore, Aes256Gcm, Key, KeyInit, Nonce};
+use aes_gcm::aead::Aead;
+use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
 use anyhow::{Context, Result};
 use base64::Engine as _;
 use chrono::{DateTime, Utc};
@@ -782,7 +782,12 @@ pub use crate::db_analytics::*;
 /// Returns: "enc:" + base64(nonce ‖ ciphertext+tag).
 fn encrypt_value(key: &[u8; 32], plaintext: &str) -> Result<String> {
     let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(key));
-    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    // aes-gcm 0.11 moved generate_nonce behind the rand_core feature;
+    // fill the 96-bit nonce from the OS RNG via rand instead.
+    let mut nonce_bytes = [0_u8; 12];
+    use rand::Rng;
+    rand::rng().fill_bytes(&mut nonce_bytes);
+    let nonce = Nonce::<aes_gcm::aead::consts::U12>::from(nonce_bytes);
     let ciphertext = cipher
         .encrypt(&nonce, plaintext.as_bytes())
         .map_err(|e| anyhow::anyhow!("AES-GCM encrypt failed: {e}"))?;
