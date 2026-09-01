@@ -13,9 +13,24 @@ make lint
 
 ### Requirements
 
-- Rust stable (>= 1.82) — install via [rustup](https://rustup.rs)
+- Rust 1.95.0 (pinned by `rust-toolchain.toml`; rustup installs it automatically)
 - SQLite 3
 - Docker + Docker Compose (for integration tests)
+- Python 3.11 only for the Sycope connector (`integrations/sycope/`)
+
+## Dev Container (recommended)
+
+The whole dev environment (Rust toolchain, uv/Python, Docker CLI) runs in a
+container — nothing but Docker is required on your machine:
+
+- **VS Code**: install the "Dev Containers" extension, then
+  `Dev Containers: Reopen in Container`.
+- **CLI**: `npx @devcontainers/cli up --workspace-folder .`
+
+The container reuses the host Docker daemon, so `docker compose up` and
+`make docker-*` work inside it. Ports 3000 (web) and 8080 (engine admin API)
+are forwarded automatically. UDP listeners (RADIUS/syslog) are NOT forwarded
+by dev containers — test them via `docker compose up` with published ports.
 
 ## Development Workflow
 

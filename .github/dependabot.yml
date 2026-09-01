@@ -27,3 +27,11 @@ updates:
     directory: "/"
     schedule:
       interval: monthly
+  - package-ecosystem: docker
+    directory: "/.devcontainer"
+    schedule:
+      interval: monthly
+  - package-ecosystem: docker
+    directory: "/integrations/sycope"
+    schedule:
+      interval: monthly

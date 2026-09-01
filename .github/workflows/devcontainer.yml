@@ -1,0 +1,51 @@
+# Validates that the dev environment builds and that the rust/python toolchain
+# pins resolve. It intentionally does NOT run `cargo build` — that is covered
+# by the existing Rust CI.
+name: devcontainer
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".devcontainer/**"
+      - "rust-toolchain.toml"
+      - "integrations/sycope/pyproject.toml"
+      - "integrations/sycope/uv.lock"
+      - ".github/workflows/devcontainer.yml"
+  pull_request:
+    paths:
+      - ".devcontainer/**"
+      - "rust-toolchain.toml"
+      - "integrations/sycope/pyproject.toml"
+      - "integrations/sycope/uv.lock"
+      - ".github/workflows/devcontainer.yml"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Build dev container (with features)
+        run: npx --yes @devcontainers/cli@0.89.0 build --workspace-folder .
+
+      - name: Up + post-create (toolchain install, cargo fetch, uv sync)
+        run: npx --yes @devcontainers/cli@0.89.0 up --workspace-folder . --remove-existing-container
+
+      - name: Verify pinned toolchains
+        run: |
+          # SC2016: $2 must stay literal inside the single-quoted awk expression.
+          # shellcheck disable=SC2016
+          npx --yes @devcontainers/cli@0.89.0 exec --workspace-folder . bash -lc '
+            set -eux
+            test "$(rustc --version | awk "{print \$2}")" = "1.95.0"
+            cargo fmt --version
+            cargo clippy --version
+            uv --version
+            docker compose version
+            (cd integrations/sycope && uv run --no-sync python -c "import requests, urllib3; print(requests.__version__, urllib3.__version__)")
+          '

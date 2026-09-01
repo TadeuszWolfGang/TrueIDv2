@@ -16,6 +16,9 @@ RBAC-protected APIs, dashboard workflows, and integration outputs for SOC operat
 
 ## Quick Start
 
+Prefer a prebuilt, fully pinned toolchain? See the
+[Dev Container (recommended)](CONTRIBUTING.md#dev-container-recommended) section in CONTRIBUTING.md.
+
 ```bash
 git clone <repo-url> && cd TrueID
 
