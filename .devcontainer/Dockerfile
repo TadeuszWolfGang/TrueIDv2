@@ -2,7 +2,7 @@
 # - Rust is pinned by rust-toolchain.toml (repo root) — single source of truth,
 #   shared with CI and the production Dockerfile.
 # - Python is pinned by integrations/sycope/.python-version (managed by uv).
-FROM mcr.microsoft.com/devcontainers/base:1-bookworm
+FROM mcr.microsoft.com/devcontainers/base:2-bookworm
 
 # Keep aligned with the builder stage of the root Dockerfile.
 RUN apt-get update \
