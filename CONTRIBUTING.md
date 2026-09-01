@@ -27,6 +27,12 @@ container — nothing but Docker is required on your machine:
   `Dev Containers: Reopen in Container`.
 - **CLI**: `npx @devcontainers/cli up --workspace-folder .`
 
+Everything is pinned for determinism: Rust 1.95.0 via `rust-toolchain.toml`
+(shared with CI and the production builder), Python 3.11 via
+`.python-version` with dependencies locked in `uv.lock`, and container
+features locked in `devcontainer-lock.json`. CI builds and verifies the same
+container in `devcontainer.yml`, keeping local and CI environments consistent.
+
 The container reuses the host Docker daemon, so `docker compose up` and
 `make docker-*` work inside it. Ports 3000 (web) and 8080 (engine admin API)
 are forwarded automatically. UDP listeners (RADIUS/syslog) are NOT forwarded

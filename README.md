@@ -2,7 +2,7 @@
 
 [![CI](../../actions/workflows/glibc-compat.yml/badge.svg)](../../actions/workflows/glibc-compat.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/Rust-1.82%2B-orange.svg)](https://rustup.rs)
+[![Rust](https://img.shields.io/badge/Rust-1.95.0-orange.svg)](https://rustup.rs)
 
 **Real-time identity correlation platform**
 TrueID maps IP addresses to users and devices from multiple telemetry sources and exposes
@@ -10,14 +10,31 @@ RBAC-protected APIs, dashboard workflows, and integration outputs for SOC operat
 
 ## Requirements
 
-- Rust (stable, >= 1.82) - install: https://rustup.rs
+- Rust 1.95.0 (pinned by `rust-toolchain.toml`) — or skip local installs entirely and use the Dev Container below
 - Docker + Docker Compose (recommended for deployment)
 - macOS / Linux (Windows via WSL2)
 
-## Quick Start
+## Dev Container (recommended)
 
-Prefer a prebuilt, fully pinned toolchain? See the
-[Dev Container (recommended)](CONTRIBUTING.md#dev-container-recommended) section in CONTRIBUTING.md.
+The full development environment — Rust toolchain, uv-managed Python, Docker CLI —
+runs in a container, so the only host prerequisite is Docker:
+
+- **VS Code**: install the *Dev Containers* extension, then **Dev Containers: Reopen in Container**.
+- **CLI**: `npx @devcontainers/cli up --workspace-folder .`
+
+Every layer is pinned for reproducibility:
+
+| Layer | Pin |
+|---|---|
+| Rust | `rust-toolchain.toml` → 1.95.0 (shared with CI and the production builder) |
+| Python (Sycope connector) | `.python-version` → 3.11; dependencies locked in `uv.lock` |
+| Images | connector base pinned by digest; Dev Container features locked in `devcontainer-lock.json` |
+
+CI builds and validates the same container ([`devcontainer.yml`](.github/workflows/devcontainer.yml)),
+so the environment you develop on uses the same pinned toolchain as CI and the production
+build — no version drift, no "works on my machine" failures.
+
+## Quick Start
 
 ```bash
 git clone <repo-url> && cd TrueID

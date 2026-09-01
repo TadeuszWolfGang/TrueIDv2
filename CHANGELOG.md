@@ -5,6 +5,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ## [Unreleased] — dependency majors & CodeQL 2026-08-31 (2)
 
+### Added — Dev Container based development environment
+- Full dev-environment containerization (`.devcontainer/`), usable from VS Code Dev Containers or `@devcontainers/cli`; Docker is the only host prerequisite.
+- Deterministic toolchains: Rust 1.95.0 enforced via `rust-toolchain.toml` (single source of truth shared with CI and the production builder); Python 3.11 for the Sycope connector with dependencies strictly locked in `uv.lock`.
+- Reproducible images: connector base image pinned by digest; Dev Container features locked via `devcontainer-lock.json`.
+- CI parity: `devcontainer.yml` builds the container and verifies the pins on every change, keeping local environments consistent with CI and eliminating version-drift ("works on my machine") failures.
+
 ### Changed
 - sqlx 0.8 → 0.9: dynamic-SQL call sites now wrap strings in `sqlx::AssertSqlSafe` (all use bound parameters; fixed fragments only); `SqliteArguments` lifetime removed by upstream
 - argon2 0.5 → 0.6: salt generation moved into `hash_password` (OS RNG); no parameter changes (Argon2id 19 MiB / t=2 / p=1)
