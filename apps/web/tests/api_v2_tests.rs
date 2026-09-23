@@ -6998,7 +6998,7 @@ async fn test_brace_path_param_routes_reach_handlers() {
         &app,
         &cookie,
         "/api/v1/users",
-        &json!({"username": "route-probe", "password": "RouteProbe-Pass123", "role": "Viewer"}),
+        &json!({"username": "route-probe", "password": "PasswordA123!", "role": "Viewer"}),
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "create user: {created}");
@@ -7031,7 +7031,7 @@ async fn test_brace_path_param_routes_reach_handlers() {
         &app,
         &cookie,
         &format!("/api/v1/users/{user_id}/reset-password"),
-        &json!({"new_password": "Another-Pass-456"}),
+        &json!({"new_password": "PasswordB123!"}),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "reset password: {body}");
