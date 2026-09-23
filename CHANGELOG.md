@@ -3,6 +3,18 @@
 All notable changes to TrueID are documented here.  
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
+## [Unreleased] — dependency majors batch 4 2026-09-23
+
+### Fixed
+- **Web/engine routing**: 12 endpoints registered only with `{param}` syntax matched nothing under axum 0.7, where `{id}` is a literal path segment, and answered with a router-level 404. The admin UI's API-key **Revoke** and the CLI's `mappings delete` / `users delete` were affected, plus the whole `/api/v1/users/{id}/*` family, `DELETE /api/auth/sessions/{id}`, `GET /api/v2/switch-ports/by-mac/{mac}`, and on the engine `DELETE /engine/mappings/{ip}`, `POST /engine/notifications/channels/{id}/test` and `POST /engine/reports/schedules/{id}/send-now`. Channel **Test** and report **Send now** in the UI therefore returned 502.
+- `DELETE /api/v1/mappings/{ip}` now relays the engine's `204 No Content` (it previously tried to parse an empty body as JSON → 502); OpenAPI updated.
+- Regression tests: the old engine test accepted either 204 or 404 and so hid the bug. It now requires 204, and new web/engine tests exercise every affected route and fail on the pre-upgrade code.
+
+### Changed
+- axum 0.7 → 0.8 (`{param}` path syntax; native async `FromRequestParts`, `async-trait` dropped from trueid-web). The `:param` compat aliases are removed because axum 0.8 rejects that syntax (supersedes Dependabot #26).
+- tower-http 0.6 → 0.7 (supersedes #28), toml 0.8 → 1.1 in the agent (supersedes #27).
+- tabled 0.21 → 0.22 in the CLI: drops `proc-macro-error2` (RUSTSEC-2026-0173, unmaintained), so `cargo audit` reports no warnings.
+
 ## [Unreleased] — security-scan hardening 2026-09-23
 
 ### Changed

@@ -5,7 +5,6 @@
 //! `csrf_guard` — rejects mutating cookie-auth requests without valid CSRF token.
 //! `require_*` role-check helpers.
 
-use async_trait::async_trait;
 use axum::{
     extract::{FromRef, FromRequestParts, Request, State},
     http::{header, request::Parts, Method, StatusCode},
@@ -34,7 +33,6 @@ pub struct AuthUser {
     pub request_id: String,
 }
 
-#[async_trait]
 impl<S> FromRequestParts<S> for AuthUser
 where
     S: Send + Sync,
@@ -270,7 +268,6 @@ where
 /// Like `AuthUser` but returns `None` instead of 401 for unauthenticated requests.
 pub struct OptionalAuthUser(pub Option<AuthUser>);
 
-#[async_trait]
 impl<S> FromRequestParts<S> for OptionalAuthUser
 where
     S: Send + Sync,

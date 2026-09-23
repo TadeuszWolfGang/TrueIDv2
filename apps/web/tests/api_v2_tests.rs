@@ -6951,3 +6951,136 @@ fn test_openapi_search_and_export_guardrails() {
         );
     }
 }
+
+/// Spawns a mock engine that answers `DELETE /engine/mappings/{ip}` with 204 No Content.
+///
+/// Parameters: none.
+/// Returns: `(base_url, task_handle)` for the spawned mock server.
+async fn spawn_mock_engine_delete_mapping() -> (String, tokio::task::JoinHandle<()>) {
+    let app = Router::new().route(
+        "/engine/mappings/{ip}",
+        axum::routing::delete(|| async { StatusCode::NO_CONTENT }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock engine failed");
+    let addr = listener
+        .local_addr()
+        .expect("read mock engine local addr failed");
+    let handle = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    (format!("http://{}", addr), handle)
+}
+
+/// Asserts a 404 came from a handler (JSON `NOT_FOUND` body), not from the router.
+///
+/// Parameters: `status` - response status, `body` - parsed JSON body, `what` - label for messages.
+/// Returns: none; panics on router-level 404 or unexpected status.
+fn assert_handler_not_found(status: StatusCode, body: &Value, what: &str) {
+    assert_eq!(status, StatusCode::NOT_FOUND, "{what}: {body}");
+    assert_eq!(
+        body["code"], "NOT_FOUND",
+        "{what}: 404 without an API error body means the route did not match"
+    );
+}
+
+/// Regression: routes registered only with `{param}` syntax must reach their handlers.
+///
+/// Under axum 0.7 `{id}` was a literal path segment, so these endpoints (used by the
+/// admin UI and the CLI) answered with a router-level 404.
+#[tokio::test]
+async fn test_brace_path_param_routes_reach_handlers() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+
+    let (status, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v1/users",
+        &json!({"username": "route-probe", "password": "RouteProbe-Pass123", "role": "Viewer"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "create user: {created}");
+    let user_id = created["id"].as_i64().expect("created user id");
+
+    let (status, user) = auth_get(&app, &cookie, &format!("/api/v1/users/{user_id}")).await;
+    assert_eq!(status, StatusCode::OK, "get user: {user}");
+    assert_eq!(user["username"], "route-probe");
+
+    let (status, updated) = auth_put(
+        &app,
+        &cookie,
+        &format!("/api/v1/users/{user_id}/role"),
+        &json!({"role": "Operator"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "change role: {updated}");
+    assert_eq!(updated["role"], "Operator");
+
+    let (status, body) = auth_post(
+        &app,
+        &cookie,
+        &format!("/api/v1/users/{user_id}/unlock"),
+        &json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "unlock: {body}");
+
+    let (status, body) = auth_post(
+        &app,
+        &cookie,
+        &format!("/api/v1/users/{user_id}/reset-password"),
+        &json!({"new_password": "Another-Pass-456"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "reset password: {body}");
+
+    let (status, body) = auth_delete(&app, &cookie, &format!("/api/v1/users/{user_id}/totp")).await;
+    assert_eq!(status, StatusCode::OK, "disable totp: {body}");
+
+    let (status, body) = auth_delete(&app, &cookie, &format!("/api/v1/users/{user_id}")).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "delete user: {body}");
+    let (status, body) = auth_get(&app, &cookie, &format!("/api/v1/users/{user_id}")).await;
+    assert_handler_not_found(status, &body, "get deleted user");
+
+    let (status, created) = auth_post(
+        &app,
+        &cookie,
+        "/api/v1/api-keys",
+        &json!({"description": "route-probe-key", "role": "Viewer"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "create api key: {created}");
+    let key_id = created["record"]["id"].as_i64().expect("created key id");
+    let (status, body) = auth_delete(&app, &cookie, &format!("/api/v1/api-keys/{key_id}")).await;
+    assert_eq!(status, StatusCode::OK, "revoke api key: {body}");
+    let (status, body) = auth_delete(&app, &cookie, "/api/v1/api-keys/999999").await;
+    assert_handler_not_found(status, &body, "revoke unknown api key");
+
+    let (status, body) = auth_delete(&app, &cookie, "/api/auth/sessions/999999").await;
+    assert_handler_not_found(status, &body, "revoke unknown session");
+
+    let (status, body) = auth_get(
+        &app,
+        &cookie,
+        "/api/v2/switch-ports/by-mac/AA:BB:CC:DD:EE:01",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "port by mac: {body}");
+    assert!(
+        body.is_array(),
+        "port by mac must return a JSON array: {body}"
+    );
+}
+
+/// Regression: `DELETE /api/v1/mappings/{ip}` reaches the engine and relays its 204.
+#[tokio::test]
+async fn test_delete_mapping_proxies_engine_no_content() {
+    let (engine_url, mock_handle) = spawn_mock_engine_delete_mapping().await;
+    let (app, _) = build_test_app_with_engine_url(engine_url).await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let (status, body) = auth_delete(&app, &cookie, "/api/v1/mappings/10.1.2.3").await;
+    mock_handle.abort();
+    assert_eq!(status, StatusCode::NO_CONTENT, "delete mapping: {body}");
+}
