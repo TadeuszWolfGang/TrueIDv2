@@ -3,6 +3,12 @@
 All notable changes to TrueID are documented here.  
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
+## [Unreleased] — security-scan hardening 2026-09-23
+
+### Changed
+- CI: `security-scan` jobs no longer chain via `needs:`. A new RustSec advisory (RUSTSEC-2026-0285, rustls) failed `sast` on 2026-09-15..23 and silently skipped container-scan, DAST and `cargo deny` for 9 days. `cargo audit`/`cargo deny` now run in their own `dependency-audit` job, and `cargo deny` still reports when `cargo audit` fails.
+- CI: Linux jobs pinned to `ubuntu-26.04` ahead of the `ubuntu-latest` migration (rollout 2026-10-19 → 2026-11-19), so the runner image changes only through a reviewed commit.
+
 ## [Unreleased] — dependency majors & CodeQL 2026-08-31 (2)
 
 ### Added — Dev Container based development environment
