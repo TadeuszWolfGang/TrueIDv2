@@ -9,10 +9,9 @@
 # Resolved 2026-08-31 (no longer in graph; notes kept for history):
 # - RUSTSEC-2025-0134 rustls-pemfile: direct usage migrated to
 #   rustls-pki-types; last transitive copy dropped by axum-server 0.8.
-# - RUSTSEC-2024-0370 proc-macro-error: dropped by tabled 0.21 — but its
-#   successor fork proc-macro-error2 is itself flagged unmaintained
-#   (RUSTSEC-2026-0173, warning-level, CLI table rendering only). Tracked
-#   until tabled swaps the derive backend.
+# - RUSTSEC-2024-0370 proc-macro-error: dropped by tabled 0.21 — its
+#   successor fork proc-macro-error2 (RUSTSEC-2026-0173, unmaintained) was
+#   in turn dropped by tabled 0.22 (tabled_derive 0.12) on 2026-09-23.
 
 [advisories]
 unmaintained = "none"

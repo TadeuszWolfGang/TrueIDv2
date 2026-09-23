@@ -20,7 +20,7 @@ quick-xml = "0.42"
 serde = { workspace = true }
 tokio = { workspace = true }
 tokio-rustls = "0.26"
-toml = "0.8"
+toml = "1.1"
 tracing = { workspace = true }
 tracing-appender = "0.2"
 tracing-subscriber = { workspace = true }

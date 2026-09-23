@@ -24,7 +24,8 @@ pub(crate) struct MetricsQuery {
 ///
 /// Parameters: `state` - shared app state, `method` - HTTP method, `path` - engine path,
 /// `body` - optional JSON payload.
-/// Returns: proxied `(status, json)` response or `BAD_GATEWAY` on transport/parse errors.
+/// Returns: proxied `(status, json)` response, a body-less `204 No Content` relayed as-is,
+/// or `BAD_GATEWAY` on transport/parse errors.
 pub(crate) async fn proxy_to_engine(
     state: &AppState,
     method: reqwest::Method,
@@ -45,11 +46,15 @@ pub(crate) async fn proxy_to_engine(
     })?;
     let status =
         StatusCode::from_u16(resp.status().as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    if status == StatusCode::NO_CONTENT {
+        // e.g. engine DELETE /engine/mappings/{ip}: there is no JSON body to parse.
+        return Ok(status.into_response());
+    }
     let json_body = resp
         .json::<serde_json::Value>()
         .await
         .map_err(|_| StatusCode::BAD_GATEWAY)?;
-    Ok((status, Json(json_body)))
+    Ok((status, Json(json_body)).into_response())
 }
 
 /// Proxies a request to the engine admin API and returns plain-text response.

@@ -13,7 +13,6 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow = { workspace = true }
-async-trait = "0.1"
 axum = { workspace = true }
 futures-core = "0.3"
 chrono = { workspace = true }
@@ -29,7 +28,7 @@ totp-rs = { version = "6", features = ["gen_secret", "qr"] }
 trueid-common = { path = "../../crates/common" }
 tokio = { workspace = true }
 axum-server = { version = "0.8", features = ["tls-rustls"] }
-tower-http = { version = "0.6", features = ["fs"] }
+tower-http = { version = "0.7", features = ["fs"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 ipnet = "2"

@@ -993,13 +993,32 @@ mod tests {
             .unwrap();
         let resp = app.oneshot(req).await.unwrap();
 
-        // If 404 here, it means the route pattern does not match "10.0.0.1"
-        // or the in-memory pool has connection isolation issues
-        let status = resp.status();
-        assert!(
-            status == StatusCode::NO_CONTENT || status == StatusCode::NOT_FOUND,
-            "unexpected status: {status}"
-        );
+        // Must be the handler's 204: a router-level 404 here means the `{ip}`
+        // capture is not being matched (axum < 0.8 treated `{ip}` as a literal).
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+        assert!(db.get_mapping("10.0.0.1").await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_path_param_routes_reach_handlers() {
+        // Both handlers always answer 200 + JSON (success=false for unknown ids),
+        // so any 404 would come from the router, not from the handler.
+        for uri in [
+            "/engine/notifications/channels/999999/test",
+            "/engine/reports/schedules/999999/send-now",
+        ] {
+            let db = Arc::new(init_db("sqlite::memory:").await.unwrap());
+            let app = admin_router(test_state(db, None));
+            let req = HttpRequest::builder()
+                .method("POST")
+                .uri(uri)
+                .body(Body::empty())
+                .unwrap();
+            let resp = app.oneshot(req).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::OK, "route not matched: {uri}");
+            let json = body_json(resp).await;
+            assert_eq!(json["success"], false, "unexpected body for {uri}: {json}");
+        }
     }
 
     #[tokio::test]
