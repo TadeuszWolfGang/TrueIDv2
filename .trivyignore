@@ -6,3 +6,13 @@
 #
 # CVE-2026-0861 (glibc memalign) was removed 2026-08-31: fixed in Debian 12
 # as glibc 2.36-9+deb12u14; refreshed distroless base no longer matches.
+#
+# CVE-2026-84782 (openssl DTLS handshake retransmission / HIGH):
+# - Debian 12 bookworm: NO fixed package as of 2026-09-30 (tracker still
+#   marks 3.0.20-1~deb12u2 and security 3.0.22-1~deb12u1 as vulnerable;
+#   upstream 3.0.23 is premium-support only).
+# - Debian 13 trixie-security: fixed in openssl/libssl3t64 3.5.7-1~deb13u3
+#   (DSA-6531-1).
+# - Remediation in Dockerfile: runtime switched to
+#   gcr.io/distroless/base-nossl-debian13:nonroot + libgcc_s (rustls-only
+#   stack; OpenSSL not required). Do NOT add a silent ignore for this CVE.
