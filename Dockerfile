@@ -76,10 +76,28 @@ RUN mkdir -p /runtime-root/usr/local/bin /runtime-root/app/data /runtime-root/ap
     && cp -R /src/apps/web/assets /runtime-root/app/assets \
     && cp /out/oui.csv /runtime-root/app/oui.csv
 
-FROM gcr.io/distroless/cc-debian12:nonroot AS runtime
+# Runtime: TrueID links TLS via rustls only (engine/web/cli). Distroless `cc-*`
+# images inherit OpenSSL/libssl from `base`, which currently carries
+# CVE-2026-84782 on Debian 12 (no bookworm fixed package as of 2026-09-30).
+# Use `base-nossl` + libgcc so the vulnerable package is not present at all.
+# Debian 13 has a fixed openssl (3.5.7-1~deb13u3 / DSA-6531-1) if libssl is
+# needed later; prefer keeping it out of the image while unused.
+FROM debian:trixie-slim AS runtime-libs
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgcc-s1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && lib="$(dpkg -L libgcc-s1 | grep -E 'libgcc_s\.so\.1$' | head -n 1)" \
+    && test -n "${lib}" \
+    && archdir="$(dirname "${lib}")" \
+    && rel="${archdir#/}" \
+    && mkdir -p "/runtime-libs/${rel}" \
+    && cp -a "${lib}" "/runtime-libs/${rel}/"
+
+FROM gcr.io/distroless/base-nossl-debian13:nonroot AS runtime
 
 WORKDIR /app
 
+COPY --from=runtime-libs /runtime-libs/ /
 COPY --from=builder --chown=nonroot:nonroot /runtime-root/ /
 
 ENV DATABASE_URL=sqlite:///app/data/net-identity.db?mode=rwc
