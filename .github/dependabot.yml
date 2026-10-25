@@ -15,10 +15,8 @@ updates:
         update-types:
           - "patch"
           - "minor"
-    ignore:
-      # rsa enters the lockfile only as a feature-graph artifact of sqlx's
-      # macro umbrella (see deny.toml) — never compiled. Keep it pinned.
-      - dependency-name: "rsa"
+    # Keep RSA updates enabled: jsonwebtoken uses it for OIDC verification.
+    # The reviewed advisory exception is documented in deny.toml.
   - package-ecosystem: github-actions
     directory: "/"
     schedule:

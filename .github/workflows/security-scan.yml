@@ -48,6 +48,9 @@ jobs:
       - name: Rust fmt check
         run: cargo fmt --all -- --check
 
+      - name: Rust workspace tests
+        run: cargo test --workspace --locked
+
       - name: ZAP report policy tests
         run: |
           python3 -m unittest scripts/test_check_zap_report.py
@@ -79,7 +82,8 @@ jobs:
           cargo install cargo-deny --locked
 
       - name: Cargo audit
-        run: cargo audit --ignore RUSTSEC-2023-0071
+        # Reviewed public-key-only crypto exceptions are documented in deny.toml.
+        run: cargo audit --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2026-0387
 
       # Report both advisory sources even when cargo audit already failed.
       - name: Cargo deny advisories
