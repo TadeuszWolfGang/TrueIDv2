@@ -2,8 +2,7 @@
 
 use anyhow::Result;
 use chrono::{Duration, Utc};
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
-use rand::Rng;
+use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 use trueid_common::model::User;
@@ -98,7 +97,7 @@ pub fn create_access_token(config: &JwtConfig, user: &User) -> Result<String> {
     };
 
     let token = encode(
-        &Header::default(),
+        &Header::new(Algorithm::HS256),
         &claims,
         &EncodingKey::from_secret(config.secret.as_bytes()),
     )?;
@@ -114,7 +113,7 @@ pub fn validate_token(config: &JwtConfig, token: &str) -> Result<Claims> {
     let data = decode::<Claims>(
         token,
         &DecodingKey::from_secret(config.secret.as_bytes()),
-        &Validation::default(),
+        &Validation::new(Algorithm::HS256),
     )?;
     Ok(data.claims)
 }
@@ -193,4 +192,110 @@ pub fn extract_cookie<'a>(cookie_header: &'a str, name: &str) -> Option<&'a str>
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jsonwebtoken::{decode_header, errors::ErrorKind};
+    use trueid_common::model::UserRole;
+
+    fn config() -> JwtConfig {
+        JwtConfig {
+            secret: "test-session-signing-secret-".repeat(3),
+            dev_mode: false,
+        }
+    }
+
+    fn user() -> User {
+        let now = Utc::now();
+        User {
+            id: 42,
+            username: "token-test-user".to_string(),
+            password_hash: String::new(),
+            role: UserRole::Operator,
+            auth_source: "local".to_string(),
+            external_id: None,
+            oidc_subject: None,
+            oidc_provider: None,
+            token_version: 3,
+            force_password_change: false,
+            totp_enabled: false,
+            totp_verified_at: None,
+            failed_attempts: 0,
+            locked_until: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn access_token_uses_hs256() {
+        let token = create_access_token(&config(), &user()).unwrap();
+
+        assert_eq!(decode_header(&token).unwrap().alg, Algorithm::HS256);
+    }
+
+    #[test]
+    fn access_token_round_trip_preserves_session_claims() {
+        let config = config();
+        let user = user();
+        let token = create_access_token(&config, &user).unwrap();
+
+        let claims = validate_token(&config, &token).unwrap();
+
+        assert_eq!(claims.sub, user.id.to_string());
+        assert_eq!(claims.role, user.role.to_string());
+        assert_eq!(claims.token_version, user.token_version);
+        assert_eq!(
+            claims.exp - claims.iat,
+            ACCESS_TOKEN_TTL.num_seconds() as usize
+        );
+    }
+
+    #[test]
+    fn access_token_rejects_wrong_secret() {
+        let token = create_access_token(&config(), &user()).unwrap();
+        let mut wrong_config = config();
+        wrong_config.secret = "different-session-signing-secret-".repeat(3);
+
+        let error = validate_token(&wrong_config, &token).unwrap_err();
+
+        assert_eq!(
+            error
+                .downcast_ref::<jsonwebtoken::errors::Error>()
+                .unwrap()
+                .kind(),
+            &ErrorKind::InvalidSignature
+        );
+    }
+
+    #[test]
+    fn access_token_rejects_valid_hs384_signature() {
+        let config = config();
+        let token = create_access_token(&config, &user()).unwrap();
+        let claims = validate_token(&config, &token).unwrap();
+        let hs384_token = encode(
+            &Header::new(Algorithm::HS384),
+            &claims,
+            &EncodingKey::from_secret(config.secret.as_bytes()),
+        )
+        .unwrap();
+        decode::<Claims>(
+            &hs384_token,
+            &DecodingKey::from_secret(config.secret.as_bytes()),
+            &Validation::new(Algorithm::HS384),
+        )
+        .expect("the rejected token must have a valid HS384 signature");
+
+        let error = validate_token(&config, &hs384_token).unwrap_err();
+
+        assert_eq!(
+            error
+                .downcast_ref::<jsonwebtoken::errors::Error>()
+                .unwrap()
+                .kind(),
+            &ErrorKind::InvalidAlgorithm
+        );
+    }
 }

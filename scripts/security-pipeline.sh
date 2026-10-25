@@ -120,7 +120,8 @@ run_and_check "ZAP report policy tests" python3 -m unittest scripts/test_check_z
 run_and_check "CSP asset policy" python3 scripts/check-csp-assets.py
 run_and_check "cargo clippy (security-focused lints)" \
   cargo clippy --workspace --all-targets -- -D clippy::correctness -D clippy::suspicious -D clippy::perf
-run_and_check "cargo audit" cargo audit --ignore RUSTSEC-2023-0071
+# Reviewed public-key-only crypto exceptions are documented in deny.toml.
+run_and_check "cargo audit" cargo audit --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2026-0387
 run_and_check "cargo deny advisories" cargo deny check advisories
 
 info "Start application (prod-like)"
