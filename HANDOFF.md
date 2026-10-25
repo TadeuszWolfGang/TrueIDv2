@@ -1,5 +1,42 @@
 # HANDOFF — browser login compatibility
 
+## Sycope SDK security follow-up — planning checkpoint
+
+Phase: PLANNING. The operator authorized the existing SDK security findings and
+offline fixes. This follow-up touches only Python source/tests and this handoff;
+the coordinator owns live validation and all deployment operations.
+
+Triage:
+- Type: Security; severity High; priority P1; effort M (2 hours to 1 day).
+- Root cause: five explicit `verify=False` overrides disable the supplied
+  Requests session's CA policy; login accepts HTTP, requests have no finite
+  timeout, and DEBUG logs expose session material and credential aliases.
+- Affected areas: `sycope/api.py`, `sycope/config.py`, connector offline tests.
+- Smallest fix: preserve Requests' existing CA/session/environment behavior,
+  require HTTPS before requests, disable credential-bearing redirects, bound
+  connect/read waits, and remove or redact sensitive logging.
+- No dependency, public signature, authentication protocol, config key, schema,
+  or architecture change is required. No new advisory exception is proposed.
+
+Plan: add regression tests and capture RED, make the minimal source changes,
+then run every offline connector test and obtain an independent read-only review.
+Existing private-CA deployments must supply their trusted CA through their
+Requests session or `REQUESTS_CA_BUNDLE`; no insecure fallback will be added.
+Live Sycope behavior and the two live TrueID tests remain coordinator checks.
+
+Ready-to-run command (repository root):
+Prerequisites:
+- [x] Python 3.11 disposable environment with fixed certifi already exists.
+- [x] The operator authorized source fixes and offline tests.
+- [x] No network, appliance, lab, or Hermes changes are part of this lane.
+
+```bash
+env -u TRUEID_TEST_URL -u TRUEID_TEST_API_KEY \
+  ../validation-full-20261025/sycope-python-env/bin/python \
+  -m unittest discover -s integrations/sycope/tests -p 'test_*.py' -v
+git diff --check
+```
+
 ## Phase
 POST-REALIZATION — native web deployed and browser acceptance passed. Full
 local/live suites passed; hosted checks are running on draft PR #42.
