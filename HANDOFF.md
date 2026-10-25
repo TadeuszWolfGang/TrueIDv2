@@ -1,8 +1,8 @@
 # HANDOFF — browser login compatibility
 
 ## Phase
-POST-REALIZATION — login fixes, container build recipe and connector CA-bundle
-update independently reviewed; deployment/CI evidence belongs to the coordinator.
+POST-REALIZATION — native web deployed and browser acceptance passed. Full
+local/live suites passed; hosted checks are running on draft PR #42.
 
 ## Last action
 Codex reproduced a second login defect in the real Axum router: separate HTTP/2
@@ -50,13 +50,44 @@ Validation:
   local debug web binary is available for the disposable validation lane.
 - Logs: `../validation-full-20261025/http2-cookie-{red,green,workspace,clippy,web-build}.log`.
 
+## Deployed acceptance and remaining checks
+Draft PR: [#42](https://github.com/TadeuszWolfGang/TrueIDv2/pull/42).
+The native web binary was built in its own Cargo invocation and atomically
+activated in CT104; engine/CLI/probe binaries and private runtime material were
+preserved. Application files at the Docker checkpoint 81de703 are identical to
+c964583; the later certifi commit changes only the Python lock and this handoff.
+The previous web binary and static bootstrap are retained under /root for
+recovery; the deployed web SHA256 is
+5443954c38b8d23ed3e5951511ae840ff35c6af4c08f2a16363699f9f10dfecf.
+
+- Real TLS/ALPN transport: 9/9 checks passed, including split Cookie fields,
+  refresh rotation, old-session rejection, logout and revoked-session rejection.
+- Real browser: login, mappings, search, timeline, conflicts, alerts and retained
+  authentication after reload passed; no console warning/error was captured.
+- The updated debug web binary passed all 16 previously ignored auth/RBAC tests
+  on a disposable loopback fixture, plus 10 repository E2E, 11 basic and 44
+  extended smoke checks (0 skipped). Fixture processes were stopped afterward;
+  destructive test cases did not use the deployed database.
+- The refreshed Python environment passed all 20 connector tests, including
+  both live TrueID reads with the lab CA verified. No Sycope appliance writes
+  or actual Hermes profile changes were made.
+- OSV querybatch reported no findings for all five registry packages in the
+  updated Python lock. Rust audit/deny passed the existing policy with exactly
+  the two documented RSA/crypto-bigint exceptions; raw audit is not clean.
+- Evidence: ../trueid-lab/{http2-cookie-after,disposable-validation,
+  sycope-live-validation,python-dependency-audit}.json and
+  ../../outputs/trueid-dashboard-tested.png.
+
+Hosted Windows, container/native HTTPS, DAST, CodeQL and security checks remain
+pending until verified for the final PR head. Real domain-controller forwarding
+and end-to-end delivery into the Sycope appliance are not established by these
+tests. The operator has a one-event Windows AD smoke script; wait for its
+TestCorrelation before claiming a real DC event was received.
+
 ## Next action
-Review this checkpoint, rebuild only the native web binary, then verify actual
-HTTP/2 split cookies and a fresh browser login. Confirm mappings load, the
-browser remains on the dashboard, refresh/logout work, and CSRF still rejects
-missing or incorrect tokens. Run the live auth/RBAC suite against a disposable
-instance using the updated binary. Deployment and GitHub publication remain
-owned by the operator's coordinating session.
+Inspect final-head CI on draft PR #42 and review the ready changes. Do not merge
+without operator authorization for this PR. Preserve all older guests and the
+existing CT104 credentials. Do not run a fresh installer over this deployment.
 
 ## Container build reproducibility
 The former Docker build selected engine and web together, unifying the engine's
@@ -103,8 +134,8 @@ release. PR #40 was inspected without modifying, merging or closing it.
 Validation passed: `uv lock --check --offline`, 18 offline connector tests, and
 an import check confirming certifi 2026.10.23 with the affected emSign ECC G3
 root absent from its bundle. Discovery found 20 tests; the 2 live TrueID tests
-were intentionally skipped and handed to the coordinator with the updated
-disposable environment. Independent review found no blocker. Logs and PyPI
+were initially skipped; the coordinator subsequently ran all 20 successfully,
+including both live reads with CA verification. Independent review found no blocker. Logs and PyPI
 metadata proof are in `../validation-full-20261025/certifi-*`.
 
 The connector Dockerfile already uses frozen uv sync, so the lock update is
@@ -113,8 +144,8 @@ the local disposable test environment was synced. This checkpoint does not
 claim the default-branch Dependabot alert is closed before merge.
 
 ## Open questions / risks
-- HTTP_2 + oneshot tests exercise HeaderMap/router behavior; deployed TLS/ALPN
-  and browser acceptance provide the transport proof after deployment.
+- HTTP_2 + oneshot tests exercise HeaderMap/router behavior; the separate
+  deployed TLS/ALPN and browser acceptance now provide transport proof.
 - The OIDC fixture validates cookie/state handling with the provider disabled;
   it does not claim a live identity-provider exchange.
 - The startup fix assumes the existing parser-blocking script tags. Re-evaluate
