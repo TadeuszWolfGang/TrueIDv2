@@ -241,6 +241,7 @@ var currentUser = null;
           switchTab('mappings');
           connectSSE();
         } catch (e) {
+          console.error('Dashboard initialization failed; returning to the login page.');
           window.location = '/login.html';
         }
       }
@@ -499,4 +500,5 @@ var currentUser = null;
         node.classList.remove('expanded');
       });
       expandGroupForTab(activeTab || 'mappings');
-      initAuth();
+      // Later parser-blocking scripts define the dashboard's tab handlers.
+      document.addEventListener('DOMContentLoaded', initAuth, { once: true });

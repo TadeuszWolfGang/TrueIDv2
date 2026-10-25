@@ -48,6 +48,9 @@ jobs:
       - name: Rust fmt check
         run: cargo fmt --all -- --check
 
+      - name: Dashboard bootstrap regression tests
+        run: node --test scripts/test-dashboard-bootstrap.cjs
+
       - name: Rust workspace tests
         run: cargo test --workspace --locked
 
