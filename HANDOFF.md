@@ -1,5 +1,29 @@
 # HANDOFF — browser login compatibility
 
+## Coordinator acceptance checkpoint
+The final local connector discovery passed all 38 tests, including both live
+TrueID Viewer reads with the lab CA verified (0 skipped). The committed SDK
+also passed 6 real local TLS fixture checks: trusted CA + authenticated GET,
+untrusted CA rejected before HTTP, blocked HTTPS-to-HTTP redirect, blocked
+plain HTTP, stable source hash and cleanup. The old source demonstrably failed
+the three security rejection cases with fake credentials on loopback only.
+No Sycope appliance or actual Hermes configuration was modified.
+
+Hosted checks at ffacce9 passed Windows, native HTTPS/glibc image, CodeQL,
+SAST, dependency audit, container scan and validation. DAST alone stopped on
+informational rule10027 matching the word LATER in the new bootstrap comment.
+The report evidence identified only that comment; its wording is now clarified
+without changing application behavior or relaxing scanner policy. All 3 Node
+regressions and CSP checks passed again. The deployed static file was updated
+with a recovery copy and its SHA verified through trusted-CA HTTPS; browser
+login and reload passed afterward with no console warnings/errors.
+
+Final-head hosted CI still needs to be observed after this checkpoint is pushed.
+The exact local transport evidence is ../trueid-lab/sycope-sdk-tls-validation.json;
+connector evidence is ../trueid-lab/sycope-live-validation.json. The coordinator's
+sanitized final report records final-head CI separately. This checkpoint does
+not claim real DC forwarding or end-to-end Sycope appliance delivery.
+
 ## Sycope SDK security follow-up
 
 Phase: POST-REALIZATION. Planning checkpoint: `25ef207`. The operator authorized
@@ -54,9 +78,9 @@ Validation:
 
 Existing private-CA deployments must supply their trusted CA through their
 Requests session or `REQUESTS_CA_BUNDLE`; there is no insecure fallback. The
-coordinator still needs to run the two live TrueID reads and real local TLS
-acceptance for trusted/untrusted CA and redirect rejection. This does not claim
-a live Sycope appliance deployment. Method/operation/status and bounded-count
+coordinator completed all 38 tests and the separate real local TLS acceptance
+for trusted/untrusted CA and redirect rejection as recorded above. This does not
+claim a live Sycope appliance deployment. Method/operation/status and bounded-count
 metadata remain available; no generic arbitrary-data redactor is introduced.
 
 Ready-to-run command (repository root):

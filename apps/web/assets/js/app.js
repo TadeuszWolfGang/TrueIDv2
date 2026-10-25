@@ -500,5 +500,5 @@ var currentUser = null;
         node.classList.remove('expanded');
       });
       expandGroupForTab(activeTab || 'mappings');
-      // Later parser-blocking scripts define the dashboard's tab handlers.
+      // Wait until all parser-blocking scripts have defined the dashboard tab handlers.
       document.addEventListener('DOMContentLoaded', initAuth, { once: true });
