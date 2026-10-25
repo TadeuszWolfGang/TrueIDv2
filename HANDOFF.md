@@ -1,8 +1,8 @@
 # HANDOFF — browser login compatibility
 
 ## Phase
-POST-REALIZATION — login fixes and container build recipe independently
-reviewed; real browser acceptance and Docker CI execution are pending.
+POST-REALIZATION — login fixes, container build recipe and connector CA-bundle
+update independently reviewed; deployment/CI evidence belongs to the coordinator.
 
 ## Last action
 Codex reproduced a second login defect in the real Axum router: separate HTTP/2
@@ -83,6 +83,35 @@ available, so image build and container runtime results remain pending CI.
 The HTTPS smoke establishes startup/TLS compatibility; it does not claim
 engine connectivity or a complete login flow.
 
+## Python CA-bundle security update
+Triage: critical advisory, small effort. Dependabot alert #13 identifies
+[GHSA-6q48-6c7w-9gw2](https://github.com/advisories/GHSA-6q48-6c7w-9gw2):
+certifi before 2026.10.19 trusts an emSign root with compromised intermediate
+keys, allowing an on-path attacker with such a key to impersonate TLS hosts.
+
+`uv lock --project integrations/sycope --upgrade-package certifi --no-python-downloads`
+updated only certifi from 2026.7.22 to 2026.10.23. This is the latest compatible
+[PyPI release](https://pypi.org/project/certifi/2026.10.23/), supporting Python
+>=3.7. Wheel and sdist URLs, SHA256 hashes and sizes match the PyPI JSON API.
+All other packages, lock revision 3, project metadata and Rust sources are
+unchanged. No new dependency or advisory exception was added.
+
+Existing [Dependabot PR #40](https://github.com/TadeuszWolfGang/TrueIDv2/pull/40)
+addresses the same advisory with 2026.10.19; this checkpoint uses the newer fixed
+release. PR #40 was inspected without modifying, merging or closing it.
+
+Validation passed: `uv lock --check --offline`, 18 offline connector tests, and
+an import check confirming certifi 2026.10.23 with the affected emSign ECC G3
+root absent from its bundle. Discovery found 20 tests; the 2 live TrueID tests
+were intentionally skipped and handed to the coordinator with the updated
+disposable environment. Independent review found no blocker. Logs and PyPI
+metadata proof are in `../validation-full-20261025/certifi-*`.
+
+The connector Dockerfile already uses frozen uv sync, so the lock update is
+sufficient for future builds. Existing environments/images require refresh;
+the local disposable test environment was synced. This checkpoint does not
+claim the default-branch Dependabot alert is closed before merge.
+
 ## Open questions / risks
 - HTTP_2 + oneshot tests exercise HeaderMap/router behavior; deployed TLS/ALPN
   and browser acceptance provide the transport proof after deployment.
@@ -120,4 +149,17 @@ set -euo pipefail
 docker buildx build --platform linux/amd64 --target runtime --load -t trueid-runtime:glibc236 .
 ruby -ryaml -e 'puts YAML.load_file(ARGV[0]).fetch("jobs").fetch("glibc-compat").fetch("steps").find { |step| step["name"] == "Smoke test native HTTPS web" }.fetch("run")' \
   .github/workflows/glibc-compat.yml | bash
+```
+
+Connector reproduction (Python 3.11 is selected from `.python-version`; this
+creates a separate test environment and skips live tests explicitly):
+
+```bash
+UV_PROJECT_ENVIRONMENT="$(pwd)/../validation-full-20261025/sycope-python-env" \
+  uv sync --frozen --project integrations/sycope --no-python-downloads
+uv lock --check --offline --project integrations/sycope --no-python-downloads
+env -u TRUEID_TEST_URL -u TRUEID_TEST_API_KEY \
+  UV_PROJECT_ENVIRONMENT="$(pwd)/../validation-full-20261025/sycope-python-env" \
+  uv run --offline --frozen --no-env-file --project integrations/sycope \
+  python -m unittest discover -s integrations/sycope/tests -p 'test_*.py' -v
 ```
