@@ -1,28 +1,63 @@
 # HANDOFF — browser login compatibility
 
-## Sycope SDK security follow-up — planning checkpoint
+## Sycope SDK security follow-up
 
-Phase: PLANNING. The operator authorized the existing SDK security findings and
-offline fixes. This follow-up touches only Python source/tests and this handoff;
-the coordinator owns live validation and all deployment operations.
+Phase: POST-REALIZATION. Planning checkpoint: `25ef207`. The operator authorized
+the existing SDK security findings and offline fixes. This follow-up touches
+only Python source/tests and this handoff; the coordinator owns live validation
+and all deployment operations.
 
 Triage:
 - Type: Security; severity High; priority P1; effort M (2 hours to 1 day).
 - Root cause: five explicit `verify=False` overrides disable the supplied
   Requests session's CA policy; login accepts HTTP, requests have no finite
   timeout, and DEBUG logs expose session material and credential aliases.
-- Affected areas: `sycope/api.py`, `sycope/config.py`, connector offline tests.
+- Affected areas: `sycope/api.py`, `sycope/config.py`, connector entrypoints,
+  the TrueID mapping-read debug log, and connector offline tests.
 - Smallest fix: preserve Requests' existing CA/session/environment behavior,
   require HTTPS before requests, disable credential-bearing redirects, bound
   connect/read waits, and remove or redact sensitive logging.
 - No dependency, public signature, authentication protocol, config key, schema,
   or architecture change is required. No new advisory exception is proposed.
 
-Plan: add regression tests and capture RED, make the minimal source changes,
-then run every offline connector test and obtain an independent read-only review.
+Implemented:
+- Login and all four request methods omit `verify`, preserving the supplied
+  Requests session's verification policy and environment CA bundle handling.
+- HTTP/invalid URLs and embedded URL credentials are rejected before sending;
+  redirects are disabled and 3xx responses fail closed, including HTTPS-to-HTTP
+  redirects that could otherwise resend a login password.
+- All five request paths use 5-second connect and 30-second read timeouts.
+- Authentication and operational payload/body/row samples, response headers,
+  cookies, and NQL text are no longer logged. SDK errors do not echo raw server
+  messages or attach response bodies; numeric API status metadata is retained.
+  The TrueID read wrapper no longer logs a complete mapping sample. Config
+  credential aliases, nested objects, defaults, and URL userinfo are redacted.
+- The three connector entrypoints no longer suppress TLS warnings globally;
+  the existing public logging helper remains available and unchanged.
+
+Validation:
+- RED: 14 initial security tests failed with 21 failing assertions/subtests on
+  the previous source (`../validation-full-20261025/sycope-sdk-red.log`).
+- GREEN: exact discovery below found 38 tests: 36 passed and 2 live TrueID
+  tests were explicitly skipped. This includes 18 new SDK/config regressions
+  and all 18 existing offline connector tests. URL-userinfo validation/accessor
+  coverage addresses a finding from independent read-only review. Additional
+  table-driven canary tests cover successful and failed operations without
+  logging payloads or exposing server body text through exceptions.
+- Requests use mocked transports and fake credentials only. No network, lab,
+  appliance, or actual Hermes operation was executed by this lane.
+- Python 3.11.15 and certifi 2026.10.23 were used. No lock or dependency changed.
+- Independent read-only review of the final source/test diff returned GO with
+  no blocker. The coordinator's separate `app.js` comment-only change is not
+  part of this SDK checkpoint.
+- Log: `../validation-full-20261025/sycope-sdk-offline.log`.
+
 Existing private-CA deployments must supply their trusted CA through their
-Requests session or `REQUESTS_CA_BUNDLE`; no insecure fallback will be added.
-Live Sycope behavior and the two live TrueID tests remain coordinator checks.
+Requests session or `REQUESTS_CA_BUNDLE`; there is no insecure fallback. The
+coordinator still needs to run the two live TrueID reads and real local TLS
+acceptance for trusted/untrusted CA and redirect rejection. This does not claim
+a live Sycope appliance deployment. Method/operation/status and bounded-count
+metadata remain available; no generic arbitrary-data redactor is introduced.
 
 Ready-to-run command (repository root):
 Prerequisites:
