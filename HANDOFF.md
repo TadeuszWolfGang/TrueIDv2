@@ -1,8 +1,8 @@
 # HANDOFF — browser login compatibility
 
 ## Phase
-POST-REALIZATION — both defects fixed and independently reviewed; deployment
-acceptance in the real HTTPS browser is pending.
+POST-REALIZATION — login fixes and container build recipe independently
+reviewed; real browser acceptance and Docker CI execution are pending.
 
 ## Last action
 Codex reproduced a second login defect in the real Axum router: separate HTTP/2
@@ -58,6 +58,31 @@ missing or incorrect tokens. Run the live auth/RBAC suite against a disposable
 instance using the updated binary. Deployment and GitHub publication remain
 owned by the operator's coordinating session.
 
+## Container build reproducibility
+The former Docker build selected engine and web together, unifying the engine's
+Rustls ring feature with web's aws-lc provider. Native HTTPS could then panic
+before serving requests because Rustls could not choose a CryptoProvider.
+
+The Dockerfile now builds engine/CLI/probe first, then explicitly selects only
+`trueid-web` in a separate release/locked invocation before copying artifacts.
+Application sources and Cargo.lock remain identical to checkpoint
+`c964583bf6de1d7d140748001b9262646a957586`.
+
+The existing glibc workflow retains its engine checks and adds a native HTTPS
+web startup smoke. It generates an ephemeral EC CA and an IP-SAN server
+certificate, supplies production secrets via a mode-0600 temporary env file,
+uses the image's default nonroot UID 65532, and checks CA-verified `/health`
+returns exactly 200. TLS material is mounted read-only. Cleanup removes the
+container, temporary credentials and keys, including on failure.
+
+Local validation passed: workflow YAML parsing, Bash syntax for all 7 run steps,
+POSIX shell syntax for all 6 Docker RUN commands, actual OpenSSL certificate
+chain/IP verification, 3 Node tests, CSP policy and `git diff --check`.
+Independent read-only review found no blocker. No local Docker daemon is
+available, so image build and container runtime results remain pending CI.
+The HTTPS smoke establishes startup/TLS compatibility; it does not claim
+engine connectivity or a complete login flow.
+
 ## Open questions / risks
 - HTTP_2 + oneshot tests exercise HeaderMap/router behavior; deployed TLS/ALPN
   and browser acceptance provide the transport proof after deployment.
@@ -84,4 +109,15 @@ node --test scripts/test-dashboard-bootstrap.cjs
 python3 scripts/check-csp-assets.py
 cargo build --locked -p trueid-web --bin trueid-web
 git diff --check
+```
+
+Container CI reproduction (not executed locally): requires a Linux Docker
+Buildx daemon, OpenSSL, curl, Ruby/YAML and passwordless sudo, as on the hosted
+runner. The extraction below runs the exact smoke body maintained in CI.
+
+```bash
+set -euo pipefail
+docker buildx build --platform linux/amd64 --target runtime --load -t trueid-runtime:glibc236 .
+ruby -ryaml -e 'puts YAML.load_file(ARGV[0]).fetch("jobs").fetch("glibc-compat").fetch("steps").find { |step| step["name"] == "Smoke test native HTTPS web" }.fetch("run")' \
+  .github/workflows/glibc-compat.yml | bash
 ```
