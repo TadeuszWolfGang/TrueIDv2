@@ -12,9 +12,9 @@ use sqlx::Row;
 use tracing::warn;
 
 use crate::auth::{
-    build_auth_cookie, build_clear_cookie, build_csrf_cookie, create_access_token, extract_cookie,
-    generate_csrf_token, generate_refresh_token, COOKIE_NAME, CSRF_COOKIE_NAME,
-    REFRESH_COOKIE_NAME, REFRESH_TOKEN_TTL,
+    build_auth_cookie, build_clear_cookie, build_csrf_cookie, create_access_token,
+    extract_cookie_from_headers, generate_csrf_token, generate_refresh_token, COOKIE_NAME,
+    CSRF_COOKIE_NAME, REFRESH_COOKIE_NAME, REFRESH_TOKEN_TTL,
 };
 use crate::error::{self, ApiError};
 use crate::helpers;
@@ -90,7 +90,7 @@ fn client_ip(
     )
 }
 
-// extract_cookie is imported from crate::auth
+// Cookie extraction is shared with the authentication middleware.
 
 /// Builds the three Set-Cookie headers for login/refresh.
 fn auth_cookies(
@@ -345,11 +345,7 @@ pub async fn logout(
     let ip = client_ip(&headers, connect_info.as_deref(), &state);
 
     // Revoke the specific refresh session.
-    let cookie_header = headers
-        .get(header::COOKIE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    if let Some(rt) = extract_cookie(cookie_header, REFRESH_COOKIE_NAME) {
+    if let Some(rt) = extract_cookie_from_headers(&headers, REFRESH_COOKIE_NAME) {
         let hash = sha256_hex(rt);
         if let Ok(Some(session)) = db.get_session_by_token_hash(&hash).await {
             let _ = db.revoke_session(session.id).await;
@@ -432,11 +428,7 @@ pub async fn refresh(
 
     let db = helpers::require_db(&state, &rid)?;
 
-    let cookie_header = headers
-        .get(header::COOKIE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    let rt = extract_cookie(cookie_header, REFRESH_COOKIE_NAME).ok_or_else(|| {
+    let rt = extract_cookie_from_headers(&headers, REFRESH_COOKIE_NAME).ok_or_else(|| {
         ApiError::new(
             StatusCode::UNAUTHORIZED,
             error::AUTH_REQUIRED,
@@ -762,11 +754,7 @@ pub async fn list_sessions(
     })?;
 
     // Determine current session by refresh token hash.
-    let cookie_header = headers
-        .get(header::COOKIE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    let current_hash = extract_cookie(cookie_header, REFRESH_COOKIE_NAME).map(sha256_hex);
+    let current_hash = extract_cookie_from_headers(&headers, REFRESH_COOKIE_NAME).map(sha256_hex);
 
     let infos: Vec<SessionInfo> = sessions
         .iter()
@@ -813,11 +801,7 @@ pub async fn revoke_session(
     };
 
     // Check not revoking current session.
-    let cookie_header = headers
-        .get(header::COOKIE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    if let Some(rt) = extract_cookie(cookie_header, REFRESH_COOKIE_NAME) {
+    if let Some(rt) = extract_cookie_from_headers(&headers, REFRESH_COOKIE_NAME) {
         let hash = sha256_hex(rt);
         if sessions
             .iter()
