@@ -8,12 +8,37 @@ for indexes and lookups.
 
 import logging
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlsplit
 
 import requests
 
 from .exceptions import SycopeApiError, SycopeAuthError
 
 logger = logging.getLogger(__name__)
+_REQUEST_TIMEOUT = (5, 30)
+
+
+def _is_https_url(url: str) -> bool:
+    """Validate transport before sending credentials or session cookies."""
+    try:
+        parsed = urlsplit(url)
+        parsed.port  # Reject malformed or out-of-range ports.
+        return (
+            parsed.scheme == "https"
+            and bool(parsed.hostname)
+            and parsed.username is None
+            and parsed.password is None
+            and not any(character.isspace() for character in parsed.netloc)
+            and not any(character in url for character in "\r\n\t")
+        )
+    except ValueError:
+        return False
+
+
+def _status_code(data: Dict[str, Any]) -> Optional[int]:
+    """Keep numeric API status metadata without echoing arbitrary response text."""
+    status = data.get("status")
+    return status if type(status) is int else None
 
 
 class SycopeApi:
@@ -63,42 +88,40 @@ class SycopeApi:
         self.api_endpoint = api_endpoint if api_endpoint.endswith("/") else f"{api_endpoint}/"
         self.api_endpoint_lookup = api_endpoint_lookup
 
-        logger.debug(f"Initializing SycopeApi with host={self.host}")
-        logger.debug(f"API endpoint: {self.api_endpoint}")
-        logger.debug(f"Lookup endpoint: {self.api_endpoint_lookup}")
-        logger.debug(f"Authenticating user: {login}")
+        if not _is_https_url(self.host):
+            raise SycopeAuthError("Sycope requires a valid HTTPS URL without embedded credentials")
+        logger.debug("Initializing SycopeApi")
 
         # Authenticate
         payload = {"username": login, "password": password}
         login_url = f"{self.host}/npm/api/v1/login"
-        logger.debug(f"POST {login_url}")
-        logger.debug(f"Request payload: username={login}, password=***")
+        logger.debug("Authenticating to Sycope API")
 
         try:
             response = session.post(
                 login_url,
                 json=payload,
-                verify=False,
+                timeout=_REQUEST_TIMEOUT,
+                allow_redirects=False,
             )
             logger.debug(f"Response status code: {response.status_code}")
-            logger.debug(f"Response headers: {dict(response.headers)}")
+            if 300 <= response.status_code < 400:
+                raise SycopeAuthError("Sycope login redirects are not allowed")
             data = response.json()
-            logger.debug(f"Response body: {data}")
         except requests.RequestException as e:
-            logger.debug(f"Connection error: {e}")
-            raise SycopeAuthError(f"Failed to connect to Sycope API: {e}")
-        except ValueError as e:
-            logger.debug(f"JSON decode error: {e}")
-            logger.debug(f"Raw response text: {response.text[:500] if hasattr(response, 'text') else 'N/A'}")
-            raise SycopeAuthError(f"Invalid response from Sycope API: {e}")
+            logger.debug("Sycope login request failed (%s)", type(e).__name__)
+            raise SycopeAuthError("Failed to connect to Sycope API") from None
+        except ValueError:
+            logger.debug("Invalid JSON response from Sycope login")
+            raise SycopeAuthError("Invalid response from Sycope API") from None
 
+        if not isinstance(data, dict):
+            raise SycopeAuthError("Invalid response from Sycope API")
         if data.get("status") != 200:
-            error_msg = data.get("message", "Unknown error")
-            logger.debug(f"Login failed with status {data.get('status')}: {error_msg}")
-            raise SycopeAuthError(f"Login failed: {error_msg}")
+            logger.debug("Sycope rejected authentication")
+            raise SycopeAuthError("Login failed")
 
         logger.info("Login to Sycope API successful")
-        logger.debug(f"Session cookies: {dict(session.cookies)}")
 
     def _make_request(
         self,
@@ -119,41 +142,28 @@ class SycopeApi:
         Returns:
             Response object
         """
-        logger.debug(f"--- {operation_name} ---")
-        logger.debug(f"{method} {url}")
-        if json_payload:
-            # Truncate large payloads for logging
-            payload_str = str(json_payload)
-            if len(payload_str) > 1000:
-                logger.debug(f"Request payload (truncated): {payload_str[:1000]}...")
-                logger.debug(f"Full payload size: {len(payload_str)} chars")
-            else:
-                logger.debug(f"Request payload: {json_payload}")
+        if not _is_https_url(url):
+            raise SycopeApiError("Sycope requires a valid HTTPS URL without embedded credentials")
+        logger.debug("Sycope API request: %s", method)
 
         if method == "GET":
-            response = self.session.get(url, verify=False)
+            response = self.session.get(url, timeout=_REQUEST_TIMEOUT, allow_redirects=False)
         elif method == "POST":
-            response = self.session.post(url, json=json_payload, verify=False)
+            response = self.session.post(
+                url, json=json_payload, timeout=_REQUEST_TIMEOUT, allow_redirects=False
+            )
         elif method == "PUT":
-            response = self.session.put(url, json=json_payload, verify=False)
+            response = self.session.put(
+                url, json=json_payload, timeout=_REQUEST_TIMEOUT, allow_redirects=False
+            )
         elif method == "DELETE":
-            response = self.session.delete(url, verify=False)
+            response = self.session.delete(url, timeout=_REQUEST_TIMEOUT, allow_redirects=False)
         else:
             raise ValueError(f"Unsupported HTTP method: {method}")
 
         logger.debug(f"Response status code: {response.status_code}")
-        logger.debug(f"Response headers: {dict(response.headers)}")
-
-        # Log response body with truncation for large responses
-        try:
-            response_text = response.text
-            if len(response_text) > 2000:
-                logger.debug(f"Response body (truncated): {response_text[:2000]}...")
-                logger.debug(f"Full response size: {len(response_text)} chars")
-            else:
-                logger.debug(f"Response body: {response_text}")
-        except Exception as e:
-            logger.debug(f"Could not log response body: {e}")
+        if 300 <= response.status_code < 400:
+            raise SycopeApiError("Sycope API redirects are not allowed", status_code=response.status_code)
 
         return response
 
@@ -186,11 +196,8 @@ class SycopeApi:
         try:
             all_data = response.json().get("data", [])
             logger.debug(f"Found {len(all_data) if isinstance(all_data, list) else 0} custom indexes")
-            if all_data and isinstance(all_data, list):
-                for idx in all_data:
-                    logger.debug(f"  Index: id={idx.get('id')}, name={idx.get('config', {}).get('name')}")
-        except ValueError as e:
-            logger.debug(f"JSON decode error: {e}")
+        except ValueError:
+            logger.debug("Invalid JSON response")
             raise SycopeApiError("Invalid JSON response when fetching indexes")
 
         return all_data if isinstance(all_data, list) else []
@@ -212,13 +219,8 @@ class SycopeApi:
         try:
             all_data = response.json().get("data", [])
             logger.debug(f"Found {len(all_data) if isinstance(all_data, list) else 0} lookups")
-            if all_data and isinstance(all_data, list):
-                for lookup in all_data[:10]:  # Log first 10 to avoid spam
-                    logger.debug(f"  Lookup: id={lookup.get('id')}, name={lookup.get('config', {}).get('name')}")
-                if len(all_data) > 10:
-                    logger.debug(f"  ... and {len(all_data) - 10} more lookups")
-        except ValueError as e:
-            logger.debug(f"JSON decode error: {e}")
+        except ValueError:
+            logger.debug("Invalid JSON response")
             raise SycopeApiError("Invalid JSON response when fetching lookups")
 
         return all_data if isinstance(all_data, list) else []
@@ -264,9 +266,8 @@ class SycopeApi:
 
         try:
             saved_lookup = response.json()
-            logger.debug(f"Retrieved lookup data: keys={list(saved_lookup.keys()) if isinstance(saved_lookup, dict) else 'not a dict'}")
-        except ValueError as e:
-            logger.error(f"Invalid JSON response for lookup {lookup_id}: {e}")
+        except ValueError:
+            logger.error("Invalid JSON response when fetching lookup")
             return "0", {}
 
         if isinstance(saved_lookup, dict):
@@ -294,30 +295,25 @@ class SycopeApi:
             SycopeApiError: If the API request fails
         """
         logger.debug(f"Creating lookup: {lookup_name}")
-        logger.debug(f"Lookup configuration keys: {list(lookup.keys())}")
 
         url = f"{self.host}{self.api_endpoint}{self.api_endpoint_lookup}"
         response = self._make_request("POST", url, json_payload=lookup, operation_name=f"Create lookup {lookup_name}")
 
         try:
             data = response.json()
-        except ValueError as e:
-            logger.debug(f"JSON decode error: {e}")
+        except ValueError:
+            logger.debug("Invalid JSON response")
             raise SycopeApiError("Invalid JSON response when creating lookup")
 
         if data.get("status") == 200:
             lookup_id = data.get("id", "0")
             logger.info(f'New Lookup "{lookup_name}" with ID "{lookup_id}" has been created')
-            logger.debug(f"Create lookup response: {data}")
             return lookup_id
 
-        error_msg = data.get("message", "Unknown error")
-        logger.error(f"Failed to create lookup: {error_msg}")
-        logger.debug(f"Error response: {data}")
+        logger.error("Failed to create lookup")
         raise SycopeApiError(
-            f"Failed to create lookup: {error_msg}",
-            status_code=data.get("status"),
-            response=data,
+            "Failed to create lookup",
+            status_code=_status_code(data),
         )
 
     def edit_lookup(
@@ -338,7 +334,6 @@ class SycopeApi:
             SycopeApiError: If the API request fails
         """
         logger.debug(f"Editing lookup: id={lookup_id}, type={lookup_type}")
-        logger.debug(f"Updated lookup configuration keys: {list(lookup.keys())}")
 
         # Determine endpoint based on lookup type
         if lookup_type == "subnet":
@@ -352,22 +347,18 @@ class SycopeApi:
 
         try:
             data = response.json()
-        except ValueError as e:
-            logger.debug(f"JSON decode error: {e}")
+        except ValueError:
+            logger.debug("Invalid JSON response")
             raise SycopeApiError("Invalid JSON response when editing lookup")
 
         if data.get("status") == 200:
             logger.info(f'Data in the Lookup ID "{lookup_id}" has been successfully modified')
-            logger.debug(f"Edit lookup response: {data}")
             return
 
-        error_msg = data.get("message", "Unknown error")
-        logger.error(f"Failed to edit lookup: {error_msg}")
-        logger.debug(f"Error response: {data}")
+        logger.error("Failed to edit lookup")
         raise SycopeApiError(
-            f"Failed to edit lookup: {error_msg}",
-            status_code=data.get("status"),
-            response=data,
+            "Failed to edit lookup",
+            status_code=_status_code(data),
         )
 
     def privacy_check_lookup(self, lookup_id: str) -> str:
@@ -388,19 +379,15 @@ class SycopeApi:
         try:
             response = self._make_request("GET", url, operation_name=f"Check privacy for lookup {lookup_id}")
             data = response.json()
-            logger.debug(f"Privacy response: {data}")
         except Exception as e:
-            logger.error(f"Could not get privacy configuration: {e}")
-            logger.debug(f"Exception details: {type(e).__name__}: {e}")
+            logger.error("Could not get privacy configuration (%s)", type(e).__name__)
             return ""
 
         if not data or data.get("objectId") != lookup_id:
             logger.error("Invalid privacy response")
-            logger.debug(f"Expected objectId={lookup_id}, got objectId={data.get('objectId') if data else 'None'}")
             return ""
 
         saved_perms = data.get("sidPerms", [])
-        logger.debug(f"Saved permissions: {saved_perms}")
 
         # Definition for Public Privacy
         public_perms = [{"sid": "ROLE_USER", "perms": ["VIEW"]}]
@@ -418,7 +405,6 @@ class SycopeApi:
                 f'Could not identify privacy configuration for Lookup ID "{lookup_id}". '
                 "Custom Shared Privacy may be in use."
             )
-            logger.debug(f"Unknown permission configuration: {saved_perms}")
             return ""
 
     def privacy_edit_lookup(
@@ -459,15 +445,14 @@ class SycopeApi:
             logger.debug(f"Invalid privacy option: {lookup_privacy}")
             raise ValueError(f"Unsupported privacy option: {lookup_privacy}. Use 'Public' or 'Private'.")
 
-        logger.debug(f"Target permissions: {target_perms}")
 
         url = f"{self.host}{self.api_endpoint}permissions/CONFIGURATION.lookup.lookup/{lookup_id}"
         response = self._make_request("PUT", url, json_payload=target_perms, operation_name=f"Edit privacy for lookup {lookup_id}")
 
         try:
             data = response.json()
-        except ValueError as e:
-            logger.debug(f"JSON decode error: {e}")
+        except ValueError:
+            logger.debug("Invalid JSON response")
             raise SycopeApiError("Invalid JSON response when editing privacy")
 
         if data.get("sidPerms") == target_perms:
@@ -475,10 +460,8 @@ class SycopeApi:
             return
 
         logger.error(f"Failed to change privacy for lookup {lookup_id}")
-        logger.debug(f"Expected sidPerms={target_perms}, got {data.get('sidPerms')}")
         raise SycopeApiError(
             f"Failed to change privacy to {lookup_privacy}",
-            response=data,
         )
 
     def create_index(
@@ -505,8 +488,6 @@ class SycopeApi:
         logger.debug(f"Creating index: {stream_name}")
         logger.debug(f"Index parameters: rotation={rotation}, active={active}, store_raw={store_raw}")
         logger.debug(f"Number of fields: {len(fields)}")
-        for i, field in enumerate(fields):
-            logger.debug(f"  Field {i}: {field}")
 
         payload = {
             "name": stream_name,
@@ -521,22 +502,18 @@ class SycopeApi:
 
         try:
             data = response.json()
-        except ValueError as e:
-            logger.debug(f"JSON decode error: {e}")
+        except ValueError:
+            logger.debug("Invalid JSON response")
             raise SycopeApiError("Invalid JSON response when creating index")
 
         if data.get("status") == 200:
             logger.info(f'New custom index "{stream_name}" has been created')
-            logger.debug(f"Create index response: {data}")
             return
 
-        error_msg = data.get("message", "Unknown error")
-        logger.error(f"Failed to create index: {error_msg}")
-        logger.debug(f"Error response: {data}")
+        logger.error("Failed to create index")
         raise SycopeApiError(
-            f"Failed to create index: {error_msg}",
-            status_code=data.get("status"),
-            response=data,
+            "Failed to create index",
+            status_code=_status_code(data),
         )
 
     def remove_index(self, index_name: str) -> None:
@@ -561,29 +538,24 @@ class SycopeApi:
 
         index_id = matching[0]["id"]
         logger.info(f'Found custom index "{index_name}" with ID "{index_id}"')
-        logger.debug(f"Full index data: {matching[0]}")
 
         url = f"{self.host}{self.api_endpoint}config-element-index/user-index/{index_id}"
         response = self._make_request("DELETE", url, operation_name=f"Remove index {index_name}")
 
         try:
             data = response.json()
-        except ValueError as e:
-            logger.debug(f"JSON decode error: {e}")
+        except ValueError:
+            logger.debug("Invalid JSON response")
             raise SycopeApiError("Invalid JSON response when removing index")
 
         if data.get("status") == 200:
             logger.info(f'Custom index "{index_name}" has been successfully removed')
-            logger.debug(f"Remove index response: {data}")
             return
 
-        error_msg = data.get("message", "Unknown error")
-        logger.error(f"Failed to remove index: {error_msg}")
-        logger.debug(f"Error response: {data}")
+        logger.error("Failed to remove index")
         raise SycopeApiError(
-            f"Failed to remove index '{index_name}': {error_msg}",
-            status_code=data.get("status"),
-            response=data,
+            "Failed to remove index",
+            status_code=_status_code(data),
         )
 
     def delete_lookup(
@@ -623,22 +595,18 @@ class SycopeApi:
 
         try:
             data = response.json()
-        except ValueError as e:
-            logger.debug(f"JSON decode error: {e}")
+        except ValueError:
+            logger.debug("Invalid JSON response")
             raise SycopeApiError("Invalid JSON response when deleting lookup")
 
         if data.get("status") == 200:
             logger.info(f'Lookup "{lookup_name}" has been successfully deleted')
-            logger.debug(f"Delete lookup response: {data}")
             return
 
-        error_msg = data.get("message", "Unknown error")
-        logger.error(f"Failed to delete lookup: {error_msg}")
-        logger.debug(f"Error response: {data}")
+        logger.error("Failed to delete lookup")
         raise SycopeApiError(
-            f"Failed to delete lookup '{lookup_name}': {error_msg}",
-            status_code=data.get("status"),
-            response=data,
+            "Failed to delete lookup",
+            status_code=_status_code(data),
         )
 
     def inject_data(
@@ -671,14 +639,8 @@ class SycopeApi:
             ... )
         """
         logger.debug(f"Injecting data into index: {index_name}")
-        logger.debug(f"Columns: {columns}")
         logger.debug(f"Number of rows: {len(rows)}")
         logger.debug(f"Sort timestamp: {sort_timestamp}")
-
-        if rows:
-            logger.debug(f"First row sample: {rows[0]}")
-            if len(rows) > 1:
-                logger.debug(f"Last row sample: {rows[-1]}")
 
         if not rows:
             logger.info("No data to inject (empty rows)")
@@ -699,22 +661,18 @@ class SycopeApi:
 
         try:
             data = response.json()
-        except ValueError as e:
-            logger.debug(f"JSON decode error: {e}")
+        except ValueError:
+            logger.debug("Invalid JSON response")
             raise SycopeApiError("Invalid JSON response when injecting data")
 
         if data.get("status") == 200:
             logger.info(f"Successfully injected {len(rows)} rows into '{index_name}'")
-            logger.debug(f"Inject data response: {data}")
             return data
 
-        error_msg = data.get("message", "Unknown error")
-        logger.error(f"Failed to inject data: {error_msg}")
-        logger.debug(f"Error response: {data}")
+        logger.error("Failed to inject data")
         raise SycopeApiError(
-            f"Failed to inject data into '{index_name}': {error_msg}",
-            status_code=data.get("status"),
-            response=data,
+            "Failed to inject data",
+            status_code=_status_code(data),
         )
 
     def run_query(
@@ -753,7 +711,6 @@ class SycopeApi:
             >>> total = result['data']['total']
         """
         logger.debug(f"Running NQL query")
-        logger.debug(f"NQL: {nql}")
         logger.debug(f"Time range: {start_time} to {end_time}")
         logger.debug(f"Query parameters: limit={limit}, wait_time={wait_time}, fs_active={fs_active}")
 
@@ -766,35 +723,27 @@ class SycopeApi:
             "limit": limit,
         }
 
-        logger.info(f"Running NQL query: {nql[:100]}...")
+        logger.info("Running NQL query")
 
         url = f"{self.host}{self.api_endpoint}pipeline/run"
         response = self._make_request("POST", url, json_payload=payload, operation_name="Run NQL query")
 
         try:
             data = response.json()
-        except ValueError as e:
-            logger.debug(f"JSON decode error: {e}")
+        except ValueError:
+            logger.debug("Invalid JSON response")
             raise SycopeApiError("Invalid JSON response when running query")
 
         if "jobId" not in data:
-            error_msg = data.get("message", "Unknown error - no jobId in response")
-            logger.error(f"Query failed: {error_msg}")
-            logger.debug(f"Error response: {data}")
-            raise SycopeApiError(
-                f"Query failed: {error_msg}",
-                response=data,
-            )
+            logger.error("Query failed: no jobId in response")
+            raise SycopeApiError("Query failed: no jobId in response")
 
         job_id = data["jobId"]
         total = data.get("data", {}).get("total", "unknown")
-        columns = data.get("data", {}).get("columns", [])
 
         logger.info(f"Query started, jobId: {job_id}, total results: {total}")
         logger.debug(f"Query job ID: {job_id}")
         logger.debug(f"Total results: {total}")
-        logger.debug(f"Result columns: {columns}")
-        logger.debug(f"Full query response keys: {list(data.keys())}")
 
         return data
 
@@ -839,23 +788,16 @@ class SycopeApi:
 
         try:
             data = response.json()
-        except ValueError as e:
-            logger.debug(f"JSON decode error: {e}")
+        except ValueError:
+            logger.debug("Invalid JSON response")
             raise SycopeApiError("Invalid JSON response when fetching query results")
 
         if "data" not in data:
-            error_msg = data.get("message", "Unknown error - no data in response")
-            logger.error(f"Failed to fetch results: {error_msg}")
-            logger.debug(f"Error response: {data}")
-            raise SycopeApiError(
-                f"Failed to fetch query results: {error_msg}",
-                response=data,
-            )
+            logger.error("Failed to fetch results: no data in response")
+            raise SycopeApiError("Failed to fetch query results: no data in response")
 
         result_count = len(data["data"]) if isinstance(data["data"], list) else 0
         logger.debug(f"Fetched {result_count} results")
-        if result_count > 0:
-            logger.debug(f"First result sample: {data['data'][0]}")
 
         return data
 
@@ -893,7 +835,6 @@ class SycopeApi:
             >>> print(f"Found {len(results)} records")
         """
         logger.debug(f"query_all_results called")
-        logger.debug(f"NQL: {nql}")
         logger.debug(f"Time range: {start_time} to {end_time}")
         logger.debug(f"Page size: {page_size}")
 

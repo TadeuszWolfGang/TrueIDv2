@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 from sycope.api import SycopeApi
 from sycope.config import load_config
 from sycope.exceptions import SycopeError
-from sycope.logging import setup_logging, suppress_ssl_warnings
+from sycope.logging import setup_logging
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "config.json")
@@ -36,7 +36,6 @@ EVENT_INDEX_FIELDS = [
 
 def main() -> None:
     """Create the TrueID events Custom Index in Sycope."""
-    suppress_ssl_warnings()
     setup_logging("trueid_install.log")
 
     cfg = load_config(

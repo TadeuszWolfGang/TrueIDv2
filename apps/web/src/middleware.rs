@@ -13,7 +13,9 @@ use axum::{
 };
 use tracing::warn;
 
-use crate::auth::{self, extract_cookie, validate_token, COOKIE_NAME, CSRF_COOKIE_NAME};
+use crate::auth::{
+    self, extract_cookie_from_headers, validate_token, COOKIE_NAME, CSRF_COOKIE_NAME,
+};
 use crate::error::{self, ApiError};
 use crate::helpers;
 use crate::AppState;
@@ -85,13 +87,7 @@ where
         }
 
         // 2) Try JWT from cookie.
-        let cookie_header = parts
-            .headers
-            .get(header::COOKIE)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or("");
-
-        let token = extract_cookie(cookie_header, COOKIE_NAME);
+        let token = extract_cookie_from_headers(&parts.headers, COOKIE_NAME);
         let Some(token) = token else {
             return Err(ApiError::new(
                 StatusCode::UNAUTHORIZED,
@@ -151,8 +147,8 @@ where
         }
 
         // Session hardening checks (cookie auth only).
-        let refresh_token =
-            extract_cookie(cookie_header, auth::REFRESH_COOKIE_NAME).ok_or_else(|| {
+        let refresh_token = extract_cookie_from_headers(&parts.headers, auth::REFRESH_COOKIE_NAME)
+            .ok_or_else(|| {
                 ApiError::new(
                     StatusCode::UNAUTHORIZED,
                     error::AUTH_REQUIRED,
@@ -312,16 +308,9 @@ pub async fn csrf_guard(req: Request, next: Next) -> Result<Response, ApiError> 
         .map(|r| r.0.clone())
         .unwrap_or_default();
 
-    let cookie_header = req
-        .headers()
-        .get(header::COOKIE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string();
-
     // Only enforce CSRF if there is a cookie-based auth token present.
     // API key requests (no auth cookie) bypass CSRF.
-    let has_auth_cookie = extract_cookie(&cookie_header, auth::COOKIE_NAME).is_some();
+    let has_auth_cookie = extract_cookie_from_headers(req.headers(), auth::COOKIE_NAME).is_some();
     if !has_auth_cookie {
         return Ok(next.run(req).await);
     }
@@ -331,7 +320,7 @@ pub async fn csrf_guard(req: Request, next: Next) -> Result<Response, ApiError> 
         return Ok(next.run(req).await);
     }
 
-    let csrf_cookie = extract_cookie(&cookie_header, CSRF_COOKIE_NAME)
+    let csrf_cookie = extract_cookie_from_headers(req.headers(), CSRF_COOKIE_NAME)
         .unwrap_or("")
         .to_string();
     let csrf_header = req
@@ -473,4 +462,4 @@ pub async fn require_admin_layer(
     Ok(next.run(Request::from_parts(parts, body)).await)
 }
 
-// extract_cookie is imported from crate::auth
+// Cookie extraction is shared with the authentication routes.

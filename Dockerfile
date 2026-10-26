@@ -51,10 +51,12 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
 
 COPY . .
 
+# Build web separately so the engine's rustls ring provider is not unified into it.
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     set -eux; \
-    cargo build --release --locked --bin trueid-engine --bin trueid-web --bin trueid --bin trueid-probe; \
+    cargo build --release --locked -p trueid-engine -p trueid-cli --bin trueid-engine --bin trueid --bin trueid-probe; \
+    cargo build --release --locked -p trueid-web --bin trueid-web; \
     max_glibc="$(strings /src/target/release/trueid-engine | grep -o 'GLIBC_[0-9.]\+' | sort -Vu | tail -n 1)"; \
     echo "Detected max required glibc: ${max_glibc}"; \
     test -n "${max_glibc}"; \

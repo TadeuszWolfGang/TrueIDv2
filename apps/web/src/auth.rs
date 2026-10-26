@@ -194,6 +194,25 @@ pub fn extract_cookie<'a>(cookie_header: &'a str, name: &str) -> Option<&'a str>
     None
 }
 
+/// Finds a cookie across all Cookie fields, including HTTP/2 split fields.
+///
+/// RFC 9113 section 8.2.3 permits multiple Cookie fields. Searching each field
+/// in order preserves the first-match behavior of their `; ` concatenation.
+/// An unreadable field rejects extraction even when another field matched.
+pub(crate) fn extract_cookie_from_headers<'a>(
+    headers: &'a axum::http::HeaderMap,
+    name: &str,
+) -> Option<&'a str> {
+    let mut found = None;
+    for value in headers.get_all(axum::http::header::COOKIE) {
+        let field = value.to_str().ok()?;
+        if found.is_none() {
+            found = extract_cookie(field, name);
+        }
+    }
+    found
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,6 +245,42 @@ mod tests {
             locked_until: None,
             created_at: now,
             updated_at: now,
+        }
+    }
+
+    #[test]
+    fn cookie_fields_preserve_exact_names_values_and_first_match() {
+        for (fields, expected) in [
+            (
+                vec!["token_extra=no", "token=first=part", "token=later"],
+                Some("first=part"),
+            ),
+            (vec!["Token=upper", "token=", "token=later"], Some("")),
+            (vec!["other=value, token=not-a-separate-cookie"], None),
+        ] {
+            let mut headers = axum::http::HeaderMap::new();
+            for field in fields {
+                headers.append(axum::http::header::COOKIE, field.parse().unwrap());
+            }
+            assert_eq!(extract_cookie_from_headers(&headers, "token"), expected);
+        }
+    }
+
+    #[test]
+    fn unreadable_cookie_fields_fail_closed_before_or_after_a_match() {
+        for malformed_first in [true, false] {
+            let mut headers = axum::http::HeaderMap::new();
+            let invalid = axum::http::HeaderValue::from_bytes(&[0xff]).unwrap();
+            let valid = axum::http::HeaderValue::from_static("token=valid");
+            let fields = if malformed_first {
+                [invalid, valid]
+            } else {
+                [valid, invalid]
+            };
+            for field in fields {
+                headers.append(axum::http::header::COOKIE, field);
+            }
+            assert_eq!(extract_cookie_from_headers(&headers, "token"), None);
         }
     }
 

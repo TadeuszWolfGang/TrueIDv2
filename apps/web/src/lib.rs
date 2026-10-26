@@ -250,12 +250,9 @@ pub(crate) async fn auth_rate_limit_layer(
         return next.run(req).await;
     }
 
-    let cookie_header = req
-        .headers()
-        .get(axum::http::header::COOKIE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    if let Some(token) = crate::auth::extract_cookie(cookie_header, crate::auth::COOKIE_NAME) {
+    if let Some(token) =
+        crate::auth::extract_cookie_from_headers(req.headers(), crate::auth::COOKIE_NAME)
+    {
         if let Ok(claims) = crate::auth::validate_token(&state.jwt_config, token) {
             let rpm = 300_u32;
             let burst = 60_u32;

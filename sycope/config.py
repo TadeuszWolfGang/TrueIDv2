@@ -8,6 +8,7 @@ and validating that required fields are present.
 import json
 import logging
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlsplit
 
 from .exceptions import SycopeConfigError
 
@@ -15,6 +16,36 @@ logger = logging.getLogger(__name__)
 
 # Required fields for Sycope API connection
 SYCOPE_REQUIRED_FIELDS = ["sycope_host", "sycope_login", "sycope_pass"]
+
+
+def _loggable_value(key: str, value: Any) -> Any:
+    """Redact credential aliases, including nested configuration objects."""
+    normalized = "".join(character for character in key.casefold() if character.isalnum())
+    if normalized.endswith(("pass", "pwd", "key")) or any(
+        marker in normalized
+        for marker in (
+            "password", "passwd", "passphrase", "token", "secret",
+            "authorization", "credential", "cookie", "bearer",
+        )
+    ):
+        return "***REDACTED***"
+    if isinstance(value, dict):
+        return {
+            nested_key: _loggable_value(nested_key, nested_value)
+            for nested_key, nested_value in value.items()
+        }
+    if isinstance(value, (list, tuple, set)):
+        return f"[{len(value)} items]"
+    if isinstance(value, str):
+        try:
+            parsed = urlsplit(value)
+            if parsed.username is not None or parsed.password is not None:
+                return "***REDACTED URL***"
+        except ValueError:
+            return "***REDACTED URL***"
+        if len(value) > 100:
+            return f"{value[:100]}..."
+    return value
 
 
 def load_config(
@@ -73,16 +104,14 @@ def load_config(
 
     # Normalize Sycope host URL (strip whitespace and trailing slashes)
     if "sycope_host" in cfg:
-        original_host = cfg["sycope_host"]
         cfg["sycope_host"] = cfg["sycope_host"].strip().rstrip("/")
-        logger.debug(f"Normalized sycope_host: '{original_host}' -> '{cfg['sycope_host']}'")
+        logger.debug("Normalized sycope_host")
 
     # Normalize API base path (ensure leading/trailing slashes)
     if "api_base" in cfg:
-        original_api_base = cfg["api_base"]
         api_base = cfg["api_base"].strip().strip("/")
         cfg["api_base"] = f"/{api_base}/"
-        logger.debug(f"Normalized api_base: '{original_api_base}' -> '{cfg['api_base']}'")
+        logger.debug("Normalized api_base")
 
     # Validate required fields
     if required_fields:
@@ -111,14 +140,7 @@ def load_config(
     # Log configuration values (redact sensitive fields)
     logger.debug("Configuration values:")
     for key, value in cfg.items():
-        if key in ("sycope_pass", "password", "token", "api_key", "secret"):
-            logger.debug(f"  {key}: ***REDACTED***")
-        elif isinstance(value, (list, set)):
-            logger.debug(f"  {key}: [{len(value)} items]")
-        elif isinstance(value, str) and len(value) > 100:
-            logger.debug(f"  {key}: {value[:100]}...")
-        else:
-            logger.debug(f"  {key}: {value}")
+        logger.debug("  %s: %s", key, _loggable_value(key, value))
 
     logger.info(f"Loaded configuration from {path}")
     return cfg
@@ -145,7 +167,7 @@ def validate_sycope_config(cfg: Dict[str, Any]) -> None:
         )
 
     logger.debug("Sycope configuration validation passed")
-    logger.debug(f"  sycope_host: {cfg.get('sycope_host')}")
+    logger.debug("  sycope_host: %s", _loggable_value("sycope_host", cfg.get("sycope_host")))
     logger.debug(f"  sycope_login: {cfg.get('sycope_login')}")
     logger.debug(f"  sycope_pass: ***REDACTED***")
 
@@ -171,20 +193,19 @@ def get_config_value(
     Raises:
         SycopeConfigError: If required=True and key is missing
     """
-    logger.debug(f"Getting config value: key={key}, required={required}, default={default}")
+    logger.debug(
+        "Getting config value: key=%s, required=%s, default=%s",
+        key, required, _loggable_value(key, default),
+    )
 
     if key in cfg:
         value = cfg[key]
-        # Redact sensitive values in debug output
-        if key in ("sycope_pass", "password", "token", "api_key", "secret"):
-            logger.debug(f"Found {key}: ***REDACTED***")
-        else:
-            logger.debug(f"Found {key}: {value}")
+        logger.debug("Found %s: %s", key, _loggable_value(key, value))
         return value
 
     if required:
         logger.debug(f"Required configuration key missing: {key}")
         raise SycopeConfigError(f"Required configuration key missing: {key}")
 
-    logger.debug(f"Key {key} not found, using default: {default}")
+    logger.debug("Key %s not found, using default: %s", key, _loggable_value(key, default))
     return default

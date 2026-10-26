@@ -4,7 +4,7 @@
 //! No external server required — runs in `cargo test -p trueid-web`.
 
 use axum::body::Body;
-use axum::http::{HeaderMap, Request, StatusCode};
+use axum::http::{header, HeaderMap, Request, StatusCode, Version};
 use axum::middleware as axum_mw;
 use axum::routing::get;
 use axum::Router;
@@ -451,6 +451,52 @@ async fn auth_get_raw(app: &Router, cookie: &str, uri: &str) -> (StatusCode, Hea
     (status, headers, body)
 }
 
+/// Executes an HTTP/2 request with separate Cookie fields through the real router.
+async fn http2_cookie_request(
+    app: &Router,
+    method: &str,
+    uri: &str,
+    fields: &[String],
+    csrf: Option<&str>,
+) -> (StatusCode, HeaderMap, Value) {
+    let mut request = Request::builder()
+        .version(Version::HTTP_2)
+        .method(method)
+        .uri(uri)
+        .body(Body::empty())
+        .expect("build split-cookie request failed");
+    for field in fields {
+        request
+            .headers_mut()
+            .append(header::COOKIE, field.parse().unwrap());
+    }
+    if let Some(csrf) = csrf {
+        request
+            .headers_mut()
+            .insert("x-csrf-token", csrf.parse().unwrap());
+    }
+    assert_eq!(
+        request.headers().get_all(header::COOKIE).iter().count(),
+        fields.len()
+    );
+    let response = app.clone().oneshot(request).await.unwrap();
+    let status = response.status();
+    let headers = response.headers().clone();
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    (
+        status,
+        headers,
+        serde_json::from_slice(&body).unwrap_or(Value::Null),
+    )
+}
+
+fn split_cookie_fields(cookie: &str) -> Vec<String> {
+    cookie
+        .split(';')
+        .map(|field| field.trim().to_string())
+        .collect()
+}
+
 /// Extracts CSRF token value from login cookie string.
 ///
 /// Parameters: `cookie` - combined Cookie header value.
@@ -672,6 +718,163 @@ fn current_totp_code(secret_base32: &str) -> String {
         .expect("failed to build totp")
         .generate_current()
         .to_string()
+}
+
+#[tokio::test]
+async fn test_http2_split_cookie_headers_authenticate_session() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let mut fields = split_cookie_fields(&cookie);
+    assert_eq!(fields.len(), 3);
+    for unrelated_first in [false, true] {
+        if unrelated_first {
+            fields.reverse();
+            fields.insert(0, "unrelated=fixture".to_string());
+        }
+        let (status, headers, body) =
+            http2_cookie_request(&app, "GET", "/api/auth/me", &fields, None).await;
+        assert_eq!(status, StatusCode::OK, "split-cookie response: {body}");
+        assert_eq!(body["user"]["username"], "testadmin");
+        assert_eq!(headers["x-ratelimit-limit"], "300");
+    }
+}
+
+#[tokio::test]
+async fn test_http2_split_cookie_headers_session_rotation_and_logout() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let fields = split_cookie_fields(&cookie);
+    let csrf = csrf_from_cookie(&cookie);
+    let (status, _, sessions) =
+        http2_cookie_request(&app, "GET", "/api/auth/sessions", &fields, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let current = sessions
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["is_current"] == true)
+        .unwrap();
+    let uri = format!("/api/auth/sessions/{}", current["id"].as_i64().unwrap());
+    let (status, _, _) = http2_cookie_request(&app, "DELETE", &uri, &fields, Some(&csrf)).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "current-session protection must remain active"
+    );
+
+    let (status, headers, _) =
+        http2_cookie_request(&app, "POST", "/api/auth/refresh", &fields, Some(&csrf)).await;
+    assert_eq!(status, StatusCode::OK);
+    let rotated = auth_cookie_from_headers(&headers);
+    let rotated_fields = split_cookie_fields(&rotated);
+    let (status, _, _) = http2_cookie_request(&app, "GET", "/api/auth/me", &fields, None).await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "old refresh session must be invalidated"
+    );
+    let (status, _, _) =
+        http2_cookie_request(&app, "GET", "/api/auth/me", &rotated_fields, None).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = http2_cookie_request(
+        &app,
+        "POST",
+        "/api/auth/logout",
+        &rotated_fields,
+        Some(&csrf_from_cookie(&rotated)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) =
+        http2_cookie_request(&app, "GET", "/api/auth/me", &rotated_fields, None).await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "logout must revoke the refresh session"
+    );
+}
+
+#[tokio::test]
+async fn test_http2_split_cookie_headers_require_matching_csrf() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let mut fields = split_cookie_fields(&cookie);
+    fields.insert(0, "unrelated=fixture".to_string());
+    for csrf in [None, Some("wrong-csrf")] {
+        let (status, _, body) =
+            http2_cookie_request(&app, "POST", "/api/auth/logout", &fields, csrf).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(body["code"], "CSRF_FAILED");
+    }
+    let (status, _, _) = http2_cookie_request(
+        &app,
+        "POST",
+        "/api/auth/logout",
+        &fields,
+        Some(&csrf_from_cookie(&cookie)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_http2_split_cookie_headers_do_not_retry_invalid_duplicates() {
+    let (app, _) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    for name in [auth::COOKIE_NAME, auth::REFRESH_COOKIE_NAME] {
+        for invalid in ["", "invalid-fixture"] {
+            let mut fields = split_cookie_fields(&cookie);
+            fields.insert(0, format!("{name}={invalid}"));
+            let (status, _, _) =
+                http2_cookie_request(&app, "GET", "/api/auth/me", &fields, None).await;
+            assert_eq!(
+                status,
+                StatusCode::UNAUTHORIZED,
+                "first duplicate must win for {name}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_http2_split_cookie_headers_oidc_state_and_nonce_validation() {
+    let (app, _) = build_test_app().await;
+    let fields = vec![
+        "unrelated=fixture".to_string(),
+        "trueid_oidc_state=state-fixture".to_string(),
+        "trueid_oidc_nonce=nonce-fixture".to_string(),
+    ];
+    let (status, _, body) = http2_cookie_request(
+        &app,
+        "GET",
+        "/api/auth/oidc/callback?code=fixture&state=state-fixture",
+        &fields,
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body["error"], "OIDC is disabled",
+        "both cookies must pass state validation before config checking"
+    );
+    let (_, _, body) = http2_cookie_request(
+        &app,
+        "GET",
+        "/api/auth/oidc/callback?code=fixture&state=wrong",
+        &fields,
+        None,
+    )
+    .await;
+    assert_eq!(body["error"], "Invalid OIDC state");
+    let (_, _, body) = http2_cookie_request(
+        &app,
+        "GET",
+        "/api/auth/oidc/callback?code=fixture&state=state-fixture",
+        &fields[..2],
+        None,
+    )
+    .await;
+    assert_eq!(body["error"], "Invalid OIDC state");
 }
 
 #[tokio::test]

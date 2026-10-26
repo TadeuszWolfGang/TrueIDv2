@@ -103,3 +103,83 @@ jobs:
           [ "${ready}" = "1" ]
           test -s "${tmpdir}/net-identity.db"
           docker logs "${cid}" | grep -q "Initializing database"
+
+      - name: Smoke test native HTTPS web
+        run: |
+          set -euo pipefail
+          umask 077
+          tmpdir="$(mktemp -d)"
+          cid=""
+          cleanup() {
+            status=$?
+            if [ -n "${cid}" ]; then
+              if [ "${status}" -ne 0 ]; then
+                docker logs "${cid}" || true
+              fi
+              docker rm -f "${cid}" >/dev/null 2>&1 || true
+            fi
+            sudo rm -rf -- "${tmpdir}"
+            exit "${status}"
+          }
+          trap cleanup EXIT
+
+          mkdir "${tmpdir}/data" "${tmpdir}/tls"
+          openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+            -keyout "${tmpdir}/ca.key" -out "${tmpdir}/ca.crt" -days 1 \
+            -subj '/CN=TrueID CI test CA' \
+            -addext 'basicConstraints=critical,CA:TRUE' \
+            -addext 'keyUsage=critical,keyCertSign,cRLSign'
+          openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes \
+            -keyout "${tmpdir}/tls/server.key" -out "${tmpdir}/server.csr" \
+            -subj '/CN=localhost'
+          printf '%s\n' \
+            'subjectAltName=IP:127.0.0.1,DNS:localhost' \
+            'basicConstraints=critical,CA:FALSE' \
+            'keyUsage=critical,digitalSignature' \
+            'extendedKeyUsage=serverAuth' > "${tmpdir}/server.ext"
+          openssl x509 -req -in "${tmpdir}/server.csr" \
+            -CA "${tmpdir}/ca.crt" -CAkey "${tmpdir}/ca.key" -CAcreateserial \
+            -out "${tmpdir}/tls/server.crt" -days 1 -extfile "${tmpdir}/server.ext"
+          openssl verify -CAfile "${tmpdir}/ca.crt" \
+            -verify_ip 127.0.0.1 "${tmpdir}/tls/server.crt"
+
+          # Keep the CA readable by the runner; only leaf material enters the container.
+          # Match distroless nonroot (65532) without overriding the runtime image user.
+          sudo chown -R 65532:65532 "${tmpdir}/data" "${tmpdir}/tls"
+          {
+            printf 'JWT_SECRET=%s\n' "$(openssl rand -hex 32)"
+            printf 'ENGINE_SERVICE_TOKEN=%s\n' "$(openssl rand -hex 32)"
+            printf 'CONFIG_ENCRYPTION_KEY=%s\n' "$(openssl rand -hex 32)"
+            printf 'ARGON2_PEPPER=%s\n' "$(openssl rand -hex 32)"
+            printf 'TRUEID_ADMIN_USER=ci-admin\n'
+            printf 'TRUEID_ADMIN_PASS=Aa9!%s\n' "$(openssl rand -hex 16)"
+          } > "${tmpdir}/web.env"
+
+          cid="$(docker run -d \
+            -p 127.0.0.1::3000 \
+            -v "${tmpdir}/data:/app/data" \
+            -v "${tmpdir}/tls:/app/tls:ro" \
+            --env-file "${tmpdir}/web.env" \
+            -e TRUEID_DEV_MODE=false \
+            -e DATABASE_URL=sqlite:///app/data/net-identity.db?mode=rwc \
+            -e ENGINE_API_URL=http://127.0.0.1:8080 \
+            -e HTTP_BIND=0.0.0.0:3000 \
+            -e TLS_CERT=/app/tls/server.crt \
+            -e TLS_KEY=/app/tls/server.key \
+            trueid-runtime:glibc236 /usr/local/bin/trueid-web)"
+          endpoint="$(docker port "${cid}" 3000/tcp)"
+          ready=0
+          for _ in $(seq 1 20); do
+            code="$(curl --silent --show-error --connect-timeout 1 --max-time 2 \
+              --cacert "${tmpdir}/ca.crt" --output /dev/null --write-out '%{http_code}' \
+              "https://${endpoint}/health" 2>/dev/null || true)"
+            if [ "${code}" = "200" ]; then
+              ready=1
+              break
+            fi
+            [ "$(docker inspect --format '{{.State.Running}}' "${cid}")" = "true" ] || break
+            sleep 1
+          done
+          [ "${ready}" = "1" ]
+          sudo test -s "${tmpdir}/data/net-identity.db"
+          [ "$(sudo stat -c '%u' "${tmpdir}/data/net-identity.db")" = "65532" ]

@@ -11,8 +11,9 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 use crate::auth::{
-    build_auth_cookie, build_csrf_cookie, create_access_token, generate_csrf_token,
-    generate_random_hex, generate_refresh_token, COOKIE_NAME, REFRESH_TOKEN_TTL,
+    build_auth_cookie, build_csrf_cookie, create_access_token, extract_cookie_from_headers,
+    generate_csrf_token, generate_random_hex, generate_refresh_token, COOKIE_NAME,
+    REFRESH_TOKEN_TTL,
 };
 use crate::error::{self, ApiError};
 use crate::helpers;
@@ -512,16 +513,7 @@ fn internal_db_error<E: std::fmt::Display>(e: E) -> ApiError {
 }
 
 fn cookie_value(headers: &axum::http::HeaderMap, name: &str) -> Option<String> {
-    headers
-        .get(header::COOKIE)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|cookies| {
-            cookies.split(';').find_map(|part| {
-                let part = part.trim();
-                part.strip_prefix(&format!("{name}="))
-                    .map(ToString::to_string)
-            })
-        })
+    extract_cookie_from_headers(headers, name).map(ToString::to_string)
 }
 
 fn append_cookie(

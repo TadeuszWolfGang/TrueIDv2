@@ -31,7 +31,7 @@ from trueid_api import TrueIdApi
 from sycope.api import SycopeApi
 from sycope.config import load_config
 from sycope.exceptions import SycopeError
-from sycope.logging import setup_logging, suppress_ssl_warnings
+from sycope.logging import setup_logging
 
 logger = logging.getLogger(__name__)
 
@@ -511,7 +511,6 @@ def main() -> None:
         sys.exit(1)
 
     # Setup environment.
-    suppress_ssl_warnings()
     setup_logging("trueid_sync.log", log_level=cfg.get("log_level", "info"))
 
     logger.debug("=" * 60)

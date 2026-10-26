@@ -66,8 +66,6 @@ class TrueIdApi:
         payload = response.json()
         data = payload.get("data", payload) if isinstance(payload, dict) else payload
         logger.info(f"TrueID: Retrieved {len(data)} active mappings")
-        if data:
-            logger.debug(f"Sample mapping: {data[0]}")
 
         return data
 
