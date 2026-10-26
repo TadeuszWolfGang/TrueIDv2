@@ -110,7 +110,9 @@ def fetch_trueid_mappings(trueid: TrueIdApi) -> list:
         logging.info(f"TrueID: Retrieved {len(mappings)} active mappings")
         return mappings
     except Exception as e:
-        logging.error(f"TrueID: Failed to fetch mappings: {e}")
+        # Safe exception type only: never log raw exception text, which can
+        # carry URLs, userinfo, headers or payload content.
+        logging.error(f"TrueID: Failed to fetch mappings ({type(e).__name__})")
         return []
 
 
@@ -196,7 +198,7 @@ def merge_lookup_data(saved_lookup: dict, trueid_mappings: list, cfg: dict) -> t
 
         # Skip IPv6 for now (Sycope Lookup may not handle it).
         if ":" in ip:
-            logger.warning(f"Skipping IPv6 address for Sycope lookup sync: {ip}")
+            logger.warning("Skipping an IPv6 mapping for Sycope lookup sync")
             continue
 
         user = select_lookup_user(m)
@@ -325,9 +327,10 @@ def prepare_runtime_config(sycope: SycopeApi, cfg: dict) -> dict:
     try:
         indexes = sycope.get_user_indicies()
     except SycopeError as exc:
+        # Safe exception type only; server-supplied text is never echoed.
         logging.warning(
             "Pattern B disabled for this run: custom index API is unavailable "
-            f"or the account lacks rights ({exc})."
+            f"or the account lacks rights ({type(exc).__name__})."
         )
         runtime_cfg["enable_event_index"] = False
         return runtime_cfg
@@ -391,12 +394,12 @@ def sync_events(sycope: SycopeApi, trueid: TrueIdApi, cfg: dict) -> None:
     index_name = cfg.get("index_name", "trueid_events")
 
     last_ts = read_last_timestamp()
-    logger.debug(f"Fetching events since timestamp: {last_ts}")
+    logger.debug("Fetching events since the last timestamp")
 
     try:
         events = trueid.get_events_since(last_ts)
     except Exception as e:
-        logging.error(f"Failed to fetch TrueID events: {e}")
+        logging.error("Failed to fetch TrueID events (%s)", type(e).__name__)
         return
 
     if not events:
@@ -452,8 +455,10 @@ def sync_events(sycope: SycopeApi, trueid: TrueIdApi, cfg: dict) -> None:
             else:
                 ts_ms = 0
                 ts_epoch = 0
-        except (ValueError, TypeError) as exc:
-            logger.debug(f"Failed to parse timestamp '{ts_raw}': {exc}")
+        except (ValueError, TypeError):
+            # Timestamps come from the event payload; neither the value nor
+            # the parser message is logged.
+            logger.debug("Failed to parse an event timestamp; defaulted to epoch")
             ts_ms = 0
             ts_epoch = 0
 
@@ -488,7 +493,7 @@ def sync_events(sycope: SycopeApi, trueid: TrueIdApi, cfg: dict) -> None:
         logging.info(f"Successfully injected {len(rows)} events")
         write_last_timestamp(max_ts)
     except SycopeError as e:
-        logging.error(f"Failed to inject events: {e}")
+        logging.error("Failed to inject events (%s)", type(e).__name__)
 
 
 def main() -> None:

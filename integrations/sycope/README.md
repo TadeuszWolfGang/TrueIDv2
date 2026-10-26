@@ -68,13 +68,48 @@ Edit `config.json`:
 
 | Key | Description | Default |
 |-----|-------------|---------|
-| `trueid_host` | TrueID web URL | `http://localhost:3000` |
+| `trueid_host` | TrueID web URL | `https://localhost:3000` |
 | `sycope_host` | Sycope appliance URL | `https://192.168.1.14` |
 | `sycope_login` | Sycope API username | `trueid_sync` |
 | `sycope_pass` | Sycope API password | — |
 | `lookup_name` | CSV Lookup name in Sycope | `TrueID_Enrichment` |
 | `enable_event_index` | Enable Pattern B | `false` |
 | `index_name` | Custom Index name | `trueid_events` |
+
+### TrueID transport and private CAs
+
+Serve TrueID through a TLS listener or HTTPS reverse proxy and set `trueid_host`
+to that HTTPS URL. Remote HTTP endpoints and embedded URL credentials are
+rejected before the API key header is assigned. `trueid_api_base` is a path
+prefix (default `/api/v1`), with no authority, query or fragment. Both endpoint
+URLs are checked again before every request. All redirects (HTTP 300–399) are
+rejected, including redirects to the same origin; configure the final URL.
+
+Requests verifies TLS certificates with its normal trust configuration. For a
+private CA, point `REQUESTS_CA_BUNDLE` at a PEM CA bundle before starting sync:
+
+```bash
+export REQUESTS_CA_BUNDLE=/etc/trueid/private-ca-bundle.pem
+python3 trueid_sync.py
+```
+
+`CURL_CA_BUNDLE` is also supported by Requests when `REQUESTS_CA_BUNDLE` is unset.
+Callers constructing `TrueIdApi` directly can supply a `requests.Session` with
+`session.verify` set to their CA bundle path. The connector preserves the caller's
+`verify`, `trust_env`, proxy and adapter settings and uses the normal high-level
+Requests dispatch with a 30-second timeout. Certificate verification failures
+propagate; there is no retry with insecure TLS or HTTP. Keep verification enabled.
+
+For local development only, HTTP is accepted for the exact host `localhost`
+(case-insensitive), or a literal loopback IP accepted by Python's `ipaddress`
+module, for example `http://127.0.0.1:3000` or `http://[::1]:3000`.
+DNS is never resolved to grant this exception: aliases, localhost subdomains,
+trailing-dot variants, and abbreviated or legacy IPv4 spellings do not qualify.
+The caller is responsible for proxy configuration and `NO_PROXY`, including
+ensuring loopback requests are not sent through a proxy. TrueID transport and sync
+fetch logs contain operation, status and counts or safe exception type names;
+they omit request URLs, API keys, redirect locations, response reasons and
+identity payloads.
 
 ## Runtime Behavior
 
