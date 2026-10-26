@@ -1,4 +1,57 @@
-# HANDOFF — browser login compatibility
+# HANDOFF — AWS-LC JWT candidate; hosted validation pending
+
+## Current checkpoint — 2026-10-26
+
+Phase: POST-REALIZATION. The operator approved the isolated JWT experiment and
+the sole new transitive PackageID `untrusted 0.7.1`. GLM implemented the candidate
+through Flue in isolated CT106. Independent frontier reviewers inspected the
+captured source, dependency graph, fixtures and added Windows test gate.
+
+Upstream baseline: `6727fcf363347bf4c7e1819a59cf4db4deabff39`.
+Only JWT's feature changes from `rust_crypto` to `aws_lc_rs`; production session
+and OIDC validation code is byte-identical. The lock adds `untrusted 0.7.1`,
+removes 28 packages including `rsa` and `crypto-bigint`, and preserves retained
+PackageIDs/checksums. Candidate lock SHA256:
+`523a8474a702011f09f14801c127a6032119fefe57d05d96e370a5890f2aac43`.
+
+Independent validation completed before this checkpoint:
+
+- Raw cargo-audit 0.22.1: exit 0, zero vulnerabilities/warnings, effective
+  ignores/architecture/OS filters empty. RustSec database commit
+  `a78282a1414d6c28cc228c4eae3570451affb0dc`.
+- All-target feature graph has only AWS-LC JWT, no RustCrypto JWT, RSA,
+  crypto-bigint, PEM, FIPS or bindgen feature.
+- Public DER fixtures and license match the published jsonwebtoken 11.1.0
+  archive. Python stdlib independently verified the external fake HS256 vector.
+- Rustfmt passes. Original web library tests: 50 passed, zero failed/ignored.
+  Independent review added three signed OIDC cases for array audience and
+  expiry within the library's leeway; corrected suite: 53 passed, zero ignored.
+  The full workspace discovery contains 452 tests; execution is still pending.
+- New Windows gate was independently reviewed, YAML-parsed and checks native
+  x64 test discovery, execution including ignored tests, and a release web build.
+  Actual Windows execution is pending. Existing agent-only smoke is insufficient.
+
+The full workspace run, security-focused Clippy and separate native HTTPS/glibc
+smoke are being performed on the same immutable source in CT106. Tests/builds
+run only as the isolated nonroot builder, not on the Mac. The original model
+snapshot remains preserved; all ten imported files match the independent final
+capture. No production or other existing guest configuration was changed.
+
+Next action: publish this experimental branch as a draft PR, observe checks on
+its exact head, and finish the independent validation record. Keep advisory
+ignores until the separate graph/audit-policy checkpoint. Do not merge or deploy
+based on the partial results above.
+
+```bash
+gh run list --repo TadeuszWolfGang/TrueIDv2 --branch spike/jwt-aws-lc --limit 20
+```
+
+Migration gate: AWS-LC RS256 accepts 2048–8192-bit keys; the previous JWK path had
+maximum 4096 and no explicit minimum 2048. Configured-provider compatibility and
+the migration decision remain part of acceptance. This checkpoint does not
+accept weak-key compatibility changes or authorize production migration.
+
+## Archived browser login compatibility checkpoint
 
 ## Coordinator acceptance checkpoint
 The final local connector discovery passed all 38 tests, including both live

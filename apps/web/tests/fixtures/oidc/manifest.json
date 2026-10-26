@@ -1,0 +1,23 @@
+{
+  "source": "https://github.com/Keats/jsonwebtoken/tree/v11.1.0/tests",
+  "public_test_material_only": true,
+  "lab_or_production_keys": false,
+  "files": {
+    "UPSTREAM-LICENSE": {
+      "bytes": 1084,
+      "sha256": "a8012be84ea176195305bfb4e9109ed6f28860a8e697bc50302e75c2040813f3"
+    },
+    "ed25519-pkcs8.der": {
+      "bytes": 48,
+      "sha256": "919c314d0044c4e82efaeefa0cbf306d592e730de2c4661ea4cb2e9854b02f02"
+    },
+    "p256-pkcs8.der": {
+      "bytes": 138,
+      "sha256": "2ae7252c217ba34548b156dd5e178aa4e395dcfb3f9fffaf53cd89440cb6095f"
+    },
+    "rsa-2048-pkcs1.der": {
+      "bytes": 1192,
+      "sha256": "1284afe19cade2151ec1fd790fe171df813e4476be6c97a9e2e2e56195eedbf3"
+    }
+  }
+}

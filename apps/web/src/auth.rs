@@ -353,4 +353,33 @@ mod tests {
             &ErrorKind::InvalidAlgorithm
         );
     }
+
+    /// Verifies a fixed HS256 vector produced outside jsonwebtoken (Python
+    /// stdlib HMAC-SHA256 over base64url segments) still verifies, proving
+    /// HS256 verification does not depend on the crate's signing encoder
+    /// backend. The secret and token are a public test vector, not a
+    /// credential. The `exp` claim is fixed to 2100-01-01Z so the case stays
+    /// deterministic.
+    ///
+    /// Parameters: none.
+    /// Returns: unit test assertion result.
+    #[test]
+    fn access_token_verifies_fixed_external_hs256_vector() {
+        const EXTERNAL_VECTOR_SECRET: &str = "fixed-public-fake-secret-for-trueid-jwt-compat-tests";
+        const EXTERNAL_HS256_TOKEN: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0MiIsInJvbGUiOiJPcGVyYXRvciIsInRva2VuX3ZlcnNpb24iOjMsImV4cCI6NDEwMjQ0NDgwMCwiaWF0IjoxNzAwMDAwMDAwfQ.aEwkcAMgoU4epJLlJ5-Kpk73yGVVbtydyNZTTNnaxMM";
+        let config = JwtConfig {
+            secret: EXTERNAL_VECTOR_SECRET.to_string(),
+            dev_mode: false,
+        };
+
+        let claims = validate_token(&config, EXTERNAL_HS256_TOKEN).unwrap();
+
+        assert_eq!(
+            decode_header(EXTERNAL_HS256_TOKEN).unwrap().alg,
+            Algorithm::HS256
+        );
+        assert_eq!(claims.sub, "42");
+        assert_eq!(claims.role, "Operator");
+        assert_eq!(claims.token_version, 3);
+    }
 }
