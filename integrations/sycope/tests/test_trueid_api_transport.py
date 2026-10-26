@@ -110,12 +110,16 @@ class TrueIdUrlValidationTests(unittest.TestCase):
         for host in self.forbidden_hosts:
             with self.subTest(host=host):
                 connection = mock.Mock()
-                with self.assertRaises(ValueError) as caught:
+                caught = None
+                try:
                     TrueIdApi(connection, host, api_key=CANARIES["key"])
+                except Exception as error:
+                    caught = error
+                self.assertIsInstance(caught, ValueError)
                 connection.headers.update.assert_not_called()
                 connection.get.assert_not_called()
                 for sentinel in CANARIES.values():
-                    self.assertNotIn(sentinel, str(caught.exception))
+                    self.assertNotIn(sentinel, str(caught))
 
     def test_invalid_api_bases_are_rejected_before_credential_assignment_or_send(self):
         for api_base in self.forbidden_bases:
