@@ -1,3 +1,4 @@
 # Abstract constraints - the lockfile (uv.lock) is authoritative for builds.
+idna>=3.19,<4
 requests>=2.28.0
 urllib3>=1.26.0

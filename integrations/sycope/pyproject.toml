@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Sycope <-> TrueID synchronization connector"
 requires-python = ">=3.11,<3.12"
 dependencies = [
+  "idna>=3.19,<4",
   "requests>=2.28.0",
   "urllib3>=1.26.0",
 ]
