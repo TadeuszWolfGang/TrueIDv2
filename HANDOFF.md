@@ -1,4 +1,77 @@
-# HANDOFF — AWS-LC JWT candidate; hosted CI repair checkpoint
+# HANDOFF — AWS-LC JWT candidate; CodeQL nonce fixture checkpoint
+
+## Current checkpoint — 2026-10-26
+
+Phase: POST-REALIZATION — one scoped repair of the separate CodeQL acceptance
+failure on draft PR #43, branch `spike/jwt-aws-lc`. Starting application head:
+`6c0cb1537fd1c058fd92ca429d2f05b574deaf0f`.
+
+Triage: P3, small effort, test-only false positive. Separate CodeQL check run
+[121727672720](https://github.com/TadeuszWolfGang/TrueIDv2/runs/121727672720)
+failed with two new critical-severity annotations titled "Hard-coded
+cryptographic value": the fixed nonce shared by signed ID-token fixtures and
+the mismatched expected nonce literal in `apps/web/src/oidc.rs`. Successful
+workflow jobs on the preceding head do not satisfy this separate check.
+
+The test-only helper now accepts `nonce: &str`. Each of the existing 14
+`validate_id_token_*` tests uses the existing production generator
+`crate::auth::generate_random_hex(24)` and passes that nonce into both signed
+claims and expected validation. The wrong-nonce case independently generates a
+second expected nonce, asserts their difference, preserves the valid signature,
+and still asserts the `invalid nonce` rejection. All test names, case counts
+and existing assertions remain. The pre-existing authorization URL format test
+is unchanged. No scanner exception, rule suppression, policy, dependency,
+public API, schema or production crypto change was introduced.
+
+Before/after OIDC SHA256:
+
+- Before: `6079c62d49a8af651f8e518e9ef8c9c2827cef81ca97b99cf8956288c26fbca6`.
+- After: `a5866e3af256c40b0f7a520272753a074c6dcbb10e73a172d7544b38523bfc4d`.
+
+Production bytes before `#[cfg(test)]` are identical. The auth vector source,
+DER fixtures, manifests, lockfile, audit policy and Windows workflow are
+unchanged. Separate frontier source review and parent source review both PASS.
+No application build/test ran on the Mac.
+
+After explicit CT106 release, its complete previous 350-entry / 291-file source
+snapshot matched before a UID1000 write of only `oidc.rs`; mode/UID/GID were
+preserved. Original captures/manifests remain immutable. The revised expected
+snapshot SHA is
+`4b16f1fe641d503777c95aeb52c27f57872f9afa93d777599d403acc2cf062b4`.
+Sequential offline checks as `trueid-build` passed:
+
+```bash
+cargo fmt --all -- --check
+cargo test -p trueid-web --lib --offline --locked -- --test-threads=1
+```
+
+Fmt exit 0; web exit 0, 53 passed / 0 failed / 0 ignored / 0 filtered,
+including all 14 OIDC validation cases. No timeout occurred. Safe results,
+exact selectors, exits and log hashes are recorded under
+`../trueid-lab/state/m2-executor/codeql-nonce-fix/`; raw logs remain private in
+CT106. Full final source/ten-file manifest/Git/executable guards PASS; no UID1000
+process, disposable DB or private certificate key remains. Executor/firewall
+policy is unchanged. One initial guard failed before any write because its Git
+status enumeration lacked `--untracked-files=all`; the consumed failed receipt
+is preserved, and corrected `sync-v2` again required the entire old snapshot
+before writing. No raw-log export was attempted.
+
+The previously completed workspace, native production HTTPS/GLIBC and 16 live
+HTTPS auth/RBAC results remain their own evidence. Production is unchanged, so
+those runs were not repeated for this test-only repair. Full details:
+`../trueid-lab/M2_CODEQL_NONCE_FIX.md`.
+
+Next action: independently review and publish this checkpoint, then observe all
+checks on its exact new head, including the separate CodeQL check run. CodeQL
+has not yet been shown clean for these repaired bytes. Do not infer GO, merge,
+deployment or an RSA-size migration decision. CT106 is released to the parent.
+
+```bash
+gh pr checks 43 --repo TadeuszWolfGang/TrueIDv2
+gh api 'repos/TadeuszWolfGang/TrueIDv2/commits/spike/jwt-aws-lc/check-runs' --jq '.check_runs[] | {id,name,head_sha,status,conclusion,details_url}'
+```
+
+## Archived hosted CI repair checkpoint
 
 ## Current checkpoint — 2026-10-26
 

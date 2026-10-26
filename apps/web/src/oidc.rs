@@ -453,9 +453,6 @@ mod tests {
     /// Test client id mirrored into ID-token claims.
     const TEST_CLIENT_ID: &str = "client-123";
 
-    /// Test nonce mirrored into ID-token claims.
-    const TEST_NONCE: &str = "nonce-456-oidc";
-
     /// `kid` published for the RSA-2048 fixture key.
     const KID_RSA: &str = "test-rsa-2048";
 
@@ -500,16 +497,16 @@ mod tests {
 
     /// Builds well-formed ID-token claims with timestamps relative to now.
     ///
-    /// Parameters: none.
+    /// Parameters: `nonce` - per-test nonce mirrored into the signed claims.
     /// Returns: claims JSON accepted by `validate_id_token`.
-    fn id_token_claims() -> Value {
+    fn id_token_claims(nonce: &str) -> Value {
         let now = Utc::now().timestamp();
         json!({
             "sub": "user-oidc-1",
             "email": "oidc-user@example.com",
             "name": "OIDC Test User",
             "preferred_username": "oidcuser",
-            "nonce": TEST_NONCE,
+            "nonce": nonce,
             "iss": TEST_ISSUER,
             "aud": TEST_CLIENT_ID,
             "exp": now + 600,
@@ -649,17 +646,18 @@ mod tests {
     /// Returns: unit test assertion result.
     #[tokio::test]
     async fn validate_id_token_accepts_valid_rs256_signature() {
+        let nonce = crate::auth::generate_random_hex(24);
         let (jwks_uri, server) = spawn_mock_jwks(standard_jwks_body()).await;
         let provider = loopback_provider(jwks_uri);
         let token = sign_id_token(
             Algorithm::RS256,
             Some(KID_RSA),
-            &id_token_claims(),
+            &id_token_claims(&nonce),
             &rsa_encoding_key(),
         );
 
         let result = provider
-            .validate_id_token(&token, TEST_NONCE, &test_http_client())
+            .validate_id_token(&token, &nonce, &test_http_client())
             .await;
         server.abort();
 
@@ -667,7 +665,7 @@ mod tests {
         assert_eq!(claims.sub, "user-oidc-1");
         assert_eq!(claims.iss, TEST_ISSUER);
         assert_eq!(claims.aud, json!(TEST_CLIENT_ID));
-        assert_eq!(claims.nonce.as_deref(), Some(TEST_NONCE));
+        assert_eq!(claims.nonce.as_deref(), Some(nonce.as_str()));
     }
 
     /// Verifies a correctly signed ES256 (P-256) ID token against a loopback JWKS.
@@ -676,23 +674,24 @@ mod tests {
     /// Returns: unit test assertion result.
     #[tokio::test]
     async fn validate_id_token_accepts_valid_es256_signature() {
+        let nonce = crate::auth::generate_random_hex(24);
         let (jwks_uri, server) = spawn_mock_jwks(standard_jwks_body()).await;
         let provider = loopback_provider(jwks_uri);
         let token = sign_id_token(
             Algorithm::ES256,
             Some(KID_P256),
-            &id_token_claims(),
+            &id_token_claims(&nonce),
             &p256_encoding_key(),
         );
 
         let result = provider
-            .validate_id_token(&token, TEST_NONCE, &test_http_client())
+            .validate_id_token(&token, &nonce, &test_http_client())
             .await;
         server.abort();
 
         let claims = result.expect("valid ES256 id_token must validate");
         assert_eq!(claims.sub, "user-oidc-1");
-        assert_eq!(claims.nonce.as_deref(), Some(TEST_NONCE));
+        assert_eq!(claims.nonce.as_deref(), Some(nonce.as_str()));
     }
 
     /// Verifies a correctly signed EdDSA (Ed25519) ID token against a loopback JWKS.
@@ -701,23 +700,24 @@ mod tests {
     /// Returns: unit test assertion result.
     #[tokio::test]
     async fn validate_id_token_accepts_valid_eddsa_signature() {
+        let nonce = crate::auth::generate_random_hex(24);
         let (jwks_uri, server) = spawn_mock_jwks(standard_jwks_body()).await;
         let provider = loopback_provider(jwks_uri);
         let token = sign_id_token(
             Algorithm::EdDSA,
             Some(KID_ED25519),
-            &id_token_claims(),
+            &id_token_claims(&nonce),
             &ed25519_encoding_key(),
         );
 
         let result = provider
-            .validate_id_token(&token, TEST_NONCE, &test_http_client())
+            .validate_id_token(&token, &nonce, &test_http_client())
             .await;
         server.abort();
 
         let claims = result.expect("valid EdDSA id_token must validate");
         assert_eq!(claims.sub, "user-oidc-1");
-        assert_eq!(claims.nonce.as_deref(), Some(TEST_NONCE));
+        assert_eq!(claims.nonce.as_deref(), Some(nonce.as_str()));
     }
 
     /// Verifies a token whose signature segment was altered is rejected while
@@ -727,17 +727,18 @@ mod tests {
     /// Returns: unit test assertion result.
     #[tokio::test]
     async fn validate_id_token_rejects_tampered_signature() {
+        let nonce = crate::auth::generate_random_hex(24);
         let (jwks_uri, server) = spawn_mock_jwks(standard_jwks_body()).await;
         let provider = loopback_provider(jwks_uri);
         let token = tamper_signature(&sign_id_token(
             Algorithm::RS256,
             Some(KID_RSA),
-            &id_token_claims(),
+            &id_token_claims(&nonce),
             &rsa_encoding_key(),
         ));
 
         let result = provider
-            .validate_id_token(&token, TEST_NONCE, &test_http_client())
+            .validate_id_token(&token, &nonce, &test_http_client())
             .await;
         server.abort();
 
@@ -752,17 +753,18 @@ mod tests {
     /// Returns: unit test assertion result.
     #[tokio::test]
     async fn validate_id_token_rejects_disallowed_algorithm() {
+        let nonce = crate::auth::generate_random_hex(24);
         let (jwks_uri, server) = spawn_mock_jwks(standard_jwks_body()).await;
         let provider = loopback_provider(jwks_uri);
         let token = sign_id_token(
             Algorithm::RS512,
             Some(KID_RSA),
-            &id_token_claims(),
+            &id_token_claims(&nonce),
             &rsa_encoding_key(),
         );
 
         let result = provider
-            .validate_id_token(&token, TEST_NONCE, &test_http_client())
+            .validate_id_token(&token, &nonce, &test_http_client())
             .await;
         server.abort();
 
@@ -780,9 +782,10 @@ mod tests {
     /// Returns: unit test assertion result.
     #[tokio::test]
     async fn validate_id_token_rejects_wrong_issuer() {
+        let nonce = crate::auth::generate_random_hex(24);
         let (jwks_uri, server) = spawn_mock_jwks(standard_jwks_body()).await;
         let provider = loopback_provider(jwks_uri);
-        let mut claims = id_token_claims();
+        let mut claims = id_token_claims(&nonce);
         claims["iss"] = json!("https://evil.example.com");
         let token = sign_id_token(
             Algorithm::RS256,
@@ -792,7 +795,7 @@ mod tests {
         );
 
         let result = provider
-            .validate_id_token(&token, TEST_NONCE, &test_http_client())
+            .validate_id_token(&token, &nonce, &test_http_client())
             .await;
         server.abort();
 
@@ -807,9 +810,10 @@ mod tests {
     /// Returns: unit test assertion result.
     #[tokio::test]
     async fn validate_id_token_rejects_wrong_audience() {
+        let nonce = crate::auth::generate_random_hex(24);
         let (jwks_uri, server) = spawn_mock_jwks(standard_jwks_body()).await;
         let provider = loopback_provider(jwks_uri);
-        let mut claims = id_token_claims();
+        let mut claims = id_token_claims(&nonce);
         claims["aud"] = json!("someone-else");
         let token = sign_id_token(
             Algorithm::RS256,
@@ -819,7 +823,7 @@ mod tests {
         );
 
         let result = provider
-            .validate_id_token(&token, TEST_NONCE, &test_http_client())
+            .validate_id_token(&token, &nonce, &test_http_client())
             .await;
         server.abort();
 
@@ -833,17 +837,20 @@ mod tests {
     /// Returns: unit test assertion result.
     #[tokio::test]
     async fn validate_id_token_rejects_wrong_nonce() {
+        let nonce = crate::auth::generate_random_hex(24);
+        let expected_nonce = crate::auth::generate_random_hex(24);
+        assert_ne!(nonce, expected_nonce);
         let (jwks_uri, server) = spawn_mock_jwks(standard_jwks_body()).await;
         let provider = loopback_provider(jwks_uri);
         let token = sign_id_token(
             Algorithm::RS256,
             Some(KID_RSA),
-            &id_token_claims(),
+            &id_token_claims(&nonce),
             &rsa_encoding_key(),
         );
 
         let result = provider
-            .validate_id_token(&token, "attacker-chosen-nonce", &test_http_client())
+            .validate_id_token(&token, &expected_nonce, &test_http_client())
             .await;
         server.abort();
 
@@ -861,9 +868,10 @@ mod tests {
     /// Returns: unit test assertion result.
     #[tokio::test]
     async fn validate_id_token_rejects_expired_token() {
+        let nonce = crate::auth::generate_random_hex(24);
         let (jwks_uri, server) = spawn_mock_jwks(standard_jwks_body()).await;
         let provider = loopback_provider(jwks_uri);
-        let mut claims = id_token_claims();
+        let mut claims = id_token_claims(&nonce);
         let now = Utc::now().timestamp();
         claims["exp"] = json!(now - 3600);
         claims["iat"] = json!(now - 7200);
@@ -875,7 +883,7 @@ mod tests {
         );
 
         let result = provider
-            .validate_id_token(&token, TEST_NONCE, &test_http_client())
+            .validate_id_token(&token, &nonce, &test_http_client())
             .await;
         server.abort();
 
@@ -890,16 +898,17 @@ mod tests {
     /// Returns: unit test assertion result.
     #[tokio::test]
     async fn validate_id_token_rejects_missing_kid() {
+        let nonce = crate::auth::generate_random_hex(24);
         let provider = loopback_provider("http://127.0.0.1:9/jwks".to_string());
         let token = sign_id_token(
             Algorithm::RS256,
             None,
-            &id_token_claims(),
+            &id_token_claims(&nonce),
             &rsa_encoding_key(),
         );
 
         let result = provider
-            .validate_id_token(&token, TEST_NONCE, &test_http_client())
+            .validate_id_token(&token, &nonce, &test_http_client())
             .await;
 
         let err = result.expect_err("id_token without kid must be rejected");
@@ -915,17 +924,18 @@ mod tests {
     /// Returns: unit test assertion result.
     #[tokio::test]
     async fn validate_id_token_rejects_unknown_kid() {
+        let nonce = crate::auth::generate_random_hex(24);
         let (jwks_uri, server) = spawn_mock_jwks(standard_jwks_body()).await;
         let provider = loopback_provider(jwks_uri);
         let token = sign_id_token(
             Algorithm::RS256,
             Some("ghost-kid"),
-            &id_token_claims(),
+            &id_token_claims(&nonce),
             &rsa_encoding_key(),
         );
 
         let result = provider
-            .validate_id_token(&token, TEST_NONCE, &test_http_client())
+            .validate_id_token(&token, &nonce, &test_http_client())
             .await;
         server.abort();
 
@@ -938,9 +948,10 @@ mod tests {
 
     #[tokio::test]
     async fn validate_id_token_accepts_array_audience_containing_client() {
+        let nonce = crate::auth::generate_random_hex(24);
         let (jwks_uri, server) = spawn_mock_jwks(standard_jwks_body()).await;
         let provider = loopback_provider(jwks_uri);
-        let mut claims = id_token_claims();
+        let mut claims = id_token_claims(&nonce);
         claims["aud"] = json!(["another-client", TEST_CLIENT_ID]);
         let token = sign_id_token(
             Algorithm::RS256,
@@ -950,7 +961,7 @@ mod tests {
         );
 
         let result = provider
-            .validate_id_token(&token, TEST_NONCE, &test_http_client())
+            .validate_id_token(&token, &nonce, &test_http_client())
             .await;
         server.abort();
 
@@ -961,9 +972,10 @@ mod tests {
 
     #[tokio::test]
     async fn validate_id_token_rejects_array_audience_without_client() {
+        let nonce = crate::auth::generate_random_hex(24);
         let (jwks_uri, server) = spawn_mock_jwks(standard_jwks_body()).await;
         let provider = loopback_provider(jwks_uri);
-        let mut claims = id_token_claims();
+        let mut claims = id_token_claims(&nonce);
         claims["aud"] = json!(["another-client", "someone-else"]);
         let token = sign_id_token(
             Algorithm::RS256,
@@ -973,7 +985,7 @@ mod tests {
         );
 
         let result = provider
-            .validate_id_token(&token, TEST_NONCE, &test_http_client())
+            .validate_id_token(&token, &nonce, &test_http_client())
             .await;
         server.abort();
 
@@ -983,9 +995,10 @@ mod tests {
 
     #[tokio::test]
     async fn validate_id_token_rejects_recent_expiry_within_library_leeway() {
+        let nonce = crate::auth::generate_random_hex(24);
         let (jwks_uri, server) = spawn_mock_jwks(standard_jwks_body()).await;
         let provider = loopback_provider(jwks_uri);
-        let mut claims = id_token_claims();
+        let mut claims = id_token_claims(&nonce);
         claims["exp"] = json!(Utc::now().timestamp() - 5);
         let token = sign_id_token(
             Algorithm::RS256,
@@ -995,7 +1008,7 @@ mod tests {
         );
 
         let result = provider
-            .validate_id_token(&token, TEST_NONCE, &test_http_client())
+            .validate_id_token(&token, &nonce, &test_http_client())
             .await;
         server.abort();
 
