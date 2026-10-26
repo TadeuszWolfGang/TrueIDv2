@@ -1,7 +1,7 @@
 {
   "log_level": "info",
 
-  "trueid_host": "http://localhost:3000",
+  "trueid_host": "https://localhost:3000",
   "trueid_api_base": "/api/v1",
   "trueid_api_key": "",
 
