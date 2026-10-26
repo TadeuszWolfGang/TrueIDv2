@@ -1,20 +1,8 @@
 # cargo-deny configuration for TrueIDv2.
 #
-# RUSTSEC-2023-0071 (rsa "Marvin Attack"): since jsonwebtoken's rust_crypto
-# backend the rsa crate is compiled for RS256 ID-token SIGNATURE
-# VERIFICATION in OIDC — public-key operations only; TrueID never performs
-# rsa private-key operations (signing/decryption), which is what the advisory
-# affects. No fixed upstream version exists. Re-review when rsa ships a fix.
-#
-# RUSTSEC-2026-0387 (crypto-bigint timing variability), reviewed 2026-10-25:
-# the only path is jsonwebtoken -> p256/p384 -> elliptic-curve -> crypto-bigint.
-# OIDC only verifies signatures using public JWKs (apps/web/src/oidc.rs);
-# session signing/verification uses HS256 HMAC (apps/web/src/auth.rs).
-# No secret-integer arithmetic or asymmetric private-key operations are used.
-# The parent elliptic-curve 0.13 dependency cannot accept the patched 0.7.6.
-# Re-review before changing JWT algorithms, crypto features, key operations,
-# or this dependency path, and remove the exception when upstream permits it.
-# Keep cargo-audit exceptions in CI and scripts/security-pipeline.sh in sync.
+# Resolved 2026-10-26: jsonwebtoken now uses the aws_lc_rs backend.
+# rsa (RUSTSEC-2023-0071) and crypto-bigint (RUSTSEC-2026-0387) are absent
+# from the lock and selected all-target graph; unfiltered cargo-audit passed.
 #
 # Resolved 2026-08-31 (no longer in graph; notes kept for history):
 # - RUSTSEC-2025-0134 rustls-pemfile: direct usage migrated to
@@ -25,9 +13,4 @@
 
 [advisories]
 unmaintained = "none"
-ignore = [
-    # rsa "Marvin Attack" — see header note: verify-only usage.
-    "RUSTSEC-2023-0071",
-    # crypto-bigint — public-key verification only; see reviewed scope above.
-    "RUSTSEC-2026-0387",
-]
+ignore = []

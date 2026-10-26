@@ -1,11 +1,12 @@
-# HANDOFF — AWS-LC JWT candidate; hosted validation pending
+# HANDOFF — AWS-LC JWT candidate; audit-policy checkpoint
 
 ## Current checkpoint — 2026-10-26
 
-Phase: POST-REALIZATION. The operator approved the isolated JWT experiment and
-the sole new transitive PackageID `untrusted 0.7.1`. GLM implemented the candidate
-through Flue in isolated CT106. Independent frontier reviewers inspected the
-captured source, dependency graph, fixtures and added Windows test gate.
+Phase: POST-REALIZATION — separate audit-policy checkpoint after graph and raw
+audit proof. The operator approved the isolated JWT experiment and the sole new
+transitive PackageID `untrusted 0.7.1`. GLM implemented the candidate through Flue
+in isolated CT106. Independent frontier reviewers inspected the captured source,
+dependency graph, fixtures and added Windows test gate.
 
 Upstream baseline: `6727fcf363347bf4c7e1819a59cf4db4deabff39`.
 Only JWT's feature changes from `rust_crypto` to `aws_lc_rs`; production session
@@ -26,21 +27,38 @@ Independent validation completed before this checkpoint:
 - Rustfmt passes. Original web library tests: 50 passed, zero failed/ignored.
   Independent review added three signed OIDC cases for array audience and
   expiry within the library's leeway; corrected suite: 53 passed, zero ignored.
-  The full workspace discovery contains 452 tests; execution is still pending.
+  The full workspace discovery contains 452 tests; execution has no completed
+  result at this checkpoint.
 - New Windows gate was independently reviewed, YAML-parsed and checks native
   x64 test discovery, execution including ignored tests, and a release web build.
   Actual Windows execution is pending. Existing agent-only smoke is insufficient.
 
+This checkpoint independently rechecked the ten imported files against
+`../trueid-lab/state/m2-executor/linux-validation/audited-files.json` and the
+final source capture. Lock comparison reproduced the sole new PackageID,
+28 removals and unchanged retained checksums. The recorded all-target graph and
+raw audit hashes, exit status, lock identity and empty filters correspond to
+this candidate. Evidence: `candidate-package-comparison.json`,
+`candidate-raw-audit{,-exit}.json` and `linux-validation/feature-tree.{log,json}`
+under `../trueid-lab/state/m2-executor/`.
+
+Only obsolete RUSTSEC-2023-0071 and RUSTSEC-2026-0387 ignores were removed from
+`deny.toml`, the security workflow and local security pipeline. The deny header
+records the backend resolution; `unmaintained = "none"` and all other policy
+remain unchanged. Bash syntax, workflow YAML parsing, active-ignore absence and
+`git diff --check` pass. No application source, fixture, lock or Windows workflow
+changed in this checkpoint, and no application build/test ran on the Mac.
+
 The full workspace run, security-focused Clippy and separate native HTTPS/glibc
-smoke are being performed on the same immutable source in CT106. Tests/builds
-run only as the isolated nonroot builder, not on the Mac. The original model
-snapshot remains preserved; all ten imported files match the independent final
-capture. No production or other existing guest configuration was changed.
+smoke remain pending completed results from the same immutable source in CT106.
+Tests/builds run only as the isolated nonroot builder. The original model
+snapshot remains preserved. No production or other existing guest configuration
+was changed.
 
 Next action: publish this experimental branch as a draft PR, observe checks on
-its exact head, and finish the independent validation record. Keep advisory
-ignores until the separate graph/audit-policy checkpoint. Do not merge or deploy
-based on the partial results above.
+its exact head, and finish the independent validation record. Actual Windows
+execution, the remaining Linux gates and the migration decision are still open.
+Do not merge or deploy based on the partial results above.
 
 ```bash
 gh run list --repo TadeuszWolfGang/TrueIDv2 --branch spike/jwt-aws-lc --limit 20
