@@ -17,7 +17,7 @@ jobs:
       run:
         shell: pwsh
     env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}/trueid-windows-web-target
+      CARGO_TARGET_DIR: target/windows-web
       CARGO_TERM_COLOR: never
       # Official non-FIPS fallback when the runner has no NASM executable.
       AWS_LC_SYS_PREBUILT_NASM: "1"

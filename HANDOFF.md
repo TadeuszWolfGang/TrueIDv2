@@ -1,6 +1,75 @@
-# HANDOFF — AWS-LC JWT candidate; audit-policy checkpoint
+# HANDOFF — AWS-LC JWT candidate; hosted CI repair checkpoint
 
 ## Current checkpoint — 2026-10-26
+
+Phase: POST-REALIZATION — one checkpoint repairing the two observed hosted CI
+acceptance failures on draft PR #43, branch `spike/jwt-aws-lc`. Starting head:
+`a7ddfc5b037c69ac52834e44c17ba81e38730fc0`.
+
+The Windows workflow run `40363830382` was rejected before any jobs because
+job-level `env` cannot use the `runner` context. `CARGO_TARGET_DIR` now uses the
+job-private checkout-relative path `target/windows-web` on the fresh hosted VM.
+This is the workflow's only semantic change. Its native x64 requirement,
+19-case discovery gate, both `--include-ignored` runs, release build, lockfile
+check, read-only contents permission and checkout without persisted credentials
+are preserved. Context availability reference:
+<https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#context-availability>.
+
+SAST job `121716263724` in run `40363895562` reported exactly one Gitleaks
+`jwt` finding at `apps/web/src/auth.rs:369`. It was the fixed public fake HS256
+vector beside its public test key, not a real credential. The test now stores
+the original header, payload and signature as separate constants and joins them
+at runtime with `format!`. Independent Python stdlib parsing and HMAC-SHA256
+verification proved that the joined bytes, key, claims and signature are
+unchanged. The test still calls no JWT signing encoder. No scanner exception,
+allow rule, dependency, production validation or credential changed.
+
+Local data-only validation completed on the Mac:
+
+- Ruby Psych parsed the workflow; comparison against the starting head found
+  only the intended environment value change and preserved all gate settings.
+- Official Gitleaks v8.30.0 Darwin ARM64 archive and checksum manifest matched
+  the published checksum and GitHub release asset SHA256 values. The old auth
+  source reproduced one `jwt` finding (exit 1); the repaired auth source and
+  full tracked-file snapshot each had zero findings (exit 0). All scanner output
+  was redacted; evidence reports retain finding metadata only.
+- Standalone Rustfmt check and `git diff --check` pass. Production auth and
+  OIDC prefixes are byte-identical to the starting head. Candidate manifests,
+  `Cargo.lock`, DER fixtures and the original model capture are preserved. Lock
+  SHA256 remains `523a8474a702011f09f14801c127a6032119fefe57d05d96e370a5890f2aac43`.
+- Evidence: `../trueid-lab/state/m2-executor/ci-acceptance-repair/` contains
+  data, workflow and scanner validation metadata. The verified scanner and
+  published-source checksums are in the ignored sibling `tools/gitleaks-v8.30.0/`.
+
+The coordinator observed the preceding immutable Linux candidate's full
+workspace result: 436 passed, 16 intentionally ignored, zero failed; the
+security-focused Clippy gate passed. Evidence is
+`../trueid-lab/state/m2-executor/linux-validation/{workspace-tests,security-clippy}.json`.
+These source bytes have not been built or tested on the Mac. The separate
+native HTTPS/glibc release validation is owned by the Linux lane; its completed
+result and a same-source retest after synchronizing this fixture change remain
+acceptance work. Actual hosted Windows and SAST results on the new commit are
+pending publication and must be observed before claiming those gates passed.
+
+The coordinator's read-only CT104 metadata proof found the web service active,
+OIDC disabled and no configured issuer. It read no credential columns and made
+no configuration or service change:
+`../trueid-lab/state/m2-executor/production-oidc-metadata-read-20261026.json`.
+This does not remove the migration gate: AWS-LC RS256 supports 2048–8192-bit
+keys, whereas the old JWK path had maximum 4096 and no explicit minimum 2048.
+Configured-provider compatibility, migration acceptance, merge and deployment
+remain open. No merge, push, deployment or CT106 operation belongs to this
+repair checkpoint.
+
+Next action: independently review and publish this checkpoint, then synchronize
+only the repaired test source to the isolated Linux validation lane and observe
+the exact-head hosted checks. Preserve the original model capture.
+
+```bash
+gh run list --repo TadeuszWolfGang/TrueIDv2 --branch spike/jwt-aws-lc --limit 20
+```
+
+## Previous audit-policy checkpoint — 2026-10-26
 
 Phase: POST-REALIZATION — separate audit-policy checkpoint after graph and raw
 audit proof. The operator approved the isolated JWT experiment and the sole new

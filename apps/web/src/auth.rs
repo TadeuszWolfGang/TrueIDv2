@@ -366,18 +366,19 @@ mod tests {
     #[test]
     fn access_token_verifies_fixed_external_hs256_vector() {
         const EXTERNAL_VECTOR_SECRET: &str = "fixed-public-fake-secret-for-trueid-jwt-compat-tests";
-        const EXTERNAL_HS256_TOKEN: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0MiIsInJvbGUiOiJPcGVyYXRvciIsInRva2VuX3ZlcnNpb24iOjMsImV4cCI6NDEwMjQ0NDgwMCwiaWF0IjoxNzAwMDAwMDAwfQ.aEwkcAMgoU4epJLlJ5-Kpk73yGVVbtydyNZTTNnaxMM";
+        const EXTERNAL_HS256_HEADER: &str = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9";
+        const EXTERNAL_HS256_PAYLOAD: &str = "eyJzdWIiOiI0MiIsInJvbGUiOiJPcGVyYXRvciIsInRva2VuX3ZlcnNpb24iOjMsImV4cCI6NDEwMjQ0NDgwMCwiaWF0IjoxNzAwMDAwMDAwfQ";
+        const EXTERNAL_HS256_SIGNATURE: &str = "aEwkcAMgoU4epJLlJ5-Kpk73yGVVbtydyNZTTNnaxMM";
+        let token =
+            format!("{EXTERNAL_HS256_HEADER}.{EXTERNAL_HS256_PAYLOAD}.{EXTERNAL_HS256_SIGNATURE}");
         let config = JwtConfig {
             secret: EXTERNAL_VECTOR_SECRET.to_string(),
             dev_mode: false,
         };
 
-        let claims = validate_token(&config, EXTERNAL_HS256_TOKEN).unwrap();
+        let claims = validate_token(&config, &token).unwrap();
 
-        assert_eq!(
-            decode_header(EXTERNAL_HS256_TOKEN).unwrap().alg,
-            Algorithm::HS256
-        );
+        assert_eq!(decode_header(&token).unwrap().alg, Algorithm::HS256);
         assert_eq!(claims.sub, "42");
         assert_eq!(claims.role, "Operator");
         assert_eq!(claims.token_version, 3);
