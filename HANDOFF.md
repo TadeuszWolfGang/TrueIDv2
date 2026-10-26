@@ -1,4 +1,217 @@
-# HANDOFF — browser login compatibility
+# HANDOFF — AWS-LC JWT candidate; CodeQL nonce fixture checkpoint
+
+## Current checkpoint — 2026-10-26
+
+Phase: POST-REALIZATION — one scoped repair of the separate CodeQL acceptance
+failure on draft PR #43, branch `spike/jwt-aws-lc`. Starting application head:
+`6c0cb1537fd1c058fd92ca429d2f05b574deaf0f`.
+
+Triage: P3, small effort, test-only false positive. Separate CodeQL check run
+[121727672720](https://github.com/TadeuszWolfGang/TrueIDv2/runs/121727672720)
+failed with two new critical-severity annotations titled "Hard-coded
+cryptographic value": the fixed nonce shared by signed ID-token fixtures and
+the mismatched expected nonce literal in `apps/web/src/oidc.rs`. Successful
+workflow jobs on the preceding head do not satisfy this separate check.
+
+The test-only helper now accepts `nonce: &str`. Each of the existing 14
+`validate_id_token_*` tests uses the existing production generator
+`crate::auth::generate_random_hex(24)` and passes that nonce into both signed
+claims and expected validation. The wrong-nonce case independently generates a
+second expected nonce, asserts their difference, preserves the valid signature,
+and still asserts the `invalid nonce` rejection. All test names, case counts
+and existing assertions remain. The pre-existing authorization URL format test
+is unchanged. No scanner exception, rule suppression, policy, dependency,
+public API, schema or production crypto change was introduced.
+
+Before/after OIDC SHA256:
+
+- Before: `6079c62d49a8af651f8e518e9ef8c9c2827cef81ca97b99cf8956288c26fbca6`.
+- After: `a5866e3af256c40b0f7a520272753a074c6dcbb10e73a172d7544b38523bfc4d`.
+
+Production bytes before `#[cfg(test)]` are identical. The auth vector source,
+DER fixtures, manifests, lockfile, audit policy and Windows workflow are
+unchanged. Separate frontier source review and parent source review both PASS.
+No application build/test ran on the Mac.
+
+After explicit CT106 release, its complete previous 350-entry / 291-file source
+snapshot matched before a UID1000 write of only `oidc.rs`; mode/UID/GID were
+preserved. Original captures/manifests remain immutable. The revised expected
+snapshot SHA is
+`4b16f1fe641d503777c95aeb52c27f57872f9afa93d777599d403acc2cf062b4`.
+Sequential offline checks as `trueid-build` passed:
+
+```bash
+cargo fmt --all -- --check
+cargo test -p trueid-web --lib --offline --locked -- --test-threads=1
+```
+
+Fmt exit 0; web exit 0, 53 passed / 0 failed / 0 ignored / 0 filtered,
+including all 14 OIDC validation cases. No timeout occurred. Safe results,
+exact selectors, exits and log hashes are recorded under
+`../trueid-lab/state/m2-executor/codeql-nonce-fix/`; raw logs remain private in
+CT106. Full final source/ten-file manifest/Git/executable guards PASS; no UID1000
+process, disposable DB or private certificate key remains. Executor/firewall
+policy is unchanged. One initial guard failed before any write because its Git
+status enumeration lacked `--untracked-files=all`; the consumed failed receipt
+is preserved, and corrected `sync-v2` again required the entire old snapshot
+before writing. No raw-log export was attempted.
+
+The previously completed workspace, native production HTTPS/GLIBC and 16 live
+HTTPS auth/RBAC results remain their own evidence. Production is unchanged, so
+those runs were not repeated for this test-only repair. Full details:
+`../trueid-lab/M2_CODEQL_NONCE_FIX.md`.
+
+Next action: independently review and publish this checkpoint, then observe all
+checks on its exact new head, including the separate CodeQL check run. CodeQL
+has not yet been shown clean for these repaired bytes. Do not infer GO, merge,
+deployment or an RSA-size migration decision. CT106 is released to the parent.
+
+```bash
+gh pr checks 43 --repo TadeuszWolfGang/TrueIDv2
+gh api 'repos/TadeuszWolfGang/TrueIDv2/commits/spike/jwt-aws-lc/check-runs' --jq '.check_runs[] | {id,name,head_sha,status,conclusion,details_url}'
+```
+
+## Archived hosted CI repair checkpoint
+
+## Current checkpoint — 2026-10-26
+
+Phase: POST-REALIZATION — one checkpoint repairing the two observed hosted CI
+acceptance failures on draft PR #43, branch `spike/jwt-aws-lc`. Starting head:
+`a7ddfc5b037c69ac52834e44c17ba81e38730fc0`.
+
+The Windows workflow run `40363830382` was rejected before any jobs because
+job-level `env` cannot use the `runner` context. `CARGO_TARGET_DIR` now uses the
+job-private checkout-relative path `target/windows-web` on the fresh hosted VM.
+This is the workflow's only semantic change. Its native x64 requirement,
+19-case discovery gate, both `--include-ignored` runs, release build, lockfile
+check, read-only contents permission and checkout without persisted credentials
+are preserved. Context availability reference:
+<https://docs.github.com/en/actions/reference/workflows-and-actions/contexts#context-availability>.
+
+SAST job `121716263724` in run `40363895562` reported exactly one Gitleaks
+`jwt` finding at `apps/web/src/auth.rs:369`. It was the fixed public fake HS256
+vector beside its public test key, not a real credential. The test now stores
+the original header, payload and signature as separate constants and joins them
+at runtime with `format!`. Independent Python stdlib parsing and HMAC-SHA256
+verification proved that the joined bytes, key, claims and signature are
+unchanged. The test still calls no JWT signing encoder. No scanner exception,
+allow rule, dependency, production validation or credential changed.
+
+Local data-only validation completed on the Mac:
+
+- Ruby Psych parsed the workflow; comparison against the starting head found
+  only the intended environment value change and preserved all gate settings.
+- Official Gitleaks v8.30.0 Darwin ARM64 archive and checksum manifest matched
+  the published checksum and GitHub release asset SHA256 values. The old auth
+  source reproduced one `jwt` finding (exit 1); the repaired auth source and
+  full tracked-file snapshot each had zero findings (exit 0). All scanner output
+  was redacted; evidence reports retain finding metadata only.
+- Standalone Rustfmt check and `git diff --check` pass. Production auth and
+  OIDC prefixes are byte-identical to the starting head. Candidate manifests,
+  `Cargo.lock`, DER fixtures and the original model capture are preserved. Lock
+  SHA256 remains `523a8474a702011f09f14801c127a6032119fefe57d05d96e370a5890f2aac43`.
+- Evidence: `../trueid-lab/state/m2-executor/ci-acceptance-repair/` contains
+  data, workflow and scanner validation metadata. The verified scanner and
+  published-source checksums are in the ignored sibling `tools/gitleaks-v8.30.0/`.
+
+The coordinator observed the preceding immutable Linux candidate's full
+workspace result: 436 passed, 16 intentionally ignored, zero failed; the
+security-focused Clippy gate passed. Evidence is
+`../trueid-lab/state/m2-executor/linux-validation/{workspace-tests,security-clippy}.json`.
+These source bytes have not been built or tested on the Mac. The separate
+native HTTPS/glibc release validation is owned by the Linux lane; its completed
+result and a same-source retest after synchronizing this fixture change remain
+acceptance work. Actual hosted Windows and SAST results on the new commit are
+pending publication and must be observed before claiming those gates passed.
+
+The coordinator's read-only CT104 metadata proof found the web service active,
+OIDC disabled and no configured issuer. It read no credential columns and made
+no configuration or service change:
+`../trueid-lab/state/m2-executor/production-oidc-metadata-read-20261026.json`.
+This does not remove the migration gate: AWS-LC RS256 supports 2048–8192-bit
+keys, whereas the old JWK path had maximum 4096 and no explicit minimum 2048.
+Configured-provider compatibility, migration acceptance, merge and deployment
+remain open. No merge, push, deployment or CT106 operation belongs to this
+repair checkpoint.
+
+Next action: independently review and publish this checkpoint, then synchronize
+only the repaired test source to the isolated Linux validation lane and observe
+the exact-head hosted checks. Preserve the original model capture.
+
+```bash
+gh run list --repo TadeuszWolfGang/TrueIDv2 --branch spike/jwt-aws-lc --limit 20
+```
+
+## Previous audit-policy checkpoint — 2026-10-26
+
+Phase: POST-REALIZATION — separate audit-policy checkpoint after graph and raw
+audit proof. The operator approved the isolated JWT experiment and the sole new
+transitive PackageID `untrusted 0.7.1`. GLM implemented the candidate through Flue
+in isolated CT106. Independent frontier reviewers inspected the captured source,
+dependency graph, fixtures and added Windows test gate.
+
+Upstream baseline: `6727fcf363347bf4c7e1819a59cf4db4deabff39`.
+Only JWT's feature changes from `rust_crypto` to `aws_lc_rs`; production session
+and OIDC validation code is byte-identical. The lock adds `untrusted 0.7.1`,
+removes 28 packages including `rsa` and `crypto-bigint`, and preserves retained
+PackageIDs/checksums. Candidate lock SHA256:
+`523a8474a702011f09f14801c127a6032119fefe57d05d96e370a5890f2aac43`.
+
+Independent validation completed before this checkpoint:
+
+- Raw cargo-audit 0.22.1: exit 0, zero vulnerabilities/warnings, effective
+  ignores/architecture/OS filters empty. RustSec database commit
+  `a78282a1414d6c28cc228c4eae3570451affb0dc`.
+- All-target feature graph has only AWS-LC JWT, no RustCrypto JWT, RSA,
+  crypto-bigint, PEM, FIPS or bindgen feature.
+- Public DER fixtures and license match the published jsonwebtoken 11.1.0
+  archive. Python stdlib independently verified the external fake HS256 vector.
+- Rustfmt passes. Original web library tests: 50 passed, zero failed/ignored.
+  Independent review added three signed OIDC cases for array audience and
+  expiry within the library's leeway; corrected suite: 53 passed, zero ignored.
+  The full workspace discovery contains 452 tests; execution has no completed
+  result at this checkpoint.
+- New Windows gate was independently reviewed, YAML-parsed and checks native
+  x64 test discovery, execution including ignored tests, and a release web build.
+  Actual Windows execution is pending. Existing agent-only smoke is insufficient.
+
+This checkpoint independently rechecked the ten imported files against
+`../trueid-lab/state/m2-executor/linux-validation/audited-files.json` and the
+final source capture. Lock comparison reproduced the sole new PackageID,
+28 removals and unchanged retained checksums. The recorded all-target graph and
+raw audit hashes, exit status, lock identity and empty filters correspond to
+this candidate. Evidence: `candidate-package-comparison.json`,
+`candidate-raw-audit{,-exit}.json` and `linux-validation/feature-tree.{log,json}`
+under `../trueid-lab/state/m2-executor/`.
+
+Only obsolete RUSTSEC-2023-0071 and RUSTSEC-2026-0387 ignores were removed from
+`deny.toml`, the security workflow and local security pipeline. The deny header
+records the backend resolution; `unmaintained = "none"` and all other policy
+remain unchanged. Bash syntax, workflow YAML parsing, active-ignore absence and
+`git diff --check` pass. No application source, fixture, lock or Windows workflow
+changed in this checkpoint, and no application build/test ran on the Mac.
+
+The full workspace run, security-focused Clippy and separate native HTTPS/glibc
+smoke remain pending completed results from the same immutable source in CT106.
+Tests/builds run only as the isolated nonroot builder. The original model
+snapshot remains preserved. No production or other existing guest configuration
+was changed.
+
+Next action: publish this experimental branch as a draft PR, observe checks on
+its exact head, and finish the independent validation record. Actual Windows
+execution, the remaining Linux gates and the migration decision are still open.
+Do not merge or deploy based on the partial results above.
+
+```bash
+gh run list --repo TadeuszWolfGang/TrueIDv2 --branch spike/jwt-aws-lc --limit 20
+```
+
+Migration gate: AWS-LC RS256 accepts 2048–8192-bit keys; the previous JWK path had
+maximum 4096 and no explicit minimum 2048. Configured-provider compatibility and
+the migration decision remain part of acceptance. This checkpoint does not
+accept weak-key compatibility changes or authorize production migration.
+
+## Archived browser login compatibility checkpoint
 
 ## Coordinator acceptance checkpoint
 The final local connector discovery passed all 38 tests, including both live

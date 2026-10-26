@@ -17,7 +17,7 @@ axum = { workspace = true }
 futures-core = "0.3"
 chrono = { workspace = true }
 dashmap = "6"
-jsonwebtoken = { version = "11.0", default-features = false, features = ["rust_crypto"] }
+jsonwebtoken = { version = "11.0", default-features = false, features = ["aws_lc_rs"] }
 rand = "0.10"
 reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "form", "query", "rustls"] }
 urlencoding = "2"

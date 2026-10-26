@@ -1,0 +1,94 @@
+name: windows-web-jwt
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-web-jwt:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CARGO_TARGET_DIR: target/windows-web
+      CARGO_TERM_COLOR: never
+      # Official non-FIPS fallback when the runner has no NASM executable.
+      AWS_LC_SYS_PREBUILT_NASM: "1"
+      AWS_LC_SYS_USE_SYSTEM: "0"
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Setup pinned Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.95.0
+          targets: x86_64-pc-windows-msvc
+
+      - name: Record native environment
+        run: |
+          if ($env:RUNNER_OS -ne "Windows" -or $env:RUNNER_ARCH -ne "X64") {
+            throw "Expected native Windows x64"
+          }
+          git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustc -Vv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo -V
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify compatibility test discovery
+        run: |
+          $tests = @(cargo test --locked -p trueid-web --lib `
+            --target x86_64-pc-windows-msvc -- --list)
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $tests | Write-Output
+          foreach ($required in @(
+            "auth::tests::access_token_uses_hs256: test",
+            "auth::tests::access_token_round_trip_preserves_session_claims: test",
+            "auth::tests::access_token_rejects_wrong_secret: test",
+            "auth::tests::access_token_rejects_valid_hs384_signature: test",
+            "auth::tests::access_token_verifies_fixed_external_hs256_vector: test",
+            "oidc::tests::validate_id_token_accepts_valid_rs256_signature: test",
+            "oidc::tests::validate_id_token_accepts_valid_es256_signature: test",
+            "oidc::tests::validate_id_token_accepts_valid_eddsa_signature: test",
+            "oidc::tests::validate_id_token_rejects_tampered_signature: test",
+            "oidc::tests::validate_id_token_rejects_disallowed_algorithm: test",
+            "oidc::tests::validate_id_token_rejects_wrong_issuer: test",
+            "oidc::tests::validate_id_token_rejects_wrong_audience: test",
+            "oidc::tests::validate_id_token_rejects_wrong_nonce: test",
+            "oidc::tests::validate_id_token_rejects_expired_token: test",
+            "oidc::tests::validate_id_token_rejects_missing_kid: test",
+            "oidc::tests::validate_id_token_rejects_unknown_kid: test",
+            "oidc::tests::validate_id_token_accepts_array_audience_containing_client: test",
+            "oidc::tests::validate_id_token_rejects_array_audience_without_client: test",
+            "oidc::tests::validate_id_token_rejects_recent_expiry_within_library_leeway: test"
+          )) {
+            if ($tests -notcontains $required) {
+              throw "Missing required compatibility test: $required"
+            }
+          }
+
+      - name: Run session compatibility tests
+        run: |
+          cargo test --locked -p trueid-web --lib --target x86_64-pc-windows-msvc auth::tests:: -- --test-threads=1 --include-ignored
+
+      - name: Run OIDC compatibility tests
+        run: |
+          cargo test --locked -p trueid-web --lib --target x86_64-pc-windows-msvc oidc::tests:: -- --test-threads=1 --include-ignored
+
+      - name: Build native release web binary
+        run: cargo build --locked --release -p trueid-web --bin trueid-web --target x86_64-pc-windows-msvc
+
+      - name: Verify lockfile unchanged
+        run: git diff --exit-code -- Cargo.lock
