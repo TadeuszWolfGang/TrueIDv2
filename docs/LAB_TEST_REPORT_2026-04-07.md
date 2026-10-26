@@ -1,5 +1,7 @@
 # TrueID Lab Validation Report — 2026-04-07
 
+> **Historical lab evidence — security notice:** This report describes the 2026-04-07 lab and is not an operational runbook. Credential-bearing commands are redacted. Redaction does not revoke credentials; revocation and reuse status require independent verification.
+
 ## Scope
 
 Full re-validation of the TrueID lab environment after previous setup (2026-04-03),
@@ -60,7 +62,7 @@ Proxmox host: 192.168.100.11 (SSH jump, IP forwarding)
 
 | Test | Result | Notes |
 |------|--------|-------|
-| jan.test password reset (AD complexity) | **PASS** | Reset to Lala!2024 |
+| Historical credential-bearing command | **REDACTED** | Command omitted because it contained a credential. |
 | net use from wincli-01 as jan.test → dc01 | **PASS** | Network logon Type 3 |
 | Event 4624 for jan.test in Security log | **PASS** | IP: fe80::4dad:cb10:2c3:23ac |
 | TrueID mapping jan.test ↔ 10.50.0.100 refreshed | **PASS** | Timestamp: 12:59:54 UTC |
@@ -165,7 +167,7 @@ persisted in netplan (trueid-01) and iptables-save (Proxmox).
 ### 2. jan.test password
 
 The jan.test AD account had an unknown password from the previous session.
-Reset to `Lala!2024` (AD complexity requirements prevented plain `Lala!`).
+The historical credential-bearing reset command has been redacted. Credential revocation and reuse status remain unverified.
 
 ## Known Issues
 
