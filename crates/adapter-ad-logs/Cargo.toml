@@ -2,6 +2,7 @@
 name = "net-identity-adapter-ad-logs"
 version = "0.8.0"
 edition = "2021"
+license.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }

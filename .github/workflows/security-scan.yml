@@ -82,15 +82,15 @@ jobs:
         id: install-audit-tools
         run: |
           cargo install cargo-audit --locked
-          cargo install cargo-deny --locked
+          cargo install cargo-deny --version 0.20.2 --locked
 
       - name: Cargo audit
         run: cargo audit
 
-      # Report both advisory sources even when cargo audit already failed.
-      - name: Cargo deny advisories
+      # Run the full deny policy even when cargo audit already failed.
+      - name: Cargo deny full policy
         if: ${{ !cancelled() && steps.install-audit-tools.outcome == 'success' }}
-        run: cargo deny check advisories
+        run: cargo deny --locked check all
 
   container-scan:
     runs-on: ubuntu-26.04

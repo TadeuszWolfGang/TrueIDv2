@@ -2,6 +2,7 @@
 name = "trueid-web"
 version = "0.8.0"
 edition = "2021"
+license.workspace = true
 
 [lib]
 name = "trueid_web"

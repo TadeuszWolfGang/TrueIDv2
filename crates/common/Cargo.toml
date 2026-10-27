@@ -2,6 +2,7 @@
 name = "trueid-common"
 version = "0.8.0"
 edition = "2021"
+license.workspace = true
 
 [dependencies]
 aes-gcm = "0.11"
