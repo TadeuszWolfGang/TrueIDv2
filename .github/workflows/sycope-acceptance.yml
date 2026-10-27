@@ -689,7 +689,7 @@ jobs:
               for source, destination, readonly in mounts:
                   config += ['--mount', 'type=bind,source='+str(source)+',target='+destination+(',readonly' if readonly else '')]
               if tmpfs:
-                  config += ['--tmpfs', '/work:rw,nosuid,nodev,noexec,size=512m,uid=1000,gid=1000,mode=0700']
+                  config += ['--tmpfs', '/work:rw,nosuid,nodev,noexec,size=512m,uid=1000,gid=1000,mode=0700', '--tmpfs', '/tmp:rw,nosuid,nodev,noexec,size=128m,uid=1000,gid=1000,mode=0700']
               try:
                   cid = command(config+[image]+args, 30, True).decode('ascii').strip()
                   intent['acked'] = True
