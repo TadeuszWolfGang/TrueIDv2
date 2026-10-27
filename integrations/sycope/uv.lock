@@ -81,12 +81,14 @@ name = "trueid-sycope-connector"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "idna" },
     { name = "requests" },
     { name = "urllib3" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "idna", specifier = ">=3.19,<4" },
     { name = "requests", specifier = ">=2.28.0" },
     { name = "urllib3", specifier = ">=1.26.0" },
 ]
