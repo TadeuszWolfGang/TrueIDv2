@@ -2,6 +2,7 @@
 name = "trueid-cli"
 version = "0.8.0"
 edition = "2021"
+license.workspace = true
 
 [[bin]]
 name = "trueid"

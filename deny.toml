@@ -11,6 +11,23 @@
 #   successor fork proc-macro-error2 (RUSTSEC-2026-0173, unmaintained) was
 #   in turn dropped by tabled 0.22 (tabled_derive 0.12) on 2026-09-23.
 
+[graph]
+all-features = true
+
 [advisories]
-unmaintained = "none"
+unmaintained = "all"
 ignore = []
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "ISC",
+    "BSD-3-Clause",
+    "Zlib",
+    "Unicode-3.0",
+    "0BSD",
+    "CDLA-Permissive-2.0",
+]
+include-dev = true
+include-build = true

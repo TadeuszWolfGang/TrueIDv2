@@ -3,6 +3,7 @@ name = "trueid-integration-tests"
 version = "0.8.0"
 edition = "2021"
 publish = false
+license.workspace = true
 
 # Integration tests only — no lib, just [[test]] binaries.
 
