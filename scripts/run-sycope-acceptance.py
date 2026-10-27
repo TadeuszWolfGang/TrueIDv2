@@ -1,19 +1,10 @@
-"""Sycope acceptance policy seam (C01 RED).
-
-This module defines pure stdlib policy objects for a future acceptance
-runner. Importing it only defines classes and functions; it never
-discovers, loads, or executes product tests.
-
-THE ONLY DELIBERATE RED DEFECT: ``validate_result`` currently accepts
-terminal status SKIP and does not reject skipped results. A future GREEN
-change removes this single permission (PASS-only events, zero skips).
-"""
+"""Strict Sycope acceptance policy: complete real runs with PASS-only outcomes."""
 
 import unittest
 
 
-# Terminal event statuses (RED: SKIP is temporarily allowed).
-_TERMINAL_STATUSES = frozenset({"PASS", "SKIP"})
+# Only PASS is an accepted terminal outcome.
+_TERMINAL_STATUSES = frozenset({"PASS"})
 
 
 def _check_id(value, seen):
@@ -114,7 +105,7 @@ def validate_result(
     timed_out: bool = False,
     cleanup_failed: bool = False,
 ) -> bool:
-    """Validate actual observations; RED deliberately still permits skips."""
+    """Accept complete, successful observations with no skipped methods."""
     if loader_errors or timed_out or cleanup_failed or not isinstance(result, AcceptanceResult):
         return False
     try:
@@ -127,11 +118,10 @@ def validate_result(
             return False
         if type(result.testsRun) is not int or result.testsRun != len(expected):
             return False
-        if (result.failures or result.errors or result.expectedFailures or
+        if (result.failures or result.errors or result.skipped or result.expectedFailures or
                 result.unexpectedSuccesses or result.failing_subtests or result.shouldStop or
                 not result.wasSuccessful()):
             return False
-        # The only RED defect: skipped bookkeeping and SKIP terminals remain allowed.
         events = list(result.terminal_events)
         if len(events) != len(expected):
             return False

@@ -1,12 +1,4 @@
-"""Regression contract for the C01 RED acceptance policy seam.
-
-Loads the hyphenated runner module via importlib (no application
-imports) and exercises it with synthetic unittest cases only.
-
-Expected RED evidence: exactly one failing outer test,
-test_rejects_real_unittest_skip, raising AssertionError containing
-C01_RED_SKIP_ACCEPTED.
-"""
+"""Regressions for strict Sycope acceptance; all eleven policy tests must pass."""
 
 import importlib.util
 import unittest
@@ -168,6 +160,11 @@ class AcceptancePolicyTests(unittest.TestCase):
             ),
             "C01_RED_SKIP_ACCEPTED",
         )
+        # Reject real skipped bookkeeping even if terminal telemetry says PASS.
+        result.terminal_events = [("PASS", event_id) for _, event_id in result.terminal_events]
+        self.assertFalse(validate_result(
+            result, expected_ids=ids, discovered_ids=ids, selected_ids=ids),
+            "C01_SKIPPED_BOOKKEEPING_ACCEPTED")
 
     def test_rejects_invalid_inventory(self):
         suite, result = _run_case(_make_passing_case_factory())
@@ -194,7 +191,7 @@ class AcceptancePolicyTests(unittest.TestCase):
                       [("PASS", "unknown-id")], [("PASS", None)],
                       [("PASS", "")], [("PASS", 1)], [("PASS",)], [None]):
             mutations.append(("terminal_events", value))
-        for status in ("FAIL", "ERROR", "EXPECTED_FAILURE", "UNEXPECTED_SUCCESS", "UNKNOWN", [], None):
+        for status in ("SKIP", "FAIL", "ERROR", "EXPECTED_FAILURE", "UNEXPECTED_SUCCESS", "UNKNOWN", [], None):
             mutations.append(("terminal_events", [(status, ids[0])]))
         for attribute, value in mutations:
             with self.subTest(attribute=attribute, value=value):
