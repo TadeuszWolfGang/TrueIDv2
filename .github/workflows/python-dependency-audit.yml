@@ -517,7 +517,7 @@ jobs:
               except (ValueError, UnicodeError, RecursionError, OverflowError):
                   raise ValueError("SCANNER_INPUT") from None
               _dto_need(type(lock) is dict and type(lock.get("version")) is int and lock["version"] == 1
-                  and type(lock.get("revision")) is int and lock["revision"] == 3, "SCANNER_INPUT")
+                  and type(lock.get("revision")) is int and lock["revision"] in (3, 5), "SCANNER_INPUT")
               project = manifest.get("project") if type(manifest) is dict else None
               _dto_need(type(project) is dict, "SCANNER_INPUT")
               root = (_dto_name(project.get("name")), _dto_version(project.get("version")))

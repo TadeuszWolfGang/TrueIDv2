@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 from pathlib import Path
 import select
 import shutil
@@ -15,6 +16,7 @@ import stat
 import sys
 import tempfile
 import time
+import tomllib
 import unittest
 from unittest import mock
 
@@ -431,30 +433,102 @@ class AuditTests(unittest.TestCase):
 
     def test_real_public_lock_complete_inventory_and_verified_request(self):
         lock = SCANNER_PATH.parent.parent / "integrations/sycope/uv.lock"
-        expected = [{"name": n, "version": v} for n, v in [
-            ("certifi", "2026.10.23"), ("charset-normalizer", "3.5.1"),
-            ("idna", "3.19"), ("requests", "2.34.2"), ("urllib3", "2.8.0")]]
-        response = Response(encoded({"results": [{}, {"vulns": []}, {}, {}, {}]}), chunk=7)
-        code, report, boundary = self.scan(lock, [response])
+        lock_raw = lock.read_bytes()
+        manifest = lock.with_name("pyproject.toml")
+        manifest_raw = manifest.read_bytes()
+        document = tomllib.loads(lock_raw.decode("utf-8", "strict"))
+        declared = tomllib.loads(manifest_raw.decode("utf-8", "strict"))["project"]
+        self.assertIs(type(document["version"]), int)
+        self.assertEqual(document["version"], 1)
+        self.assertIs(type(document["revision"]), int)
+        self.assertIn(document["revision"], (3, 5))
+        self.assertIs(type(declared["name"]), str)
+        self.assertIs(type(declared["version"]), str)
+        normalize = lambda value: re.sub(r"[-_.]+", "-", value).lower()
+        root = (normalize(declared["name"]), declared["version"])
+        self.assertIs(type(document["package"]), list)
+        expected, seen, roots = [], set(), 0
+        for package in document["package"]:
+            self.assertIs(type(package), dict)
+            self.assertIs(type(package["name"]), str)
+            self.assertIs(type(package["version"]), str)
+            pair = (normalize(package["name"]), package["version"])
+            self.assertNotIn(pair, seen)
+            seen.add(pair)
+            if package["source"] == {"virtual": "."}:
+                self.assertEqual(pair, root)
+                roots += 1
+            else:
+                self.assertEqual(package["source"], {"registry": "https://pypi.org/simple"})
+                expected.append({"name": pair[0], "version": pair[1]})
+        self.assertEqual(roots, 1)
+        self.assertTrue(expected)
+        expected.sort(key=lambda row: (row["name"], row["version"]))
+        batches = [expected[start:start + 1000] for start in range(0, len(expected), 1000)]
+        responses = [Response(encoded({"results": [({} if index % 2 else {"vulns": []})
+                     for index in range(len(batch))]}), chunk=7) for batch in batches]
+        code, report, boundary = self.scan(lock, responses)
         self.summary(code, report, 0)
         self.assertEqual(report["inventory"], expected)
-        self.assertEqual((report["submitted"], report["completed"], report["batches"]), (5, 5, 1))
-        self.assertEqual(report["lock_sha256"], digest(lock.read_bytes()))
-        self.assertEqual(report["manifest_sha256"], digest(lock.with_name("pyproject.toml").read_bytes()))
-        self.assertEqual(len(boundary.requests), 1)
-        request = boundary.requests[0]
-        self.assertEqual((request["method"], request["path"]), ("POST", "/v1/querybatch"))
-        self.assertEqual(request["headers"], {"Content-Type": "application/json", "Accept": "application/json"})
-        self.assertEqual(json.loads(request["body"]), {"queries": [
-            {"package": {"ecosystem": "PyPI", "name": p["name"]}, "version": p["version"]} for p in expected]})
-        connection = boundary.connections[0]
-        self.assertEqual(connection.host, "api.osv.dev")
-        self.assertGreater(connection.timeout, 0)
-        self.assertLessEqual(connection.timeout, 10)
-        self.assertTrue(connection.context.check_hostname)
-        self.assertEqual(connection.context.verify_mode, ssl.CERT_REQUIRED)
-        self.assertTrue(connection.closed and response.closed)
-        self.assertGreater(response.reads, 1)
+        self.assertEqual((report["submitted"], report["completed"], report["batches"]),
+                         (len(expected), len(expected), len(batches)))
+        self.assertEqual(report["lock_sha256"], digest(lock_raw))
+        self.assertEqual(report["manifest_sha256"], digest(manifest_raw))
+        self.assertEqual(lock.read_bytes(), lock_raw)
+        self.assertEqual(manifest.read_bytes(), manifest_raw)
+        self.assertEqual(len(boundary.requests), len(batches))
+        self.assertEqual(len(boundary.connections), len(batches))
+        for index, batch in enumerate(batches):
+            with self.subTest(label="public-batch-%s" % index):
+                request = boundary.requests[index]
+                self.assertEqual((request["method"], request["path"]), ("POST", "/v1/querybatch"))
+                self.assertEqual(request["headers"], {"Content-Type": "application/json", "Accept": "application/json"})
+                self.assertEqual(json.loads(request["body"]), {"queries": [
+                    {"package": {"ecosystem": "PyPI", "name": p["name"]}, "version": p["version"]} for p in batch]})
+                connection, response = boundary.connections[index], responses[index]
+                self.assertEqual(connection.host, "api.osv.dev")
+                self.assertGreater(connection.timeout, 0)
+                self.assertLessEqual(connection.timeout, 10)
+                self.assertTrue(connection.context.check_hostname)
+                self.assertEqual(connection.context.verify_mode, ssl.CERT_REQUIRED)
+                self.assertTrue(connection.closed and response.closed)
+                self.assertGreater(response.reads, 1)
+
+    def test_known_lock_revisions_and_rejected_other_revisions(self):
+        rows = [record("Alpha_Pkg", "v1.0"), record("z", "2!3.0+LOCAL")]
+        expected = [{"name": "alpha-pkg", "version": "v1.0"}, {"name": "z", "version": "2!3.0+LOCAL"}]
+        observed = []
+        for revision in (3, 5):
+            with self.subTest(label="supported-revision-%s" % revision):
+                lock = self.project(rows, prefix="version=1\nrevision=%s\n" % revision)
+                response = Response(encoded({"results": [{}, {"vulns": []}]}))
+                code, report, boundary = self.scan(lock, [response])
+                self.summary(code, report, 0)
+                self.assertEqual(report["inventory"], expected)
+                self.assertEqual((report["submitted"], report["completed"], report["batches"]), (2, 2, 1))
+                self.assertEqual(report["lock_sha256"], digest(lock.read_bytes()))
+                self.assertEqual(report["manifest_sha256"], digest(lock.with_name("pyproject.toml").read_bytes()))
+                self.assertEqual(len(boundary.requests), 1)
+                self.assertEqual(json.loads(boundary.requests[0]["body"]), {"queries": [
+                    {"package": {"ecosystem": "PyPI", "name": p["name"]}, "version": p["version"]} for p in expected]})
+                observed.append((report["inventory"], report["submitted"], report["completed"], report["batches"]))
+        self.assertEqual(observed[0], observed[1])
+        unsupported = [("revision-" + label, "version=1\nrevision=" + literal + "\n") for label, literal in [
+            ("two", "2"), ("four", "4"), ("six", "6"), ("future", "999"), ("zero", "0"), ("negative", "-1"),
+            ("true", "true"), ("false", "false"), ("float-three", "3.0"), ("float-five", "5.0"),
+            ("string-three", '"3"'), ("string-five", '"5"'), ("array", "[3,5]"), ("table", "{value=5}")]]
+        unsupported += [("missing-revision", "version=1\n")]
+        unsupported += [("version-" + label, "version=" + literal + "\nrevision=5\n") for label, literal in [
+            ("two", "2"), ("negative", "-1"), ("true", "true"), ("float", "1.0"), ("string", '"1"')]]
+        for label, prefix in unsupported:
+            with self.subTest(label=label):
+                lock = self.project(rows, prefix=prefix)
+                code, report, boundary = self.scan(lock, [])
+                self.summary(code, report, 2)
+                self.assertEqual(report["error"], "INPUT")
+                self.assertEqual((report["submitted"], report["completed"], report["batches"]), (0, 0, 0))
+                self.assertEqual(boundary.connections, [])
+                self.assertEqual(boundary.requests, [])
 
     def test_normalization_versions_and_sixth_transitive_finding(self):
         rows = [record("Z", "2"), record("Alpha_Pkg", "v1.0"), record("alpha.pkg", "1!2.0rc1.post2.dev3+LOCAL-1"),
