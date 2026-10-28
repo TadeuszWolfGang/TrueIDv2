@@ -596,42 +596,282 @@ jobs:
               cancelled = True
 
 
+          def owned_cli_capture(argv, seconds, *, cleanup=False, stdout_cap=1048576, stderr_cap=65536):
+              """Bound one CLI and its causally owned children; never reap the anchor early."""
+              import ctypes
+              import errno
+              import math
+              global cleanup_uncertain
+              process = main_ref = self_ref = terminal = None
+              refs = {}
+              selector = selectors.DefaultSelector()
+              chunks = {'stdout': bytearray(), 'stderr': bytearray()}
+              started = time.monotonic()
+              problem = None
+              clean = False
+              armed = False
+              previous = None
+              libc = None
+              active_before = getattr(owned_cli_capture, '_active', False)
+
+              def no_children():
+                  try: os.waitid(os.P_ALL, 0, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+                  except ChildProcessError: return True
+                  return False
+
+              def row(dfd):
+                  fd = os.open('stat', os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW, dir_fd=dfd)
+                  try: data = os.read(fd, 8193)
+                  finally: os.close(fd)
+                  need(len(data) <= 8192 and b')' in data, 'OWNED_STAT')
+                  fields = data[data.rfind(b')') + 2:].split()
+                  need(len(fields) >= 20, 'OWNED_STAT')
+                  return {'pid': int(data[:data.index(b' ')]), 'ppid': int(fields[1]),
+                          'start': int(fields[19])}
+
+              def read(ref):
+                  try: current = row(ref['proc'])
+                  except OSError as error:
+                      if error.errno in (errno.ENOENT, errno.ESRCH): return None
+                      raise
+                  need((current['pid'], current['start']) == ref['identity'], 'OWNED_IDENTITY')
+                  return current
+
+              def close_ref(ref):
+                  for key in ('pidfd', 'proc'):
+                      fd = ref[key]
+                      if fd is not None:
+                          os.close(fd)
+                          ref[key] = None
+
+              def pin(pid, parent=None):
+                  parent_before = read(parent) if parent is not None else None
+                  need(parent is None or parent_before is not None, 'OWNED_RESCAN')
+                  dfd = os.open('/proc/' + str(pid), os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW)
+                  pfd = None
+                  try:
+                      first = row(dfd)
+                      pfd = os.pidfd_open(pid, 0)
+                      last = row(dfd)
+                      need(first['pid'] == last['pid'] == pid and first['start'] == last['start'], 'OWNED_RESCAN')
+                      if parent is not None:
+                          parent_after = read(parent)
+                          need(parent_after is not None and first['ppid'] == last['ppid'] == parent_before['pid'] ==
+                               parent_after['pid'], 'OWNED_RESCAN')
+                      return {'proc': dfd, 'pidfd': pfd, 'identity': (pid, last['start'])}
+                  except BaseException:
+                      if pfd is not None: os.close(pfd)
+                      os.close(dfd)
+                      raise
+
+              def exited(ref):
+                  # WNOWAIT is also the identity-safe readiness observation for an adopted child.
+                  poller = selectors.DefaultSelector()
+                  try:
+                      poller.register(ref['pidfd'], selectors.EVENT_READ)
+                      return bool(poller.select(0))
+                  finally: poller.close()
+
+              def discover():
+                  nonlocal main_ref
+                  ids = sorted(int(value) for value in os.listdir('/proc') if value.isdecimal())
+                  need(len(ids) <= 4096, 'OWNED_SCAN_CAP')
+                  parents = {os.getpid(): self_ref}
+                  for ref in refs.values():
+                      if read(ref) is not None: parents[ref['identity'][0]] = ref
+                  known = {ref['identity'][0] for ref in refs.values()}
+                  for pid in ids:
+                      if pid == os.getpid() or pid in known: continue
+                      dfd = None
+                      try:
+                          dfd = os.open('/proc/' + str(pid), os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW)
+                          candidate = row(dfd)
+                          parent = parents.get(candidate['ppid'])
+                          if parent is None: continue
+                          ref = pin(pid, parent)
+                      except OSError as error:
+                          if error.errno in (errno.ENOENT, errno.ESRCH): continue
+                          raise
+                      except Failure as error:
+                          if error.code == 'OWNED_RESCAN': continue
+                          raise
+                      finally:
+                          if dfd is not None: os.close(dfd)
+                      if len(refs) >= 256:
+                          close_ref(ref)
+                          raise Failure('OWNED_PROCESS_CAP')
+                      refs[ref['identity']] = ref
+                      parents[pid] = ref
+                      known.add(pid)
+                      if process is not None and pid == process.pid and main_ref is None: main_ref = ref
+
+              def observe():
+                  nonlocal terminal
+                  if main_ref is not None and terminal is None:
+                      terminal = os.waitid(os.P_PIDFD, main_ref['pidfd'], os.WEXITED | os.WNOHANG | os.WNOWAIT)
+                      if terminal is not None:
+                          need(terminal.si_pid == process.pid and terminal.si_code in
+                               (os.CLD_EXITED, os.CLD_KILLED, os.CLD_DUMPED), 'OWNED_MAIN_STATUS')
+                  for identity, ref in list(refs.items()):
+                      if ref is main_ref or not exited(ref): continue
+                      try:
+                          result = os.waitid(os.P_PIDFD, ref['pidfd'], os.WEXITED | os.WNOHANG)
+                          need(result is None or result.si_pid == identity[0], 'OWNED_REAP_IDENTITY')
+                      except ChildProcessError:
+                          pass  # Its owned living parent reaped it, or it is not adopted yet.
+                      close_ref(ref)
+                      del refs[identity]
+
+              def pump(discard=False):
+                  for key, _mask in selector.select(0.02):
+                      try: part = os.read(key.fd, 65536)
+                      except BlockingIOError: continue
+                      if not part:
+                          selector.unregister(key.fileobj)
+                          continue
+                      if not discard:
+                          target = chunks[key.data]
+                          limit = stdout_cap if key.data == 'stdout' else stderr_cap
+                          room = max(0, limit - len(target))
+                          target.extend(part[:room])
+                          need(len(part) <= room, 'CAPTURE_CAP')
+
+              def finish():
+                  nonlocal clean
+                  if selector.get_map(): return False
+                  if process is None:
+                      clean = not refs and no_children()
+                      return clean
+                  if main_ref is None or terminal is None or any(ref is not main_ref for ref in refs.values()): return False
+                  # Single-thread/no-concurrent-spawn lease makes every other direct child
+                  # causally owned; an unseen adopted root must be discovered before reap.
+                  fd = os.open('/proc/self/task/' + str(os.getpid()) + '/children', os.O_RDONLY | os.O_CLOEXEC)
+                  try: children = os.read(fd, 65537)
+                  finally: os.close(fd)
+                  need(len(children) <= 65536, 'OWNED_CHILDREN_CAP')
+                  if {int(value) for value in children.split()} != {process.pid}: return False
+                  expected = terminal.si_status if terminal.si_code == os.CLD_EXITED else -terminal.si_status
+                  actual = process.wait(timeout=0)  # Sole exact reaper, after descendants and PIPE EOF.
+                  need(actual == expected, 'OWNED_MAIN_REAP_STATUS')
+                  close_ref(main_ref)
+                  del refs[main_ref['identity']]
+                  clean = no_children()
+                  need(clean, 'OWNED_DRAIN_UNPROVEN')
+                  return True
+
+              try:
+                  need(cleanup or not cancelled, 'CANCELLED')
+                  need(type(seconds) in (int, float) and math.isfinite(seconds) and 0 < seconds <= 1800 and
+                       type(stdout_cap) is type(stderr_cap) is int and 0 < stdout_cap <= 2097152 and
+                       0 < stderr_cap <= 2097152, 'CAPTURE_BOUNDS')
+                  need(not active_before and len(os.listdir('/proc/self/task')) == 1 and
+                       signal.getsignal(signal.SIGCHLD) == signal.SIG_DFL and no_children(), 'OWNED_CAPTURE_PREFLIGHT')
+                  owned_cli_capture._active = True
+                  libc = ctypes.CDLL(None, use_errno=True)
+                  libc.prctl.restype = ctypes.c_int
+                  value = ctypes.c_int(-1)
+                  need(libc.prctl(37, ctypes.byref(value), 0, 0, 0) == 0 and value.value in (0, 1), 'OWNED_GET_SUBREAPER')
+                  previous = value.value
+                  need(libc.prctl(36, 1, 0, 0, 0) == 0, 'OWNED_SET_SUBREAPER')
+                  armed = True
+                  need(libc.prctl(37, ctypes.byref(value), 0, 0, 0) == 0 and value.value == 1, 'OWNED_VERIFY_SUBREAPER')
+                  self_ref = pin(os.getpid())
+                  process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                             stderr=subprocess.PIPE, start_new_session=True, env=environment)
+                  main_ref = pin(process.pid, self_ref)
+                  refs[main_ref['identity']] = main_ref
+                  for label in chunks:
+                      pipe = getattr(process, label)
+                      os.set_blocking(pipe.fileno(), False)
+                      selector.register(pipe, selectors.EVENT_READ, label)
+                  while True:
+                      need(cleanup or not cancelled, 'CANCELLED')
+                      need(time.monotonic() - started < seconds, 'TIMEOUT')
+                      discover()
+                      observe()
+                      pump()
+                      if finish(): break
+              except BaseException as error:
+                  cleanup_uncertain = True  # Preserve R2 policy: every capture exception poisons later stages.
+                  problem = error
+              finally:
+                  if armed and not clean:
+                      until = time.monotonic() + 6
+                      term_until = time.monotonic() + 3
+                      sent = set()
+                      while time.monotonic() < until:
+                          try:
+                              if self_ref is not None: discover()
+                          except BaseException:
+                              cleanup_uncertain = True
+                          try:
+                              observe()
+                          except BaseException:
+                              cleanup_uncertain = True
+                          signum = signal.SIGTERM if time.monotonic() < term_until else signal.SIGKILL
+                          # Failed discovery or one damaged ref never suppresses other proved pidfds.
+                          for identity, ref in list(refs.items()):
+                              try:
+                                  if (identity, signum) in sent or exited(ref): continue
+                                  signal.pidfd_send_signal(ref['pidfd'], signum, None, 0)
+                                  sent.add((identity, signum))
+                              except ProcessLookupError: pass
+                              except BaseException: cleanup_uncertain = True  # No numeric/global fallback.
+                          try:
+                              pump(discard=True)
+                          except BaseException:
+                              cleanup_uncertain = True
+                          try:
+                              if finish(): break
+                          except BaseException:
+                              cleanup_uncertain = True
+                          time.sleep(0.01)
+                  if armed and clean:
+                      try:
+                          value = ctypes.c_int(-1)
+                          need(libc.prctl(36, previous, 0, 0, 0) == 0 and
+                               libc.prctl(37, ctypes.byref(value), 0, 0, 0) == 0 and value.value == previous,
+                               'OWNED_RESTORE_SUBREAPER')
+                      except BaseException as error:
+                          cleanup_uncertain = True
+                          problem = problem or error
+                  if armed and not clean:
+                      cleanup_uncertain = True
+                      problem = problem or Failure('OWNED_DRAIN_UNPROVEN')
+                  for ref in list(refs.values()) + ([self_ref] if self_ref is not None else []):
+                      try: close_ref(ref)
+                      except BaseException as error:
+                          cleanup_uncertain = True
+                          problem = problem or error
+                  try:
+                      selector.close()
+                      if process is not None:
+                          process.stdout.close()
+                          process.stderr.close()
+                  except BaseException as error:
+                      cleanup_uncertain = True
+                      problem = problem or error
+                  if not active_before: owned_cli_capture._active = False
+              if problem is not None: raise problem
+              need(clean, 'OWNED_DRAIN_UNPROVEN')
+              return process.returncode, bytes(chunks['stdout']), bytes(chunks['stderr']), round(time.monotonic() - started, 3)
+
+
           def command(args, seconds, capture=False, cleanup=False, with_exit=False):
               need(cleanup or not cancelled, 'COMMAND_CANCELLED')
-              process = None
-              selector = selectors.DefaultSelector()
-              data = bytearray()
               try:
-                  process = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                             stderr=subprocess.DEVNULL, env=environment, start_new_session=True)
-                  os.set_blocking(process.stdout.fileno(), False)
-                  selector.register(process.stdout, selectors.EVENT_READ)
-                  end = time.monotonic()+seconds
-                  while selector.get_map() or process.poll() is None:
-                      need((cleanup or not cancelled) and time.monotonic() < end, 'COMMAND_INTERRUPTED_OR_TIMEOUT')
-                      for key, _mask in selector.select(0.1):
-                          part = os.read(key.fd, 65536)
-                          if not part:
-                              selector.unregister(key.fileobj)
-                          elif capture:
-                              data.extend(part)
-                              need(len(data) <= 524288, 'CAPTURE_LIMIT')
-                  code = process.wait(timeout=1)
-                  if with_exit:
-                      return code, bytes(data)
-                  need(code == 0, 'COMMAND_EXIT')
-                  return bytes(data)
-              finally:
-                  if process is not None and process.poll() is None:
-                      os.killpg(process.pid, signal.SIGTERM)
-                      try:
-                          process.wait(timeout=5)
-                      except subprocess.TimeoutExpired:
-                          os.killpg(process.pid, signal.SIGKILL)
-                          process.wait(timeout=5)
-                  selector.close()
-                  if process is not None and process.stdout is not None:
-                      process.stdout.close()
+                  code, raw, _stderr, _elapsed = owned_cli_capture(args, seconds, cleanup=cleanup,
+                      stdout_cap=524288 if capture else 2097152, stderr_cap=2097152)
+              except Failure as error:
+                  legacy = {'CANCELLED': 'COMMAND_INTERRUPTED_OR_TIMEOUT',
+                            'TIMEOUT': 'COMMAND_INTERRUPTED_OR_TIMEOUT', 'CAPTURE_CAP': 'CAPTURE_LIMIT'}
+                  if error.code in legacy: raise Failure(legacy[error.code]) from None
+                  raise
+              data = raw if capture else b''
+              if with_exit:
+                  return code, data
+              need(code == 0, 'COMMAND_EXIT')
+              return data
 
 
           def inspect_container(cid, cleanup=False):
