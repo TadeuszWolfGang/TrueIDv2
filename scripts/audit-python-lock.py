@@ -128,7 +128,7 @@ def _read_regular(path):
 
 def _inventory(lock, manifest):
     _require(type(lock) is dict and type(lock.get("version")) is int and lock["version"] == 1 and
-        type(lock.get("revision")) is int and lock["revision"] == 3, "INPUT")
+        type(lock.get("revision")) is int and lock["revision"] in (3, 5), "INPUT")
     project = manifest.get("project") if type(manifest) is dict else None
     _require(type(project) is dict, "INPUT")
     root = (_name(project.get("name")), _version(project.get("version")))
