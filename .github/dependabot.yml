@@ -15,8 +15,6 @@ updates:
         update-types:
           - "patch"
           - "minor"
-    # Keep RSA updates enabled: jsonwebtoken uses it for OIDC verification.
-    # The reviewed advisory exception is documented in deny.toml.
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
@@ -33,3 +31,7 @@ updates:
     directory: "/integrations/sycope"
     schedule:
       interval: monthly
+  - package-ecosystem: uv
+    directory: "/integrations/sycope"
+    schedule:
+      interval: weekly
