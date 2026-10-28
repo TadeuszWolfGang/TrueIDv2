@@ -1,0 +1,1287 @@
+name: python-dependency-audit
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up existing Docker builder
+        uses: docker/setup-buildx-action@v4
+        with:
+          driver: docker
+      - name: Python lock unit consistency and live audit
+        shell: bash
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          python3 -I -B - <<'PY'
+          """One-job CI coordinator; embedded contracts are trusted workflow source."""
+          import ast
+          import base64
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import secrets
+          import selectors
+          import shutil
+          import signal
+          import stat
+          import subprocess
+          import tempfile
+          import time
+
+          # The assembler places readable exact source literals here, before main.
+          CONTRACT_SOURCE = r'''"""Trusted DATA-only C02 inventory/report contract; no product imports or I/O."""
+          import ast
+          import json
+          import math
+          import re
+
+          MODULE='test_audit_python_lock'
+          MAX_REPORT=1048576
+          MAX_METHODS=256
+          MAX_SUBTESTS=4096
+          FILES={'scripts/audit-python-lock.py','scripts/test_audit_python_lock.py',
+           'integrations/sycope/uv.lock','integrations/sycope/pyproject.toml'}
+
+
+          def require(ok,code):
+              if not ok:raise RuntimeError(code)
+
+
+          def strict_json(raw):
+              require(type(raw) is bytes and 0<len(raw)<=MAX_REPORT,'JSON_SIZE')
+              text=raw.decode('utf-8',errors='strict')
+              require(not text.startswith('\ufeff') and '\x00' not in text and
+                  not any(0xD800<=ord(c)<=0xDFFF for c in text),'JSON_TEXT')
+              depth=0;quoted=False;escaped=False
+              for c in text:
+                  if quoted:
+                      if escaped:escaped=False
+                      elif c=='\\':escaped=True
+                      elif c=='"':quoted=False
+                  elif c=='"':quoted=True
+                  elif c in '[{':
+                      depth+=1;require(depth<=20,'JSON_DEPTH')
+                  elif c in ']}':depth-=1;require(depth>=0,'JSON_DEPTH')
+              require(depth==0 and not quoted,'JSON_COMPLETE')
+              def pairs(rows):
+                  result={}
+                  for k,v in rows:require(k not in result,'JSON_DUPLICATE');result[k]=v
+                  return result
+              def bad(_value):raise RuntimeError('JSON_NONFINITE')
+              value=json.loads(text,object_pairs_hook=pairs,parse_constant=bad)
+              def strings(item):
+                  if type(item) is float:require(math.isfinite(item),'JSON_NONFINITE')
+                  elif type(item) is str:require('\x00' not in item and not any(0xD800<=ord(c)<=0xDFFF for c in item),'JSON_TEXT')
+                  elif type(item) is list:
+                      for v in item:strings(v)
+                  elif type(item) is dict:
+                      for k,v in item.items():strings(k);strings(v)
+              strings(value)
+              return value
+
+
+          def derive_expected_ids(raw):
+              require(type(raw) is bytes and 0<len(raw)<=131072,'TEST_SOURCE_SIZE')
+              text=raw.decode('utf-8',errors='strict')
+              tree=ast.parse(text,filename='<audited-C02-test-source-data>',mode='exec')
+              module_aliases=set();case_aliases=set()
+              for node in tree.body:
+                  if isinstance(node,ast.Import):
+                      module_aliases.update(n.asname or 'unittest' for n in node.names if n.name=='unittest')
+                  if isinstance(node,ast.ImportFrom) and node.level==0 and node.module=='unittest':
+                      case_aliases.update(n.asname or n.name for n in node.names if n.name=='TestCase')
+                  require(not isinstance(node,(ast.FunctionDef,ast.AsyncFunctionDef)) or node.name!='load_tests',
+                      'LOAD_TESTS_FORBIDDEN')
+              def standard_base(base):
+                  return ((isinstance(base,ast.Name) and base.id in case_aliases) or
+                      (isinstance(base,ast.Attribute) and base.attr=='TestCase' and isinstance(base.value,ast.Name)
+                       and base.value.id in module_aliases))
+              direct=[n for n in tree.body if isinstance(n,ast.ClassDef) and any(standard_base(b) for b in n.bases)]
+              require(len({c.name for c in direct})==len(direct),'DUPLICATE_TEST_CLASS')
+              for node in ast.walk(tree):
+                  if isinstance(node,ast.ClassDef) and any(standard_base(b) for b in node.bases):
+                      require(any(node is c for c in direct),'NON_TOP_LEVEL_TESTCASE')
+              ids=[];classes={}
+              for cls in direct:
+                  require(len(cls.bases)==1 and not cls.keywords,'DIRECT_STANDARD_TESTCASE')
+                  methods=[n for n in cls.body if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef)) and n.name.startswith('test')]
+                  require(all(type(n) is ast.FunctionDef for n in methods),'ASYNC_TESTCASE_METHOD')
+                  names=[n.name for n in methods]
+                  require(len(names)==len(set(names)),'DUPLICATE_TEST_METHOD')
+                  classes[cls.name]=tuple(sorted(names))
+                  ids.extend(MODULE+'.'+cls.name+'.'+n for n in names)
+              require(0<len(ids)<=MAX_METHODS and len(ids)==len(set(ids)),'METHOD_INVENTORY_BOUND')
+              require(all(re.fullmatch(r'test_audit_python_lock\.[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*',n) for n in ids),
+                  'PUBLIC_METHOD_ID')
+              return tuple(sorted(ids)),classes
+
+
+          def source_metadata(source_files):
+              require(type(source_files) is dict and set(source_files)==FILES,'EXACT_FOUR_SOURCE_FILES')
+              for item in source_files.values():
+                  require(type(item) is dict and set(item)=={'sha256','bytes'} and
+                      type(item['bytes']) is int and 0<item['bytes']<=1048576 and type(item['sha256']) is str and
+                      re.fullmatch('[0-9a-f]{64}',item['sha256']) is not None,'SOURCE_METADATA')
+
+
+          def validate_unit_report(raw,*,actual_exit,expected_ids,source_files):
+              report=strict_json(raw)
+              expected=tuple(expected_ids);n=len(expected)
+              require(type(actual_exit) is int and actual_exit==0 and 0<n<=MAX_METHODS and
+                  len(set(expected))==n and tuple(sorted(expected))==expected,'REAL_PROCESS_AND_INVENTORY')
+              source_metadata(source_files)
+              fields={'schemaVersion','status','execution_scope','expected_exit','expected_ids','discovered_ids_before_run',
+                  'source_hashes_before','source_hashes_after','discovery_complete','observer_intact','event_overflow','error',
+                  'runtime','tests_run','started_ids','stopped_ids','success_ids','terminal_events','negative_events',
+                  'subtest_events','counts'}
+              require(type(report) is dict and set(report)==fields,'REPORT_SCHEMA')
+              require(type(report) is dict and report.get('schemaVersion')==1 and
+                  type(report.get('schemaVersion')) is int and report.get('status')=='UNIT_PASS' and
+                  report.get('execution_scope')=='C02_OFFLINE_UNIT_ONLY' and report.get('expected_exit')==0 and
+                  type(report.get('expected_exit')) is int,'ACTUAL_UNIT_REPORT')
+              require(report.get('expected_ids')==list(expected) and report.get('discovered_ids_before_run')==list(expected) and
+                  report.get('discovery_complete') is True and report.get('observer_intact') is True and
+                  report.get('event_overflow') is False and report.get('error') is None,'REAL_COMPLETE_DISCOVERY')
+              source_metadata(report['source_hashes_before']);source_metadata(report['source_hashes_after'])
+              require(report.get('source_hashes_before')==source_files==report.get('source_hashes_after'),
+                  'EXACT_IMMUTABLE_SOURCE_IDENTITY')
+              require(type(report.get('success_ids')) is list and type(report.get('terminal_events')) is list and
+                  all(type(e) is list and len(e)==2 for e in report['terminal_events']),'METHOD_EVENT_TYPES')
+              require(type(report.get('tests_run')) is int and report['tests_run']==n and
+                  report.get('started_ids')==list(expected)==report.get('stopped_ids') and
+                  sorted(report.get('success_ids',[]))==list(expected) and len(report['success_ids'])==n and
+                  sorted(report.get('terminal_events',[]))==sorted([[i,'SUCCESS'] for i in expected]) and
+                  len(report['terminal_events'])==n and report.get('negative_events')==[], 'REAL_METHOD_EVENTS')
+              events=report.get('subtest_events')
+              require(type(events) is list and len(events)<=MAX_SUBTESTS,'SUBTEST_EVENT_BOUND')
+              ordinals={}
+              for event in events:
+                  require(type(event) is dict and set(event)=={'parent_id','ordinal','outcome'} and
+                      event['parent_id'] in expected and type(event['ordinal']) is int and
+                      event['ordinal']==ordinals.get(event['parent_id'],0)+1 and event['outcome']=='SUCCESS',
+                      'REAL_SUBTEST_EVENTS')
+                  ordinals[event['parent_id']]=event['ordinal']
+              counts=report.get('counts')
+              required={'starts':n,'stops':n,'successes':n,'failures':0,'errors':0,'skips':0,'expected_failures':0,
+                  'unexpected_successes':0,'subtests':len(events),'subtest_successes':len(events),'subtest_failures':0,
+                  'subtest_errors':0,'subtest_skips':0}
+              require(type(counts) is dict and counts==required and all(type(v) is int for v in counts.values()),
+                  'NO_NEGATIVE_OR_MISSING_OUTCOMES')
+              runtime=report.get('runtime')
+              require(type(runtime) is dict and set(runtime)=={'uid','gid','isolated','no_bytecode','optimize','version'} and
+                  runtime.get('uid')==runtime.get('gid')==1000 and
+                  type(runtime.get('uid')) is type(runtime.get('gid')) is int and runtime.get('isolated') is True and
+                  runtime.get('no_bytecode') is True and runtime.get('optimize')==0 and
+                  type(runtime.get('optimize')) is int and type(runtime.get('version')) is list and
+                  len(runtime['version'])==3 and all(type(v) is int and v>=0 for v in runtime['version']) and
+                  runtime['version'][:2]==[3,11],'FROZEN_STDLIB_RUNTIME')
+              return {'status':'ACTUAL_C02_UNIT_METHODS_AND_SUBTESTS_ACCEPTED','methods':n,'subtests':len(events),
+                  'source_files':len(source_files),'live_OSV_audit':'NOT_RUN','whole_C02_acceptance':'NOT_CLAIMED'}
+          '''
+          DRIVER_SOURCE = r'''"""Embedded CI observer: standard unittest callbacks and dynamic readonly sources."""
+          import hashlib
+          import base64
+          import importlib.util
+          import json
+          import os
+          from pathlib import Path
+          import stat
+          import sys
+          import sysconfig
+          import unittest
+
+          CONTRACT_SOURCE='__EMBEDDED_QUALIFIED_CONTRACT__'
+          DRAFT_UNBOUND=False
+          MANIFEST_SHA=sys.argv[2] if len(sys.argv)==3 else None
+          CONTRACT_SHA=hashlib.sha256(CONTRACT_SOURCE.encode()).hexdigest()
+          PROJECT=Path('/project')
+          WORK=Path('/work')
+          TEST_PATH=PROJECT/'scripts/test_audit_python_lock.py'
+          REPORT=WORK/'unit-report.json'
+          MODULE='test_audit_python_lock'
+          EXPECTED=()
+          MAX_EVENTS=4096
+          CASE,SUITE,RESULT,LOADER=unittest.TestCase,unittest.TestSuite,unittest.TestResult,unittest.TestLoader
+          CASE_ID,CASE_RUN=CASE.id,CASE.run
+          CASE_DISPATCH={n:getattr(CASE,n) for n in ['run','id','_callSetUp','_callTestMethod','_callTearDown','_callCleanup','doCleanups']}
+          BASE={n:getattr(RESULT,n) for n in ['__init__','startTest','stopTest','addSuccess','addFailure','addError',
+           'addSkip','addExpectedFailure','addUnexpectedSuccess','addSubTest','wasSuccessful']}
+          LOAD_MODULE=LOADER.loadTestsFromModule
+          SUITE_RUN=SUITE.run
+
+
+          def require(ok,code):
+              if not ok:raise RuntimeError(code)
+
+
+          def digest(raw):return hashlib.sha256(raw).hexdigest()
+
+
+          def verify_source(files):
+              actual={}
+              for path in [PROJECT,*PROJECT.rglob('*')]:
+                  s=path.lstat();directory=stat.S_ISDIR(s.st_mode)
+                  require(directory or stat.S_ISREG(s.st_mode),'SOURCE_SPECIAL_OR_LINK')
+                  require(s.st_uid==s.st_gid==0 and stat.S_IMODE(s.st_mode)==(0o555 if directory else 0o444),
+                      'SOURCE_READ_ONLY_METADATA')
+                  if not directory:
+                      require(s.st_nlink==1 and 0<s.st_size<=1048576,'SOURCE_FILE_BOUND')
+                      raw=path.read_bytes();require(len(raw)==s.st_size,'SOURCE_SIZE_CHANGED')
+                      actual[path.relative_to(PROJECT).as_posix()]={'sha256':digest(raw),'bytes':len(raw)}
+              require(actual==files,'SOURCE_CHANGED')
+              return actual
+
+
+          def case_id(case):
+              parent=getattr(case,'test_case',None)
+              if isinstance(parent,CASE):case=parent
+              try:value=CASE_ID(case)
+              except Exception:return 'NON_OUTER_CASE'
+              return value if value in EXPECTED else 'UNEXPECTED_ID_SHA256:'+digest(value.encode('utf-8',errors='backslashreplace'))
+
+
+          class TrustedResult(RESULT):
+              def __init__(self):
+                  BASE['__init__'](self)
+                  self.started_ids=[];self.stopped_ids=[];self.success_ids=[]
+                  self.terminals=[];self.negative_events=[];self.subtest_events=[]
+                  self.subtest_ordinals={};self.event_overflow=False
+
+              def bounded(self,target,value):
+                  if len(target)<MAX_EVENTS:target.append(value)
+                  else:self.event_overflow=True
+
+              def negative(self,test,kind):
+                  self.bounded(self.negative_events,{'id':case_id(test),'kind':kind})
+
+              def terminal(self,test,kind):self.bounded(self.terminals,[case_id(test),kind])
+
+              def subevent(self,test,kind):
+                  name=case_id(test);ordinal=self.subtest_ordinals.get(name,0)+1;self.subtest_ordinals[name]=ordinal
+                  self.bounded(self.subtest_events,{'parent_id':name,'ordinal':ordinal,'outcome':kind})
+
+              def startTest(self,test):
+                  self.bounded(self.started_ids,case_id(test));BASE['startTest'](self,test)
+
+              def stopTest(self,test):
+                  self.bounded(self.stopped_ids,case_id(test));BASE['stopTest'](self,test)
+
+              def addSuccess(self,test):
+                  self.bounded(self.success_ids,case_id(test));self.terminal(test,'SUCCESS');BASE['addSuccess'](self,test)
+
+              def addFailure(self,test,err):
+                  self.negative(test,'FAILURE');self.terminal(test,'FAILURE');BASE['addFailure'](self,test,err)
+
+              def addError(self,test,err):
+                  self.negative(test,'ERROR');self.terminal(test,'ERROR');BASE['addError'](self,test,err)
+
+              def addSkip(self,test,reason):
+                  self.negative(test,'SKIP')
+                  if isinstance(getattr(test,'test_case',None),CASE):self.subevent(test,'SKIP')
+                  else:self.terminal(test,'SKIP')
+                  BASE['addSkip'](self,test,reason)
+
+              def addExpectedFailure(self,test,err):
+                  self.negative(test,'EXPECTED_FAILURE');self.terminal(test,'EXPECTED_FAILURE');BASE['addExpectedFailure'](self,test,err)
+
+              def addUnexpectedSuccess(self,test):
+                  self.negative(test,'UNEXPECTED_SUCCESS');self.terminal(test,'UNEXPECTED_SUCCESS');BASE['addUnexpectedSuccess'](self,test)
+
+              def addSubTest(self,test,subtest,err):
+                  kind='SUCCESS' if err is None else ('FAILURE' if issubclass(err[0],test.failureException) else 'ERROR')
+                  self.subevent(test,kind)
+                  if err is not None:self.negative(test,'SUBTEST_'+kind)
+                  BASE['addSubTest'](self,test,subtest,err)
+
+
+          TRUSTED_METHODS={n:v for n,v in TrustedResult.__dict__.items() if callable(v)}
+
+
+          def core_intact():
+              require(unittest.TestCase is CASE and unittest.TestSuite is SUITE and unittest.TestResult is RESULT and
+                  unittest.TestLoader is LOADER and LOADER.loadTestsFromModule is LOAD_MODULE and
+                  SUITE.run is SUITE_RUN and
+                  all(getattr(CASE,n) is v for n,v in CASE_DISPATCH.items()) and
+                  all(getattr(RESULT,n) is v for n,v in BASE.items()) and
+                  all(getattr(TrustedResult,n) is v for n,v in TRUSTED_METHODS.items()),'TRUSTED_OBSERVER_CHANGED')
+
+
+          def snapshot_suite(suite,classes):
+              leaves=[];visited=0
+              def visit(item,depth):
+                  nonlocal visited
+                  visited+=1;require(depth<=16 and visited<=1024,'DISCOVERY_BOUND')
+                  if type(item) is SUITE:
+                      for child in item:visit(child,depth+1)
+                  else:
+                      cls=type(item)
+                      require(cls in classes and all(getattr(cls,n) is v for n,v in CASE_DISPATCH.items()),'STANDARD_CASE_DISPATCH')
+                      method=getattr(cls,item._testMethodName)
+                      require(not getattr(cls,'__unittest_skip__',False) and not getattr(method,'__unittest_skip__',False) and
+                          not getattr(method,'__unittest_expecting_failure__',False),'RESULT_MASK_FORBIDDEN')
+                      leaves.append(case_id(item))
+              visit(suite,0)
+              return tuple(leaves)
+
+
+          def main():
+              global EXPECTED
+              require(not DRAFT_UNBOUND and type(MANIFEST_SHA) is str and len(MANIFEST_SHA)==64 and
+                  type(CONTRACT_SHA) is str and len(CONTRACT_SHA)==64,'DRAFT_UNBOUND_NO_EXECUTION')
+              os.umask(0o077)
+              report={'schemaVersion':1,'status':'HOLD','execution_scope':'C02_OFFLINE_UNIT_ONLY','expected_exit':0,
+                  'expected_ids':[],'discovered_ids_before_run':[],'source_hashes_before':{},'source_hashes_after':{},
+                  'discovery_complete':False,'observer_intact':False,'event_overflow':False,'error':None,
+                  'runtime':{'uid':os.getuid(),'gid':os.getgid(),'isolated':bool(sys.flags.isolated),
+                      'no_bytecode':sys.dont_write_bytecode,'optimize':sys.flags.optimize,'version':list(sys.version_info[:3])}}
+              result=None;files=None;contract=None;phase='PREFLIGHT'
+              try:
+                  require(os.getuid()==os.getgid()==1000 and sys.flags.isolated and sys.dont_write_bytecode and
+                      sys.flags.optimize==0 and __debug__ and sys.version_info[:2]==(3,11),'ISOLATED_UID1000_STDLIB')
+                  require(not REPORT.exists() and not REPORT.is_symlink(),'REPORT_ALREADY_EXISTS')
+                  contract_raw=CONTRACT_SOURCE.encode('utf-8')
+                  require(digest(contract_raw)==CONTRACT_SHA,'CONTRACT_HASH')
+                  contract={'__name__':'trusted_CI_contract','__file__':'<embedded-CI-unit-contract>'}
+                  exec(compile(contract_raw,'<embedded-CI-unit-contract>','exec'),contract)
+                  manifest_raw=base64.b64decode(sys.argv[1],validate=True)
+                  require(0<len(manifest_raw)<=131072,'MANIFEST_SIZE')
+                  require(digest(manifest_raw)==MANIFEST_SHA,'MANIFEST_HASH')
+                  manifest=contract['strict_json'](manifest_raw)
+                  require(type(manifest)is dict and set(manifest)=={'files','module','expected_ids'},'MANIFEST_SCHEMA')
+                  files=manifest['files']
+                  require(set(files)==contract['FILES'] and manifest['module']==MODULE,'EXACT_SOURCE_PACKET')
+                  report['source_hashes_before']=verify_source(files)
+                  expected,ast_classes=contract['derive_expected_ids']((PROJECT/'scripts/test_audit_python_lock.py').read_bytes())
+                  require(list(expected)==manifest['expected_ids'],'FROZEN_AST_INVENTORY')
+                  EXPECTED=expected;report['expected_ids']=list(expected)
+                  stdlib=sysconfig.get_path('stdlib');dynamic=sysconfig.get_config_var('DESTSHARED')
+                  sys.path[:]=[str(PROJECT/'scripts'),stdlib]+([dynamic] if dynamic and dynamic!=stdlib else [])
+                  phase='IMPORT_AUDITED_TEST_MODULE'
+                  require(MODULE not in sys.modules,'TEST_MODULE_ALREADY_PRESENT')
+                  spec=importlib.util.spec_from_file_location(MODULE,TEST_PATH)
+                  require(spec is not None and spec.loader is not None,'TEST_MODULE_SPEC')
+                  module=importlib.util.module_from_spec(spec);sys.modules[MODULE]=module;spec.loader.exec_module(module)
+                  core_intact();require('load_tests' not in vars(module),'LOAD_TESTS_FORBIDDEN')
+                  classes=[]
+                  for name,methods in ast_classes.items():
+                      cls=vars(module).get(name)
+                      require(isinstance(cls,type) and cls.__bases__==(CASE,) and cls.__module__==MODULE and
+                          all(getattr(cls,n) is v for n,v in CASE_DISPATCH.items()),'STANDARD_DIRECT_TESTCASE')
+                      require(all(callable(vars(cls).get(n)) for n in methods),'EXPLICIT_AUDITED_TEST_METHODS')
+                      classes.append(cls)
+                  phase='DISCOVER_COMPLETE_TEST_MODULE'
+                  loader=LOADER();suite=loader.loadTestsFromModule(module)
+                  ids=snapshot_suite(suite,classes);report['discovered_ids_before_run']=list(ids)
+                  require(not loader.errors and ids==expected and len(set(ids))==len(expected),'COMPLETE_DISCOVERY_REQUIRED')
+                  report['discovery_complete']=True;phase='RUN_ALL_UNIT_METHODS'
+                  result=TrustedResult();result.startTestRun()
+                  core_intact()
+                  try:suite.run(result)
+                  finally:result.stopTestRun()
+                  core_intact();report['observer_intact']=True
+              except BaseException as error:
+                  report['error']={'phase':phase,'category':type(error).__name__ if type(error).__name__ in
+                      {'AssertionError','RuntimeError','SyntaxError','ImportError','ModuleNotFoundError','TypeError',
+                       'ValueError','OSError','SystemExit','KeyboardInterrupt'} else 'OTHER_EXCEPTION'}
+              finally:
+                  if result is not None:
+                      sub=result.subtest_events
+                      report.update({'tests_run':result.testsRun,'started_ids':result.started_ids,'stopped_ids':result.stopped_ids,
+                          'success_ids':result.success_ids,'terminal_events':result.terminals,'negative_events':result.negative_events,
+                          'subtest_events':sub,'event_overflow':result.event_overflow,
+                          'counts':{'starts':len(result.started_ids),'stops':len(result.stopped_ids),'successes':len(result.success_ids),
+                              'failures':len(result.failures),'errors':len(result.errors),'skips':len(result.skipped),
+                              'expected_failures':len(result.expectedFailures),'unexpected_successes':len(result.unexpectedSuccesses),
+                              'subtests':len(sub),'subtest_successes':sum(e['outcome']=='SUCCESS' for e in sub),
+                              'subtest_failures':sum(e['outcome']=='FAILURE' for e in sub),'subtest_errors':sum(e['outcome']=='ERROR' for e in sub),
+                              'subtest_skips':sum(e['outcome']=='SKIP' for e in sub)}})
+                  try:
+                      if files is not None:report['source_hashes_after']=verify_source(files)
+                      if result is not None and report['error'] is None and BASE['wasSuccessful'](result) is True and not result.shouldStop:
+                          report['status']='UNIT_PASS'
+                          contract['validate_unit_report']((json.dumps(report)+'\n').encode(),actual_exit=0,
+                              expected_ids=EXPECTED,source_files=files)
+                  except BaseException:
+                      report['status']='HOLD';report['error']={'phase':'FINAL_IDENTITY_AND_EVENTS','category':'CONTRACT_REJECTED'}
+                  raw=(json.dumps(report,indent=2)+'\n').encode();require(len(raw)<=1048576,'REPORT_SIZE')
+                  fd=os.open(REPORT,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+                  with os.fdopen(fd,'wb') as stream:stream.write(raw);stream.flush();os.fsync(stream.fileno())
+              return 0 if report['status']=='UNIT_PASS' else 2
+
+
+          if __name__=='__main__':
+              code=main()
+              raw=REPORT.read_bytes()
+              require(0<len(raw)<=1048576,'REPORT_OUTPUT_BOUND')
+              sys.stdout.buffer.write(raw)
+              sys.stdout.buffer.flush()
+              raise SystemExit(code)
+          '''
+          OSV_SOURCE = r'''"""Independent CI scanner DTO validation; stdlib source data, no side effects."""
+          import hashlib
+          import json
+          import math
+          import re
+          import tomllib
+
+          MAX_REPORT = 1048576
+          _DTO_BATCH = 1000
+          _DTO_NAME = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?", re.ASCII)
+          _DTO_VERSION = re.compile(r"v?(?:[0-9]+!)?[0-9]+(?:\.[0-9]+)*"
+              r"(?:[-_.]?(?:alpha|a|beta|b|preview|pre|c|rc)[-_.]?[0-9]*)?"
+              r"(?:(?:-[0-9]+)|(?:[-_.]?(?:post|rev|r)[-_.]?[0-9]*))?"
+              r"(?:[-_.]?dev[-_.]?[0-9]*)?(?:\+[a-z0-9]+(?:[-_.][a-z0-9]+)*)?", re.I | re.ASCII)
+          _DTO_FIELDS = {"status", "lock_sha256", "manifest_sha256", "inventory", "submitted",
+              "completed", "batches", "advisories", "error"}
+          _DTO_ERRORS = {"INPUT", "INPUT_CHANGED", "OSV_HTTP", "OSV_TRANSPORT", "OSV_SCHEMA",
+              "REPORT", "WORKER", "DEADLINE", "INTERRUPTED", "DRAIN_UNPROVEN", "CLEANUP",
+              "USAGE", "UNSUPPORTED", "INTERNAL"}
+
+
+          def require(ok,code):
+              if not ok:raise RuntimeError(code)
+
+
+          def strict_json(raw):
+              require(type(raw) is bytes and 0<len(raw)<=MAX_REPORT,'JSON_SIZE')
+              text=raw.decode('utf-8',errors='strict')
+              require(not text.startswith('\ufeff') and '\x00' not in text and
+                  not any(0xD800<=ord(c)<=0xDFFF for c in text),'JSON_TEXT')
+              depth=0;quoted=False;escaped=False
+              for c in text:
+                  if quoted:
+                      if escaped:escaped=False
+                      elif c=='\\':escaped=True
+                      elif c=='"':quoted=False
+                  elif c=='"':quoted=True
+                  elif c in '[{':
+                      depth+=1;require(depth<=20,'JSON_DEPTH')
+                  elif c in ']}':depth-=1;require(depth>=0,'JSON_DEPTH')
+              require(depth==0 and not quoted,'JSON_COMPLETE')
+              def pairs(rows):
+                  result={}
+                  for k,v in rows:require(k not in result,'JSON_DUPLICATE');result[k]=v
+                  return result
+              def bad(_value):raise RuntimeError('JSON_NONFINITE')
+              value=json.loads(text,object_pairs_hook=pairs,parse_constant=bad)
+              def strings(item):
+                  if type(item) is float:require(math.isfinite(item),'JSON_NONFINITE')
+                  elif type(item) is str:require('\x00' not in item and not any(0xD800<=ord(c)<=0xDFFF for c in item),'JSON_TEXT')
+                  elif type(item) is list:
+                      for v in item:strings(v)
+                  elif type(item) is dict:
+                      for k,v in item.items():strings(k);strings(v)
+              strings(value)
+              return value
+
+
+          def _dto_need(ok, category):
+              if not ok:
+                  raise ValueError(category)
+
+
+          def _dto_name(value):
+              _dto_need(type(value) is str and _DTO_NAME.fullmatch(value) is not None, "SCANNER_INPUT")
+              return re.sub(r"[-_.]+", "-", value).lower()
+
+
+          def _dto_version(value):
+              _dto_need(type(value) is str and _DTO_VERSION.fullmatch(value) is not None, "SCANNER_INPUT")
+              return value
+
+
+          def _dto_inventory(lock_raw, manifest_raw):
+              """Parse all lock packages independently; never import the scanner."""
+              try:
+                  lock = tomllib.loads(lock_raw.decode("utf-8", errors="strict"))
+                  manifest = tomllib.loads(manifest_raw.decode("utf-8", errors="strict"))
+              except (ValueError, UnicodeError, RecursionError, OverflowError):
+                  raise ValueError("SCANNER_INPUT") from None
+              _dto_need(type(lock) is dict and type(lock.get("version")) is int and lock["version"] == 1
+                  and type(lock.get("revision")) is int and lock["revision"] == 3, "SCANNER_INPUT")
+              project = manifest.get("project") if type(manifest) is dict else None
+              _dto_need(type(project) is dict, "SCANNER_INPUT")
+              root = (_dto_name(project.get("name")), _dto_version(project.get("version")))
+              packages = lock.get("package")
+              _dto_need(type(packages) is list and bool(packages), "SCANNER_INPUT")
+              seen, pairs, roots = set(), [], 0
+              for package in packages:
+                  _dto_need(type(package) is dict, "SCANNER_INPUT")
+                  pair = (_dto_name(package.get("name")), _dto_version(package.get("version")))
+                  _dto_need(pair not in seen, "SCANNER_INPUT")
+                  seen.add(pair)
+                  source = package.get("source")
+                  _dto_need(type(source) is dict, "SCANNER_INPUT")
+                  if source == {"virtual": "."}:
+                      roots += 1
+                      _dto_need(pair == root, "SCANNER_INPUT")
+                  else:
+                      _dto_need(source == {"registry": "https://pypi.org/simple"}, "SCANNER_INPUT")
+                      pairs.append(pair)
+              _dto_need(roots == 1 and bool(pairs), "SCANNER_INPUT")
+              return sorted(pairs)
+
+
+          def validate_osv_report(raw: bytes, actual_exit: int, lock_raw: bytes, manifest_raw: bytes) -> dict:
+              """Return only safe observed DTO facts; only CLEAN/exit0 can pass CI."""
+              _dto_need(type(actual_exit) is int and actual_exit in (0, 1, 2), "SCANNER_EXIT")
+              _dto_need(type(raw) is bytes and 0 < len(raw) <= MAX_REPORT and raw.endswith(b"\n"),
+                  "SCANNER_JSON")
+              _dto_need(all(type(value) is bytes and 0 < len(value) <= MAX_REPORT
+                  for value in (lock_raw, manifest_raw)), "SCANNER_INPUT")
+              try:
+                  report = strict_json(raw)
+              except (ValueError, RuntimeError, UnicodeError, RecursionError, TypeError, OverflowError):
+                  raise ValueError("SCANNER_JSON") from None
+              _dto_need(type(report) is dict and set(report) == _DTO_FIELDS, "SCANNER_SCHEMA")
+              for field, supplied in (("lock_sha256", lock_raw), ("manifest_sha256", manifest_raw)):
+                  value = report[field]
+                  _dto_need(value is None or (type(value) is str and re.fullmatch(r"[0-9a-f]{64}", value)
+                      is not None and value == hashlib.sha256(supplied).hexdigest()), "SCANNER_SCHEMA")
+
+              inventory = report["inventory"]
+              _dto_need(type(inventory) is list, "SCANNER_SCHEMA")
+              pairs = []
+              for item in inventory:
+                  _dto_need(type(item) is dict and set(item) == {"name", "version"}, "SCANNER_SCHEMA")
+                  try:
+                      name, version = _dto_name(item["name"]), _dto_version(item["version"])
+                  except ValueError:
+                      raise ValueError("SCANNER_SCHEMA") from None
+                  _dto_need(name == item["name"] and version == item["version"], "SCANNER_SCHEMA")
+                  pairs.append((name, version))
+              _dto_need(pairs == sorted(set(pairs)), "SCANNER_SCHEMA")
+              n = len(pairs)
+              if n or actual_exit in (0, 1):
+                  _dto_need(all(report[field] is not None for field in ("lock_sha256", "manifest_sha256")),
+                      "SCANNER_SCHEMA")
+                  _dto_need(pairs == _dto_inventory(lock_raw, manifest_raw), "SCANNER_COVERAGE")
+              submitted, completed, batches = (report[field] for field in ("submitted", "completed", "batches"))
+              _dto_need(all(type(value) is int for value in (submitted, completed, batches))
+                  and 0 <= completed <= submitted <= n
+                  and batches == (submitted + _DTO_BATCH - 1) // _DTO_BATCH
+                  and (submitted == n or submitted % _DTO_BATCH == 0)
+                  and (completed == n or completed % _DTO_BATCH == 0), "SCANNER_COVERAGE")
+
+              advisories = report["advisories"]
+              _dto_need(type(advisories) is list, "SCANNER_ADVISORIES")
+              completed_pairs, keys, all_ids = set(pairs[:completed]), [], set()
+              for item in advisories:
+                  _dto_need(type(item) is dict and set(item) == {"name", "version", "ids"},
+                      "SCANNER_ADVISORIES")
+                  name, version, ids = item["name"], item["version"], item["ids"]
+                  _dto_need(type(name) is str and type(version) is str and (name, version) in completed_pairs
+                      and type(ids) is list and bool(ids), "SCANNER_ADVISORIES")
+                  _dto_need(all(type(value) is str and 0 < len(value) <= 256 and value.isprintable()
+                      and not value.isspace() for value in ids), "SCANNER_ADVISORIES")
+                  _dto_need(ids == sorted(set(ids)), "SCANNER_ADVISORIES")
+                  keys.append((name, version))
+                  all_ids.update(ids)
+              _dto_need(keys == sorted(set(keys)), "SCANNER_ADVISORIES")
+
+              if actual_exit == 2:
+                  _dto_need(report["status"] == "ERROR" and type(report["error"]) is str
+                      and report["error"] in _DTO_ERRORS, "SCANNER_SCHEMA")
+                  category = report["error"]
+              else:
+                  _dto_need(n > 0 and submitted == completed == n and report["error"] is None
+                      and ((actual_exit == 0 and report["status"] == "CLEAN" and not advisories)
+                          or (actual_exit == 1 and report["status"] == "FINDINGS" and bool(advisories))),
+                      "SCANNER_COVERAGE")
+                  category = "CLEAN" if actual_exit == 0 else "FINDINGS"
+              try:
+                  canonical = json.dumps(report, ensure_ascii=True, allow_nan=False,
+                      separators=(",", ":"), sort_keys=True).encode("utf-8")
+              except (ValueError, TypeError, UnicodeError, RecursionError, OverflowError):
+                  raise ValueError("SCANNER_SCHEMA") from None
+              _dto_need(len(canonical) <= MAX_REPORT - 1, "SCANNER_SCHEMA")
+              safe = {"status": report["status"], "category": category, "inventory_count": n,
+                  "submitted": submitted, "completed": completed, "batches": batches,
+                  "advisory_ids": sorted(all_ids), "raw_report_sha256": hashlib.sha256(raw).hexdigest()}
+              _dto_need(len(json.dumps(safe, ensure_ascii=True, allow_nan=False).encode("utf-8")) <= MAX_REPORT,
+                  "SCANNER_SCHEMA")
+              return safe
+          '''
+
+          PYTHON = '/app/integrations/sycope/.venv/bin/python'
+          PROJECT_FILES = ('scripts/audit-python-lock.py', 'scripts/test_audit_python_lock.py',
+                           'integrations/sycope/uv.lock', 'integrations/sycope/pyproject.toml')
+          CANCELLED = False
+          UNCERTAIN = False
+          ENV = None
+          INTENTS = []
+
+
+          class Failure(Exception):
+              def __init__(self, code): self.code = code
+
+
+          def need(ok, code):
+              if not ok: raise Failure(code)
+
+
+          def digest(raw): return hashlib.sha256(raw).hexdigest()
+          def canonical(value): return json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
+
+
+          def interrupted(_number, _frame):
+              global CANCELLED
+              CANCELLED = True
+
+
+          def capture(argv, seconds, *, cleanup=False, stdout_cap=1048576, stderr_cap=65536):
+              """Bound one CLI and its causally owned children; never reap the anchor early."""
+              import ctypes
+              import errno
+              import math
+              global UNCERTAIN
+              process = main_ref = self_ref = terminal = None
+              refs = {}
+              selector = selectors.DefaultSelector()
+              chunks = {'stdout': bytearray(), 'stderr': bytearray()}
+              started = time.monotonic()
+              problem = None
+              clean = False
+              armed = False
+              previous = None
+              libc = None
+              active_before = getattr(capture, '_active', False)
+
+              def no_children():
+                  try: os.waitid(os.P_ALL, 0, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+                  except ChildProcessError: return True
+                  return False
+
+              def row(dfd):
+                  fd = os.open('stat', os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW, dir_fd=dfd)
+                  try: data = os.read(fd, 8193)
+                  finally: os.close(fd)
+                  need(len(data) <= 8192 and b')' in data, 'OWNED_STAT')
+                  fields = data[data.rfind(b')') + 2:].split()
+                  need(len(fields) >= 20, 'OWNED_STAT')
+                  return {'pid': int(data[:data.index(b' ')]), 'ppid': int(fields[1]),
+                          'start': int(fields[19])}
+
+              def read(ref):
+                  try: current = row(ref['proc'])
+                  except OSError as error:
+                      if error.errno in (errno.ENOENT, errno.ESRCH): return None
+                      raise
+                  need((current['pid'], current['start']) == ref['identity'], 'OWNED_IDENTITY')
+                  return current
+
+              def close_ref(ref):
+                  for key in ('pidfd', 'proc'):
+                      fd = ref[key]
+                      if fd is not None:
+                          os.close(fd)
+                          ref[key] = None
+
+              def pin(pid, parent=None):
+                  parent_before = read(parent) if parent is not None else None
+                  need(parent is None or parent_before is not None, 'OWNED_RESCAN')
+                  dfd = os.open('/proc/' + str(pid), os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW)
+                  pfd = None
+                  try:
+                      first = row(dfd)
+                      pfd = os.pidfd_open(pid, 0)
+                      last = row(dfd)
+                      need(first['pid'] == last['pid'] == pid and first['start'] == last['start'], 'OWNED_RESCAN')
+                      if parent is not None:
+                          parent_after = read(parent)
+                          need(parent_after is not None and first['ppid'] == last['ppid'] == parent_before['pid'] ==
+                               parent_after['pid'], 'OWNED_RESCAN')
+                      return {'proc': dfd, 'pidfd': pfd, 'identity': (pid, last['start'])}
+                  except BaseException:
+                      if pfd is not None: os.close(pfd)
+                      os.close(dfd)
+                      raise
+
+              def exited(ref):
+                  # WNOWAIT is also the identity-safe readiness observation for an adopted child.
+                  poller = selectors.DefaultSelector()
+                  try:
+                      poller.register(ref['pidfd'], selectors.EVENT_READ)
+                      return bool(poller.select(0))
+                  finally: poller.close()
+
+              def discover():
+                  nonlocal main_ref
+                  ids = sorted(int(value) for value in os.listdir('/proc') if value.isdecimal())
+                  need(len(ids) <= 4096, 'OWNED_SCAN_CAP')
+                  parents = {os.getpid(): self_ref}
+                  for ref in refs.values():
+                      if read(ref) is not None: parents[ref['identity'][0]] = ref
+                  known = {ref['identity'][0] for ref in refs.values()}
+                  for pid in ids:
+                      if pid == os.getpid() or pid in known: continue
+                      dfd = None
+                      try:
+                          dfd = os.open('/proc/' + str(pid), os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC | os.O_NOFOLLOW)
+                          candidate = row(dfd)
+                          parent = parents.get(candidate['ppid'])
+                          if parent is None: continue
+                          ref = pin(pid, parent)
+                      except OSError as error:
+                          if error.errno in (errno.ENOENT, errno.ESRCH): continue
+                          raise
+                      except Failure as error:
+                          if error.code == 'OWNED_RESCAN': continue
+                          raise
+                      finally:
+                          if dfd is not None: os.close(dfd)
+                      if len(refs) >= 256:
+                          close_ref(ref)
+                          raise Failure('OWNED_PROCESS_CAP')
+                      refs[ref['identity']] = ref
+                      parents[pid] = ref
+                      known.add(pid)
+                      if process is not None and pid == process.pid and main_ref is None: main_ref = ref
+
+              def observe():
+                  nonlocal terminal
+                  if main_ref is not None and terminal is None:
+                      terminal = os.waitid(os.P_PIDFD, main_ref['pidfd'], os.WEXITED | os.WNOHANG | os.WNOWAIT)
+                      if terminal is not None:
+                          need(terminal.si_pid == process.pid and terminal.si_code in
+                               (os.CLD_EXITED, os.CLD_KILLED, os.CLD_DUMPED), 'OWNED_MAIN_STATUS')
+                  for identity, ref in list(refs.items()):
+                      if ref is main_ref or not exited(ref): continue
+                      try:
+                          result = os.waitid(os.P_PIDFD, ref['pidfd'], os.WEXITED | os.WNOHANG)
+                          need(result is None or result.si_pid == identity[0], 'OWNED_REAP_IDENTITY')
+                      except ChildProcessError:
+                          pass  # Its owned living parent reaped it, or it is not adopted yet.
+                      close_ref(ref)
+                      del refs[identity]
+
+              def pump(discard=False):
+                  for key, _mask in selector.select(0.02):
+                      try: part = os.read(key.fd, 65536)
+                      except BlockingIOError: continue
+                      if not part:
+                          selector.unregister(key.fileobj)
+                          continue
+                      if not discard:
+                          target = chunks[key.data]
+                          limit = stdout_cap if key.data == 'stdout' else stderr_cap
+                          room = max(0, limit - len(target))
+                          target.extend(part[:room])
+                          need(len(part) <= room, 'CAPTURE_CAP')
+
+              def finish():
+                  nonlocal clean
+                  if selector.get_map(): return False
+                  if process is None:
+                      clean = not refs and no_children()
+                      return clean
+                  if main_ref is None or terminal is None or any(ref is not main_ref for ref in refs.values()): return False
+                  # Single-thread/no-concurrent-spawn lease makes every other direct child
+                  # causally owned; an unseen adopted root must be discovered before reap.
+                  fd = os.open('/proc/self/task/' + str(os.getpid()) + '/children', os.O_RDONLY | os.O_CLOEXEC)
+                  try: children = os.read(fd, 65537)
+                  finally: os.close(fd)
+                  need(len(children) <= 65536, 'OWNED_CHILDREN_CAP')
+                  if {int(value) for value in children.split()} != {process.pid}: return False
+                  expected = terminal.si_status if terminal.si_code == os.CLD_EXITED else -terminal.si_status
+                  actual = process.wait(timeout=0)  # Sole exact reaper, after descendants and PIPE EOF.
+                  need(actual == expected, 'OWNED_MAIN_REAP_STATUS')
+                  close_ref(main_ref)
+                  del refs[main_ref['identity']]
+                  clean = no_children()
+                  need(clean, 'OWNED_DRAIN_UNPROVEN')
+                  return True
+
+              try:
+                  need(cleanup or not CANCELLED, 'CANCELLED')
+                  need(type(seconds) in (int, float) and math.isfinite(seconds) and 0 < seconds <= 1200 and
+                       type(stdout_cap) is type(stderr_cap) is int and 0 < stdout_cap <= 2097152 and
+                       0 < stderr_cap <= 2097152, 'CAPTURE_BOUNDS')
+                  need(not active_before and len(os.listdir('/proc/self/task')) == 1 and
+                       signal.getsignal(signal.SIGCHLD) == signal.SIG_DFL and no_children(), 'OWNED_CAPTURE_PREFLIGHT')
+                  capture._active = True
+                  libc = ctypes.CDLL(None, use_errno=True)
+                  libc.prctl.restype = ctypes.c_int
+                  value = ctypes.c_int(-1)
+                  need(libc.prctl(37, ctypes.byref(value), 0, 0, 0) == 0 and value.value in (0, 1), 'OWNED_GET_SUBREAPER')
+                  previous = value.value
+                  need(libc.prctl(36, 1, 0, 0, 0) == 0, 'OWNED_SET_SUBREAPER')
+                  armed = True
+                  need(libc.prctl(37, ctypes.byref(value), 0, 0, 0) == 0 and value.value == 1, 'OWNED_VERIFY_SUBREAPER')
+                  self_ref = pin(os.getpid())
+                  process = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                             stderr=subprocess.PIPE, start_new_session=True, env=ENV)
+                  main_ref = pin(process.pid, self_ref)
+                  refs[main_ref['identity']] = main_ref
+                  for label in chunks:
+                      pipe = getattr(process, label)
+                      os.set_blocking(pipe.fileno(), False)
+                      selector.register(pipe, selectors.EVENT_READ, label)
+                  while True:
+                      need(cleanup or not CANCELLED, 'CANCELLED')
+                      need(time.monotonic() - started < seconds, 'TIMEOUT')
+                      discover()
+                      observe()
+                      pump()
+                      if finish(): break
+              except BaseException as error:
+                  UNCERTAIN = True  # Preserve R2 policy: every capture exception poisons later stages.
+                  problem = error
+              finally:
+                  if armed and not clean:
+                      until = time.monotonic() + 6
+                      term_until = time.monotonic() + 3
+                      sent = set()
+                      while time.monotonic() < until:
+                          try:
+                              if self_ref is not None: discover()
+                          except BaseException:
+                              UNCERTAIN = True
+                          try:
+                              observe()
+                          except BaseException:
+                              UNCERTAIN = True
+                          signum = signal.SIGTERM if time.monotonic() < term_until else signal.SIGKILL
+                          # Failed discovery or one damaged ref never suppresses other proved pidfds.
+                          for identity, ref in list(refs.items()):
+                              try:
+                                  if (identity, signum) in sent or exited(ref): continue
+                                  signal.pidfd_send_signal(ref['pidfd'], signum, None, 0)
+                                  sent.add((identity, signum))
+                              except ProcessLookupError: pass
+                              except BaseException: UNCERTAIN = True  # No numeric/global fallback.
+                          try:
+                              pump(discard=True)
+                          except BaseException:
+                              UNCERTAIN = True
+                          try:
+                              if finish(): break
+                          except BaseException:
+                              UNCERTAIN = True
+                          time.sleep(0.01)
+                  if armed and clean:
+                      try:
+                          value = ctypes.c_int(-1)
+                          need(libc.prctl(36, previous, 0, 0, 0) == 0 and
+                               libc.prctl(37, ctypes.byref(value), 0, 0, 0) == 0 and value.value == previous,
+                               'OWNED_RESTORE_SUBREAPER')
+                      except BaseException as error:
+                          UNCERTAIN = True
+                          problem = problem or error
+                  if armed and not clean:
+                      UNCERTAIN = True
+                      problem = problem or Failure('OWNED_DRAIN_UNPROVEN')
+                  for ref in list(refs.values()) + ([self_ref] if self_ref is not None else []):
+                      try: close_ref(ref)
+                      except BaseException as error:
+                          UNCERTAIN = True
+                          problem = problem or error
+                  try:
+                      selector.close()
+                      if process is not None:
+                          process.stdout.close()
+                          process.stderr.close()
+                  except BaseException as error:
+                      UNCERTAIN = True
+                      problem = problem or error
+                  if not active_before: capture._active = False
+              if problem is not None: raise problem
+              need(clean, 'OWNED_DRAIN_UNPROVEN')
+              return process.returncode, bytes(chunks['stdout']), bytes(chunks['stderr']), round(time.monotonic() - started, 3)
+
+
+
+          def capture_probes():
+              """Hosted-only control probes; intentional failures cannot reset real job flags."""
+              import sys
+              import types
+              namespace = dict(globals())
+              namespace.update(CANCELLED=False, UNCERTAIN=False)
+              run = types.FunctionType(capture.__code__, namespace)
+              run.__kwdefaults__ = dict(capture.__kwdefaults__)
+              namespace['capture'] = run
+
+              def childless():
+                  try:
+                      os.waitid(os.P_ALL, 0, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+                  except ChildProcessError:
+                      return
+                  raise Failure('HOST_PROBE_CHILD_REMAINS')
+
+              childless()
+              helper = ('import os,time\npid=os.fork()\nif pid == 0:\n'
+                        ' os.close(1); os.close(2); time.sleep(0.35); os._exit(0)\n'
+                        'print(pid,flush=True)\nos._exit(0)\n')
+              code, raw, stderr, elapsed = run([sys.executable, '-I', '-B', '-c', helper], 5)
+              need(code == 0 and re.fullmatch(rb'[1-9][0-9]{0,9}\n', raw) is not None and stderr == b'' and
+                   elapsed >= 0.30 and namespace['UNCERTAIN'] is False, 'HOST_PROBE_CLOSED_PIPE')
+              need(not Path('/proc/' + str(int(raw))).exists(), 'HOST_PROBE_HELPER_LIVE')
+              childless()
+              started = time.monotonic()
+              try:
+                  run([sys.executable, '-I', '-B', '-c', 'import time; time.sleep(2)'], 0.1)
+              except Failure as error:
+                  need(error.code == 'TIMEOUT' and namespace['UNCERTAIN'] is True, 'HOST_PROBE_TIMEOUT')
+              else:
+                  raise Failure('HOST_PROBE_NO_TIMEOUT')
+              need(time.monotonic() - started < 10, 'HOST_PROBE_TIMEOUT_BOUND')
+              childless()
+              return {'scope': 'HOST_CONTROL_ONLY', 'closed_pipe_descendant': 'PASS', 'timeout_drain': 'PASS',
+                      'product_unit_methods_and_subtests': 'SEPARATE'}
+
+
+          def command(argv, seconds=30, *, cleanup=False):
+              code, raw, _stderr, _elapsed = capture(argv, seconds, cleanup=cleanup)
+              need(code == 0, 'COMMAND_EXIT')
+              return raw
+
+
+          def file_bytes(path):
+              info = path.lstat()
+              need(path.resolve(strict=True) == path and stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and
+                   0 < info.st_size <= 1048576, 'SOURCE_REGULAR_BOUND')
+              raw = path.read_bytes()
+              need(len(raw) == info.st_size, 'SOURCE_CHANGED')
+              return raw
+
+
+          def source_map(checkout, paths):
+              result = {}
+              for rel in paths:
+                  raw = file_bytes(checkout / rel)
+                  result[rel] = {'sha256': digest(raw), 'bytes': len(raw)}
+              return result
+
+
+          def inspect(cid, cleanup=False):
+              return json.loads(command(['docker', 'inspect', cid], cleanup=cleanup))[0]
+
+
+          def recover(intent):
+              raw = command(['docker', 'ps', '--all', '--no-trunc', '--filter',
+                             'label=org.trueid.c02.owner=' + intent['owner'], '--format', '{{.ID}}'], cleanup=True)
+              ids = raw.decode('ascii').splitlines()
+              need(len(ids) <= 1 and all(re.fullmatch('[0-9a-f]{64}', cid) for cid in ids), 'OWNED_LOOKUP')
+              for cid in ids:
+                  info = inspect(cid, True)
+                  need(info['Name'] == '/' + intent['name'] and info['Image'] == intent['image'] and
+                       info['Config']['Labels'].get('org.trueid.c02.owner') == intent['owner'], 'OWNED_IDENTITY')
+              return ids
+
+
+          def retire(intent):
+              global UNCERTAIN
+              if intent['closed']: return
+              try:
+                  for cid in recover(intent):
+                      info = inspect(cid, True)
+                      if info['State']['Running']:
+                          capture(['docker', 'stop', '--signal', 'SIGTERM', '--timeout', '20', cid], 30, cleanup=True)
+                          info = inspect(cid, True)
+                          if info['State']['Running']:
+                              command(['docker', 'kill', '--signal', 'SIGKILL', cid], cleanup=True)
+                              info = inspect(cid, True)
+                      need(info['State']['Running'] is False and info['State']['Pid'] == 0, 'CONTAINER_DRAIN')
+                      command(['docker', 'rm', cid], cleanup=True)
+                  need(recover(intent) == [], 'CONTAINER_REMAINS')
+                  intent['closed'] = True
+                  if not intent['acked']: UNCERTAIN = True
+              except BaseException:
+                  UNCERTAIN = True
+                  raise
+
+
+          def container(image, project, argv, label, seconds, network='none'):
+              owner = secrets.token_hex(16)
+              intent = {'owner': owner, 'name': 'trueid-c02-' + owner, 'image': image, 'acked': False, 'closed': False}
+              INTENTS.append(intent)  # Before create: interrupted requests can be recovered by exact nonce.
+              tail = ['-c', 'umask 077; mkdir -m 0700 /work/home /work/tmp /work/cache; exec "$@"', 'ci',
+                      '/usr/bin/env', '-i', 'PATH=/usr/local/bin:/usr/bin:/bin', 'HOME=/work/home', 'TMPDIR=/work/tmp',
+                      'LANG=C.UTF-8', 'UV_CACHE_DIR=/work/cache', 'PYTHONDONTWRITEBYTECODE=1',
+                      'PYTHONNOUSERSITE=1', 'PYTHONOPTIMIZE=0', *argv]
+              config = ['docker', 'create', '--name', intent['name'], '--label', 'org.trueid.c02.owner=' + owner,
+                        '--platform', 'linux/amd64', '--init', '--user', '1000:1000', '--log-driver', 'none',
+                        '--read-only', '--network', network, '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
+                        '--pids-limit', '256', '--cpus', '2', '--memory', '3g', '--memory-swap', '3g',
+                        '--stop-signal', 'SIGTERM', '--stop-timeout', '20', '--workdir', '/project/integrations/sycope',
+                        '--tmpfs', '/work:rw,nosuid,nodev,noexec,size=256m,uid=1000,gid=1000,mode=0700',
+                        '--mount', 'type=bind,source=' + str(project) + ',target=/project,readonly',
+                        '--entrypoint', '/bin/sh']
+              try:
+                  cid = command(config + [image] + tail).decode('ascii').strip()
+                  intent['acked'] = True
+                  need(re.fullmatch('[0-9a-f]{64}', cid) and recover(intent) == [cid], 'CONTAINER_ID')
+                  before = inspect(cid)
+                  binds = [m for m in before['Mounts'] if m['Type'] == 'bind']
+                  need(before['Config']['User'] == '1000:1000' and before['Config']['Cmd'] == tail and
+                       before['Config']['Entrypoint'] == ['/bin/sh'] and before['Config']['Tty'] is False and
+                       len(binds) == 1 and binds[0]['Destination'] == '/project' and binds[0]['Source'] == str(project) and binds[0]['RW'] is False and
+                       before['HostConfig']['ReadonlyRootfs'] is True and before['HostConfig']['NetworkMode'] == network,
+                       'CONTAINER_CONFIG')
+                  code, raw, stderr, elapsed = capture(['docker', 'start', '--attach', cid], seconds)
+                  after = inspect(cid)
+                  need(after['Image'] == image and after['State']['Running'] is False and after['State']['Pid'] == 0 and
+                       after['State']['OOMKilled'] is False and after['State'].get('Error', '') == '' and
+                       type(after['State']['ExitCode']) is int and after['State']['ExitCode'] == code and
+                       0 <= code < 126, 'CONTAINER_OUTCOME')
+                  return {'kind': label, 'container_id': cid, 'owner': owner, 'network': network,
+                          'actual_exit': code, 'client_exit': code, 'elapsed_s': elapsed,
+                          'stdout_bytes': len(raw), 'stdout_sha256': digest(raw), 'stderr_bytes': len(stderr),
+                          'stderr_sha256': digest(stderr)}, raw
+              finally:
+                  retire(intent)
+
+
+          def write_receipt(path, value):
+              raw = canonical(value) + b'\n'
+              need(len(raw) <= 262144, 'RECEIPT_CAP')
+              temporary = path.with_name(path.name + '.' + secrets.token_hex(8) + '.new')
+              fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+              with os.fdopen(fd, 'wb') as stream:
+                  stream.write(raw)
+                  stream.flush()
+                  os.fsync(stream.fileno())
+              temporary.chmod(0o600)
+              os.replace(temporary, path)
+
+
+          def main():
+              global ENV, UNCERTAIN
+              for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP): signal.signal(number, interrupted)
+              os.umask(0o077)
+              runner = Path(os.environ['RUNNER_TEMP']).resolve(strict=True)
+              receipt_path = runner / 'trueid-python-dependency-audit.json'
+              receipt = {'schemaVersion': 1, 'status': 'FAIL', 'category': 'BOOTSTRAP', 'setup': {'status': 'NOT_RUN'},
+                         'stages': {n: {'status': 'NOT_RUN'} for n in ('unit', 'lock', 'osv')},
+                         'source_files': {}, 'source_preserved': None, 'tools': {}, 'cleanup': False, 'cancelled': False,
+                         'hosted_dependabot_updater': 'NOT_RUN'}
+              write_receipt(receipt_path, receipt)  # Exists even if subsequent setup fails.
+              root = Path(tempfile.mkdtemp(prefix='trueid-c02-ci-', dir=runner))
+              need(root.parent == runner and root.resolve(strict=True) == root, 'OWNED_STAGING')
+              nonce = secrets.token_hex(16)
+              tag = 'trueid-c02-sdk:' + nonce
+              tag_owned = False
+              build_in_flight = False
+              image = None
+              originals = None
+              project = None
+              files = None
+              checkout = Path.cwd().resolve(strict=True)
+              ENV = {'PATH': os.environ['PATH'], 'HOME': str(root / 'home'), 'DOCKER_CONFIG': str(root / 'docker-config'),
+                     'LANG': 'C.UTF-8', 'DOCKER_BUILDKIT': '1', 'GIT_OPTIONAL_LOCKS': '0'}
+              try:
+                  (root / 'home').mkdir(); (root / 'docker-config').mkdir()
+                  receipt['tools']['host_capture_probes'] = capture_probes()
+                  # Keep only the action-installed executable, never the user's Docker credentials.
+                  plugin_dirs = [Path(os.environ.get('DOCKER_CONFIG', str(Path(os.environ['HOME']) / '.docker'))) / 'cli-plugins',
+                                 Path('/usr/libexec/docker/cli-plugins'), Path('/usr/lib/docker/cli-plugins'),
+                                 Path('/usr/local/libexec/docker/cli-plugins'), Path('/usr/local/lib/docker/cli-plugins')]
+                  plugins = [d / 'docker-buildx' for d in plugin_dirs if (d / 'docker-buildx').is_file() and
+                             os.access(d / 'docker-buildx', os.X_OK)]
+                  need(plugins, 'BUILDX_PLUGIN_REQUIRED')
+                  plugin_dir = root / 'docker-config/cli-plugins'; plugin_dir.mkdir(mode=0o700)
+                  shutil.copyfile(plugins[0].resolve(strict=True), plugin_dir / 'docker-buildx')
+                  (plugin_dir / 'docker-buildx').chmod(0o500)
+                  buildx_version = command(['docker', 'buildx', 'version'], 30)
+                  need(re.fullmatch(rb'[ -~]{1,512}\n?', buildx_version) is not None, 'BUILDX_VERSION')
+                  receipt['tools']['buildx_version_sha256'] = digest(buildx_version)
+                  contract = {'__name__': 'trusted_CI_unit_contract'}
+                  exec(compile(CONTRACT_SOURCE, '<workflow-unit-contract>', 'exec'), contract)
+                  osv = {'__name__': 'trusted_CI_OSV_contract'}
+                  exec(compile(OSV_SOURCE, '<workflow-OSV-contract>', 'exec'), osv)
+                  context = root / 'context'; context.mkdir()
+                  project = root / 'project'; project.mkdir()
+                  chosen = sorted({p.relative_to(checkout).as_posix() for folder in ('sycope', 'integrations/sycope')
+                                   for p in (checkout / folder).glob('*.py')} |
+                                  {'integrations/sycope/Dockerfile', 'integrations/sycope/pyproject.toml',
+                                   'integrations/sycope/uv.lock', 'integrations/sycope/.python-version'})
+                  need(any(p.startswith('sycope/') for p in chosen) and any(
+                       p.startswith('integrations/sycope/') and p.endswith('.py') for p in chosen), 'BUILD_CONTEXT_EMPTY')
+                  all_paths = sorted(set(chosen) | set(PROJECT_FILES))
+                  originals = source_map(checkout, all_paths)
+                  need(sum(row['bytes'] for row in originals.values()) <= 8388608, 'PUBLIC_CONTEXT_CAP')
+                  for rel in chosen:
+                      need(not any(part == '.git' or part.startswith('.env') for part in Path(rel).parts), 'PUBLIC_CONTEXT_PATH')
+                      destination = context / rel; destination.parent.mkdir(parents=True, exist_ok=True)
+                      destination.write_bytes(file_bytes(checkout / rel))
+                  files = {rel: originals[rel] for rel in PROJECT_FILES}
+                  receipt['source_files'] = files
+                  for rel in PROJECT_FILES:
+                      destination = project / rel; destination.parent.mkdir(parents=True, exist_ok=True)
+                      destination.write_bytes(file_bytes(checkout / rel)); destination.chmod(0o444)
+                  ast.parse(file_bytes(project / 'scripts/test_audit_python_lock.py'), feature_version=(3, 11))
+                  expected, _classes = contract['derive_expected_ids'](file_bytes(project / 'scripts/test_audit_python_lock.py'))
+                  manifest = canonical({'module': 'test_audit_python_lock', 'files': files, 'expected_ids': list(expected)})
+                  need(len(manifest) <= 65536, 'MANIFEST_CAP')
+                  for path in [project, *project.rglob('*')]:
+                      if path.is_dir(): path.chmod(0o555)
+                  command(['sudo', '-n', 'chown', '-R', '0:0', str(project)])
+                  need(command(['docker', 'image', 'ls', '--filter', 'reference=' + tag, '--format', '{{.ID}}']).strip() == b'',
+                       'IMAGE_TAG_ALREADY_EXISTS')
+                  tag_owned = True
+                  build_in_flight = True
+                  code, _build_out, _build_err, elapsed = capture(['docker', 'build', '--platform', 'linux/amd64', '--pull',
+                      '--no-cache', '--network', 'default', '--label', 'org.trueid.c02.image=' + nonce,
+                      '-f', str(context / 'integrations/sycope/Dockerfile'), '-t', tag, str(context)],
+                      1200, stdout_cap=2097152, stderr_cap=2097152)
+                  build_in_flight = False
+                  receipt['setup'] = {'status': 'FAIL', 'build_exit': code, 'elapsed_s': elapsed, 'image_id': None,
+                                      'public_context_sha256': digest(canonical(originals))}
+                  need(code == 0, 'SDK_BUILD')
+                  image_info = json.loads(command(['docker', 'image', 'inspect', tag]))[0]
+                  image = image_info['Id']
+                  need(re.fullmatch('sha256:[0-9a-f]{64}', image) and
+                       image_info['Config']['Labels'].get('org.trueid.c02.image') == nonce, 'IMAGE_IDENTITY')
+                  receipt['setup'].update(status='PASS', image_id=image, owned_tag=tag, owner=nonce)
+                  need(DRIVER_SOURCE.count("CONTRACT_SOURCE='__EMBEDDED_QUALIFIED_CONTRACT__'") == 1, 'DRIVER_EMBEDDING')
+                  program = DRIVER_SOURCE.replace("CONTRACT_SOURCE='__EMBEDDED_QUALIFIED_CONTRACT__'",
+                                                  'CONTRACT_SOURCE=' + repr(CONTRACT_SOURCE))
+                  need(program != DRIVER_SOURCE and len(program.encode()) <= 65536, 'DRIVER_EMBEDDING')
+                  manifest_arg = base64.b64encode(manifest).decode('ascii')
+                  unit_args = [PYTHON, '-I', '-B', '-c', program, manifest_arg, digest(manifest)]
+                  for phase in ('unit', 'lock', 'osv'):
+                      if CANCELLED or UNCERTAIN: break
+                      stage = {'status': 'FAIL', 'category': 'INTERNAL', 'commands': []}
+                      receipt['stages'][phase] = stage
+                      try:
+                          if phase == 'unit':
+                              outcome, raw = container(image, project, unit_args, 'unit', 180)
+                              stage['commands'].append(outcome)
+                              report = contract['strict_json'](raw)
+                              count_keys = {'starts','stops','successes','failures','errors','skips','expected_failures','unexpected_successes',
+                                            'subtests','subtest_successes','subtest_failures','subtest_errors','subtest_skips'}
+                              counts = report.get('counts') if type(report) is dict else None
+                              if type(counts) is dict and set(counts) == count_keys and all(type(v) is int and 0 <= v <= 4096 for v in counts.values()):
+                                  stage.update(counts=counts, counts_validation='OBSERVED_UNACCEPTED')
+                              accepted = contract['validate_unit_report'](raw, actual_exit=outcome['actual_exit'],
+                                                                         expected_ids=expected, source_files=files)
+                              stage.update(status='PASS', category=None, methods=accepted['methods'], subtests=accepted['subtests'],
+                                           counts=report['counts'], counts_validation='ACCEPTED', expected_ids_sha256=digest(canonical(list(expected))))
+                          elif phase == 'lock':
+                              metadata_code = ('import hashlib,json,os,sys;from pathlib import Path;'
+                                  'print(json.dumps({"version":list(sys.version_info[:3]),"uid":os.getuid(),"gid":os.getgid(),'
+                                  '"isolated":bool(sys.flags.isolated),"no_bytecode":sys.dont_write_bytecode,"optimize":sys.flags.optimize,'
+                                  '"executable_sha256":hashlib.sha256(Path(sys.executable).read_bytes()).hexdigest()}))')
+                              outcome, raw = container(image, project, [PYTHON, '-I', '-B', '-c', metadata_code], 'python', 30)
+                              stage['commands'].append(outcome); need(outcome['actual_exit'] == 0, 'PYTHON_VERSION')
+                              metadata = contract['strict_json'](raw)
+                              need(type(metadata) is dict and set(metadata) == {'version','uid','gid','isolated','no_bytecode','optimize','executable_sha256'} and
+                                   type(metadata['version']) is list and len(metadata['version']) == 3 and
+                                   all(type(v) is int and v >= 0 for v in metadata['version']) and metadata['version'][:2] == [3,11] and
+                                   type(metadata['uid']) is type(metadata['gid']) is int and metadata['uid'] == metadata['gid'] == 1000 and
+                                   metadata['isolated'] is metadata['no_bytecode'] is True and type(metadata['optimize']) is int and metadata['optimize'] == 0 and
+                                   type(metadata['executable_sha256']) is str and re.fullmatch('[0-9a-f]{64}', metadata['executable_sha256']), 'PYTHON_IDENTITY')
+                              receipt['tools']['python'] = metadata
+                              outcome, raw = container(image, project, ['/bin/uv', '--version'], 'uv-version', 30)
+                              stage['commands'].append(outcome); need(outcome['actual_exit'] == 0, 'UV_VERSION')
+                              version = re.fullmatch(rb'uv (0\.12\.8)(?: \([ -~]{1,128}\))?\n?', raw)
+                              need(version is not None, 'UV_VERSION')
+                              receipt['tools']['uv_version'] = version.group(1).decode('ascii')
+                              outcome, raw = container(image, project, ['/bin/uv', 'lock', '--help'], 'uv-help', 30)
+                              stage['commands'].append(outcome)
+                              need(outcome['actual_exit'] == 0 and b'--check' in raw and b'--python' in raw, 'UV_CLI')
+                              receipt['tools']['uv_lock_help_sha256'] = digest(raw)
+                              outcome, _raw = container(image, project, ['/bin/uv', 'lock', '--check', '--python', PYTHON], 'lock-check', 90)
+                              stage['commands'].append(outcome); need(outcome['actual_exit'] == 0, 'LOCK_CHECK')
+                              stage.update(status='PASS', category=None)
+                          else:
+                              outcome, raw = container(image, project, [PYTHON, '-I', '-B', '/project/scripts/audit-python-lock.py',
+                                  '--lock', '/project/integrations/sycope/uv.lock'], 'osv', 90, network='bridge')
+                              stage['commands'].append(outcome)
+                              safe = osv['validate_osv_report'](raw, outcome['actual_exit'],
+                                  file_bytes(project / 'integrations/sycope/uv.lock'), file_bytes(project / 'integrations/sycope/pyproject.toml'))
+                              stage['report'] = safe
+                              stage.update(status='PASS' if outcome['actual_exit'] == 0 and safe['status'] == 'CLEAN' else 'FAIL',
+                                           category=None if outcome['actual_exit'] == 0 and safe['status'] == 'CLEAN' else safe['category'] or 'FINDINGS')
+                      except BaseException as error:
+                          dto_codes = {'SCANNER_INPUT','SCANNER_EXIT','SCANNER_JSON','SCANNER_SCHEMA','SCANNER_COVERAGE','SCANNER_ADVISORIES'}
+                          stage['category'] = (error.code if type(error) is Failure else
+                              error.args[0] if phase == 'osv' and type(error) is ValueError and len(error.args) == 1 and error.args[0] in dto_codes
+                              else 'UNIT_REPORT' if phase == 'unit' else 'STAGE_REPORT')
+                      need(source_map(checkout, all_paths) == originals and source_map(project, PROJECT_FILES) == files, 'SOURCE_CHANGED')
+                  receipt['category'] = None
+              except BaseException as error:
+                  receipt['category'] = error.code if type(error) is Failure else 'INTERNAL'
+                  if receipt['setup']['status'] != 'PASS': receipt['setup']['status'] = 'FAIL'
+              finally:
+                  cleanup_ok = True
+                  for intent in reversed(INTENTS):
+                      try: retire(intent)
+                      except BaseException: cleanup_ok = False
+                  if build_in_flight: UNCERTAIN = True
+                  if tag_owned:
+                      try:
+                          remaining = command(['docker', 'image', 'ls', '--filter', 'reference=' + tag, '--format', '{{.ID}}'], cleanup=True)
+                          if remaining.strip():
+                              info = json.loads(command(['docker', 'image', 'inspect', tag], cleanup=True))[0]
+                              need(info['Config']['Labels'].get('org.trueid.c02.image') == nonce and
+                                   (image is None or info['Id'] == image), 'OWNED_IMAGE_IDENTITY')
+                              command(['docker', 'image', 'rm', tag], cleanup=True)
+                          need(command(['docker', 'image', 'ls', '--filter', 'reference=' + tag, '--format', '{{.ID}}'], cleanup=True).strip() == b'',
+                               'OWNED_IMAGE_REMAINS')
+                      except BaseException: cleanup_ok = False
+                  try:
+                      if originals is not None: need(source_map(checkout, sorted(originals)) == originals, 'SOURCE_CHANGED')
+                      if project is not None and files is not None:
+                          need(source_map(project, PROJECT_FILES) == files, 'SOURCE_CHANGED')
+                          receipt['source_preserved'] = True
+                      if cleanup_ok and not UNCERTAIN and all(i['closed'] for i in INTENTS):
+                          need(root.parent == runner and root.resolve(strict=True) == root and not root.is_symlink(), 'OWNED_STAGING')
+                          command(['sudo', '-n', 'rm', '-rf', '--', str(root)], 30, cleanup=True)
+                          need(not root.exists(), 'STAGING_REMAINS')
+                      else:
+                          cleanup_ok = False  # Retain this attempt's work while ownership/drain is unknown.
+                  except BaseException:
+                      cleanup_ok = False
+                      receipt['source_preserved'] = False
+                  receipt['cleanup'] = cleanup_ok and not UNCERTAIN and all(i['closed'] for i in INTENTS)
+                  # Cleanup is finished; subsequent cancellation must retain a nonzero process exit.
+                  signal.signal(signal.SIGINT, signal.default_int_handler)
+                  for sig in (signal.SIGTERM, signal.SIGHUP): signal.signal(sig, signal.SIG_DFL)
+                  receipt['cancelled'] = CANCELLED
+                  passed = (receipt['setup']['status'] == 'PASS' and all(s['status'] == 'PASS' for s in receipt['stages'].values()) and
+                            receipt['category'] is None and receipt['source_preserved'] is True and receipt['cleanup'] and not CANCELLED)
+                  receipt['status'] = 'PASS' if passed else 'FAIL'
+                  if not passed and receipt['category'] is None:
+                      receipt['category'] = 'CANCELLED' if CANCELLED else 'CLEANUP' if not receipt['cleanup'] else 'STAGE_FAILED'
+                  try:
+                      write_receipt(receipt_path, receipt)
+                  except BaseException:
+                      write_receipt(receipt_path, {'schemaVersion': 1, 'status': 'FAIL', 'category': 'RECEIPT_CAP_OR_WRITE',
+                          'setup': {'status': 'UNKNOWN'}, 'stages': {n: {'status': 'UNKNOWN'} for n in ('unit','lock','osv')},
+                          'source_files': {}, 'source_preserved': receipt['source_preserved'], 'tools': {}, 'cleanup': receipt['cleanup'], 'cancelled': CANCELLED,
+                          'hosted_dependabot_updater': 'NOT_RUN'})
+                      passed = False
+              return 0 if passed else 1
+
+
+          if __name__ == '__main__':
+              raise SystemExit(main())
+          PY
+      - name: Upload sanitized receipt after owned cleanup
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-dependency-audit-receipt
+          path: ${{ runner.temp }}/trueid-python-dependency-audit.json
+          if-no-files-found: error
+          retention-days: 7
