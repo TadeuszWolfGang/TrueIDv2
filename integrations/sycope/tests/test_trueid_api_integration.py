@@ -20,8 +20,10 @@ from trueid_api import TrueIdApi
 )
 class TrueIdApiIntegrationTests(unittest.TestCase):
     def setUp(self):
+        session = requests.Session()
+        self.addCleanup(session.close)
         self.api = TrueIdApi(
-            session=requests.Session(),
+            session=session,
             host=os.environ["TRUEID_TEST_URL"],
             api_key=os.environ["TRUEID_TEST_API_KEY"],
         )

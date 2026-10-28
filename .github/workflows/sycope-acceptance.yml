@@ -1,0 +1,977 @@
+name: sycope-acceptance
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+        with:
+          driver: docker
+      - name: Native Sycope acceptance
+        id: acceptance
+        shell: bash
+        run: |
+          python3 -I -B - <<'PY'
+          import hashlib
+          import json
+          import math
+          import os
+          from pathlib import Path
+          import re
+          import runpy
+          import secrets
+          import selectors
+          import shutil
+          import signal
+          import stat
+          import subprocess
+          import sys
+          import tempfile
+          import time
+          import tomllib
+
+          DERIVE = r'''"""CI-only independent public source derivation; embedded by the one workflow."""
+          import ast
+          import hashlib
+          import json
+          from pathlib import Path
+          import stat
+
+
+          def need(ok, code):
+              if not ok:
+                  raise ValueError(code)
+
+
+          def digest(path):
+              return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+          def canonical(value):
+              return json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
+
+
+          def regular(path):
+              info = path.lstat()
+              need(path.resolve(strict=True) == path and stat.S_ISREG(info.st_mode) and
+                   info.st_nlink == 1, 'PUBLIC_FILE')
+
+
+          def ids(path, module):
+              tree = ast.parse(path.read_text(encoding='utf-8'))
+              need(not any(isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and
+                           n.name == 'load_tests' for n in tree.body), 'DISCOVERY_HOOK')
+              found = []
+              for cls in tree.body:
+                  if not isinstance(cls, ast.ClassDef):
+                      continue
+                  methods = [n for n in cls.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                             and n.name.startswith('test')]
+                  if not methods:
+                      continue
+                  need(len(cls.bases) == 1 and isinstance(cls.bases[0], ast.Attribute) and
+                       isinstance(cls.bases[0].value, ast.Name) and cls.bases[0].value.id == 'unittest'
+                       and cls.bases[0].attr == 'TestCase', 'TEST_CLASS')
+                  for method in methods:
+                      need(isinstance(method, ast.FunctionDef) and method.name.startswith('test_'), 'TEST_METHOD')
+                      found.append(module + '.' + cls.name + '.' + method.name)
+              return found
+
+
+          def derive(root):
+              root = Path(root)
+              tests = root/'integrations/sycope/tests'
+              need(all(p.parent == tests for p in tests.rglob('test_*.py')), 'NESTED_TEST_LAYOUT')
+              paths = (sorted((root/'sycope').glob('*.py')) +
+                       [root/'integrations/sycope/trueid_api.py', root/'integrations/sycope/trueid_sync.py'] +
+                       sorted(tests.glob('test_*.py')))
+              sources = {}
+              original = []
+              for path in paths:
+                  regular(path)
+                  sources[path.relative_to(root).as_posix()] = digest(path)
+                  if path.parent == tests:
+                      original.extend(ids(path, path.stem))
+              need(original and len(original) == len(set(original)), 'ORIGINAL_INVENTORY')
+              policy = ids(root/'scripts/test_run_sycope_acceptance.py', 'ci_policy')
+              need(policy and len(policy) == len(set(policy)), 'POLICY_INVENTORY')
+              public = {}
+              for label, folder in [('migrations', 'crates/common/migrations'), ('assets', 'apps/web/assets')]:
+                  files = {}
+                  for path in sorted((root/folder).rglob('*')):
+                      need(not path.is_symlink(), 'PUBLIC_RUNTIME_LINK')
+                      if path.is_file():
+                          regular(path)
+                          files[path.relative_to(root/folder).as_posix()] = digest(path)
+                  need(files, 'PUBLIC_RUNTIME_EMPTY')
+                  public[label] = hashlib.sha256(canonical(files)).hexdigest()
+              return {'expected_ids': sorted(original), 'policy_ids': sorted(policy),
+                      'source_hashes': sources, 'public_runtime_hashes': public,
+                      'runner': digest(root/'scripts/run-sycope-acceptance.py')}
+
+
+          def whole_tree(root):
+              root = Path(root)
+              files = {}
+              total = 0
+              for path in sorted(root.rglob('*')):
+                  need(not path.is_symlink(), 'SOURCE_TREE_LINK')
+                  if path.is_file():
+                      regular(path)
+                      size = path.stat().st_size
+                      total += size
+                      need(len(files) < 4096 and size <= 4194304 and total <= 67108864, 'SOURCE_TREE_BOUND')
+                      files[path.relative_to(root).as_posix()] = {'sha256': digest(path), 'bytes': size}
+              need(files, 'SOURCE_TREE_EMPTY')
+              return {'files': files, 'sha256': hashlib.sha256(canonical(files)).hexdigest()}
+          '''
+          VALIDATOR = r'''"""Trusted pure-data success validator. Never import candidate/application source."""
+          import hashlib
+          import json
+          import math
+
+          TOP={'status','complete','category','workers','cleanup_ok','execution_scope','policy_regressions',
+               'expected_ids','source_hashes','public_runtime_hashes','runtime_hashes','observations',
+               'policy_accepted','retained_private_work','timed_out','elapsed_seconds'}
+          WORKER={'state','inventory','selected_ids','observations','runtime_hashes','complete'}
+          STATE={'phase','stage','category','timed_out','cleanup_ok','tls_ok','auth_ok','expiry_ok',
+                 'source_ok','origins_ok','certificate_sha256','native_pid','native_exit',
+                 'native_escalated','loader_errors','elapsed_seconds','retained_private_work'}
+          NEGATIVE=('failures','errors','skipped','expectedFailures','unexpectedSuccesses')
+          OBS={'tests_run','started_ids','stopped_ids','terminal_events','failing_subtests','should_stop',*NEGATIVE}
+          LIVE=('test_trueid_api_integration.TrueIdApiIntegrationTests.test_live_mappings_endpoint',
+                'test_trueid_api_integration.TrueIdApiIntegrationTests.test_live_events_endpoint')
+          PHASES=('live_mappings','live_events','offline')
+
+          def need(ok, code):
+              if not ok:
+                  raise ValueError(code)
+
+          def pairs(items):
+              obj={}
+              for key,value in items:
+                  need(key not in obj,'DUPLICATE_KEY')
+                  obj[key]=value
+              return obj
+
+          def strict_report(raw):
+              need(type(raw) is bytes and 0<len(raw)<=262144 and b'\x00' not in raw,'REPORT_BYTES')
+              def nonfinite(_value):
+                  raise ValueError('NONFINITE_VALUE')
+              return json.loads(raw.decode('utf-8','strict'),object_pairs_hook=pairs,parse_constant=nonfinite)
+
+          def inventory(values, expected):
+              need(type(values) is list and all(type(x) is str for x in values) and
+                   len(values)==len(expected) and set(values)==set(expected),'INVENTORY')
+
+          def observations(value, expected):
+              need(type(value) is dict and set(value)==OBS,'OBSERVATION_SCHEMA')
+              need(type(value['tests_run']) is int and value['tests_run']==len(expected),'TEST_COUNT')
+              need(type(value['failing_subtests']) is int and value['failing_subtests']==0 and
+                   value['should_stop'] is False,'SUBTEST_ABORT')
+              for key in ('started_ids','stopped_ids'):
+                  inventory(value[key],expected)
+              for key in NEGATIVE:
+                  need(type(value[key]) is list and value[key]==[],'NEGATIVE_OUTCOME')
+              events=value['terminal_events']
+              need(type(events) is list and len(events)==len(expected),'TERMINAL_COUNT')
+              ids=[]
+              for event in events:
+                  need(type(event) is list and len(event)==2 and event[0]=='PASS' and type(event[1]) is str,
+                       'PASS_TERMINAL_REQUIRED')
+                  ids.append(event[1])
+              inventory(ids,expected)
+
+          def bounded_time(value, bound):
+              need(type(value) in (float,int) and math.isfinite(value) and 0<=value<=bound,'ELAPSED_BOUND')
+
+          def validate_native_report(raw, *, actual_exit, expected_ids, source_hashes,
+                                     public_runtime_hashes, runtime_hashes, seconds):
+              """Accept only exact independently supplied inventories/bytes and real exits."""
+              need(type(actual_exit) is int and actual_exit==0,'ACTUAL_PROCESS_EXIT')
+              need(type(expected_ids) is tuple and len(expected_ids)>2 and
+                   len(set(expected_ids))==len(expected_ids) and all(type(x) is str and x for x in expected_ids),
+                   'EXPECTED_INVENTORY')
+              need(set(LIVE)<=set(expected_ids),'EXPECTED_LIVE_IDS')
+              report=strict_report(raw)
+              need(type(report) is dict and set(report)==TOP,'REPORT_SCHEMA')
+              need(report['status']=='PASS' and report['complete'] is True and report['category'] is None and
+                   report['cleanup_ok'] is True and report['policy_accepted'] is True and
+                   report['retained_private_work'] is False and report['timed_out'] is False,'COMPLETE_PASS_REQUIRED')
+              need(report['execution_scope']=='OWNED_NATIVE_FIXTURE_ORIGINAL_TESTS' and
+                   report['policy_regressions']=='NOT_RUN','SCOPE')
+              need(report['expected_ids']==list(expected_ids) and report['source_hashes']==source_hashes and
+                   report['public_runtime_hashes']==public_runtime_hashes and report['runtime_hashes']==runtime_hashes,
+                   'SOURCE_AND_RUNTIME_IDENTITY')
+              bounded_time(report['elapsed_seconds'],seconds+60)
+              workers=report['workers']
+              need(type(workers) is list and len(workers)==3,'THREE_WORKERS_REQUIRED')
+              wanted=([LIVE[0]],[LIVE[1]],sorted(set(expected_ids)-set(LIVE)))
+              combined={key:[] for key in ('started_ids','stopped_ids','terminal_events',*NEGATIVE)}
+              combined.update(tests_run=0,failing_subtests=0,should_stop=False)
+              native_pids=[];certificates=[]
+              for phase,worker,selected in zip(PHASES,workers,wanted):
+                  need(type(worker) is dict and set(worker)==WORKER and worker['complete'] is True and
+                       worker['runtime_hashes']==runtime_hashes and worker['inventory']==list(expected_ids),'WORKER_IDENTITY')
+                  inventory(worker['selected_ids'],selected)
+                  state=worker['state']
+                  need(type(state) is dict and set(state)==STATE and state['phase']==phase and
+                       state['stage']=='OBSERVED' and state['category'] is None,'WORKER_STATE')
+                  need(all(state[key] is True for key in ('cleanup_ok','source_ok','origins_ok')) and
+                       all(state[key] is False for key in ('timed_out','native_escalated','retained_private_work')) and
+                       type(state['loader_errors']) is int and state['loader_errors']==0,'WORKER_CLEAN_NO_LOADER_ERROR')
+                  bounded_time(state['elapsed_seconds'],seconds+30)
+                  if phase=='offline':
+                      need(all(state[key] is False for key in ('tls_ok','auth_ok','expiry_ok')) and
+                           all(state[key] is None for key in ('native_pid','native_exit','certificate_sha256')),
+                           'OFFLINE_NO_FIXTURE')
+                  else:
+                      need(all(state[key] is True for key in ('tls_ok','auth_ok','expiry_ok')) and
+                           type(state['native_pid']) is int and state['native_pid']>0 and
+                           type(state['native_exit']) is int and state['native_exit']==0,'LIVE_FIXTURE_PROOF')
+                      cert=state['certificate_sha256']
+                      need(type(cert) is str and len(cert)==64 and all(c in '0123456789abcdef' for c in cert),
+                           'PUBLIC_CERTIFICATE_DIGEST')
+                      native_pids.append(state['native_pid']);certificates.append(cert)
+                  observed=worker['observations']
+                  observations(observed,selected)
+                  for key in combined:
+                      if type(combined[key]) is list:
+                          combined[key].extend(observed[key])
+                      elif key=='should_stop':
+                          combined[key] |= observed[key]
+                      else:
+                          combined[key] += observed[key]
+              need(len(set(native_pids))==len(set(certificates))==2,'DISTINCT_NATIVE_FIXTURES')
+              observations(report['observations'],expected_ids)
+              need(report['observations']==combined,'ACTUAL_WORKER_AGGREGATE')
+              return {'status':'EXACT_NATIVE_REPORT_ACCEPTED','methods':len(expected_ids),
+                  'worker_methods':[len(x) for x in wanted],'skips':0,'policy_regressions':'SEPARATE',
+                  'source_and_runtime_hashes_bound':True,'cleanup':True,
+                  'report_sha256':hashlib.sha256(raw).hexdigest()}
+          '''
+          RUNTIME = r'''"""Ephemeral CI container controller. All actual tests remain nonroot."""
+          import contextlib
+          import importlib.metadata
+          import importlib.util
+          import json
+          import os
+          from pathlib import Path
+          import platform
+          import re
+          import runpy
+          import selectors
+          import shutil
+          import signal
+          import stat
+          import ssl
+          import subprocess
+          import sys
+          import time
+          import tomllib
+          import unittest
+
+          control = Path('/control')
+          derive_module = runpy.run_path(str(control/'derive.py'))
+          validator = runpy.run_path(str(control/'report_validator.py'))
+          need = validator['need']
+          canonical = derive_module['canonical']
+          digest = derive_module['digest']
+          cancelled = False
+          stage = 'PREFLIGHT'
+          native_exit = None
+          SAFE_CODES = ('ACTUAL_PROCESS_EXIT', 'ACTUAL_WORKER_AGGREGATE', 'CANCELLED', 'CI_RUNTIME_FAILED', 'COMPLETE_PASS_REQUIRED', 'CONTAINER_DESCENDANTS_REMAIN', 'CURATED_RECEIPT_CAP', 'DISCOVERY_HOOK', 'DISTINCT_NATIVE_FIXTURES', 'DOTENV', 'DUPLICATE_KEY', 'ELAPSED_BOUND', 'EXPECTED_INVENTORY', 'EXPECTED_LIVE_IDS', 'FROZEN_PACKAGES', 'FROZEN_PYTHON', 'INVENTORY', 'LIVE_FIXTURE_PROOF', 'METADATA_TIMEOUT', 'NATIVE_CAPTURE_CAP', 'NATIVE_DRAIN_UNKNOWN', 'NATIVE_TIMEOUT_OR_SIGNAL', 'NEGATIVE_OUTCOME', 'NESTED_TEST_LAYOUT', 'NONFINITE_VALUE', 'OBSERVATION_SCHEMA', 'OFFLINE_NO_FIXTURE', 'OPENSSL_REQUIRED', 'OPENSSL_VERSION', 'ORIGINAL_INVENTORY', 'PASS_TERMINAL_REQUIRED', 'POLICY_CAPTURE_CAP', 'POLICY_DISCOVERY', 'POLICY_EVENTS', 'POLICY_INVENTORY', 'POLICY_LEAF', 'POLICY_NOT_PASS_ONLY', 'POLICY_TIMEOUT_OR_SIGNAL', 'PRIVATE_WORK', 'PUBLIC_CERTIFICATE_DIGEST', 'PUBLIC_FILE', 'PUBLIC_RUNTIME_EMPTY', 'PUBLIC_RUNTIME_LINK', 'PYTHON_SSL_ORIGIN', 'REPORT_BYTES', 'REPORT_SCHEMA', 'RUNTIME_IDENTITY', 'RUNTIME_IO', 'SCOPE', 'SOURCE_AND_RUNTIME_IDENTITY', 'SOURCE_CHANGED', 'SOURCE_TREE_BOUND', 'SOURCE_TREE_EMPTY', 'SOURCE_TREE_LINK', 'SUBTEST_ABORT', 'TERMINAL_COUNT', 'TEST_CLASS', 'TEST_COUNT', 'TEST_METHOD', 'THREE_WORKERS_REQUIRED', 'WEB_IDENTITY', 'WHOLE_SOURCE_CHANGED', 'WHOLE_SOURCE_IDENTITY', 'WORKER_CLEAN_NO_LOADER_ERROR', 'WORKER_IDENTITY', 'WORKER_STATE')
+
+
+          def cancel(_number, _frame):
+              global cancelled
+              cancelled = True
+
+
+          def policy_tests(project, expected):
+              path = project/'scripts/test_run_sycope_acceptance.py'
+              spec = importlib.util.spec_from_file_location('ci_policy', path)
+              module = importlib.util.module_from_spec(spec)
+              spec.loader.exec_module(module)
+              loader = unittest.TestLoader()
+              suite = loader.loadTestsFromModule(module)
+              found = []
+              def walk(item):
+                  if isinstance(item, unittest.TestSuite):
+                      for child in item:
+                          walk(child)
+                  else:
+                      need(isinstance(item, unittest.TestCase), 'POLICY_LEAF')
+                      found.append(item.id())
+              walk(suite)
+              need(not loader.errors and sorted(found) == expected and len(found) == len(set(found)), 'POLICY_DISCOVERY')
+              class Seen(unittest.TestResult):
+                  def __init__(self):
+                      super().__init__()
+                      self.started, self.stopped, self.passed = [], [], []
+                      self.failed_subtests = 0
+                  def startTest(self, case):
+                      self.started.append(case.id())
+                      super().startTest(case)
+                  def stopTest(self, case):
+                      self.stopped.append(case.id())
+                      super().stopTest(case)
+                  def addSuccess(self, case):
+                      self.passed.append(case.id())
+                      super().addSuccess(case)
+                  def addSubTest(self, case, subtest, error):
+                      self.failed_subtests += error is not None
+                      super().addSubTest(case, subtest, error)
+              result = Seen()
+              def expired(_number, _frame):
+                  raise KeyboardInterrupt()
+              old_alarm = signal.signal(signal.SIGALRM, expired)
+              signal.setitimer(signal.ITIMER_REAL, 30)
+              try:
+                  return run_policy_suite(suite, result, expected)
+              finally:
+                  signal.setitimer(signal.ITIMER_REAL, 0)
+                  signal.signal(signal.SIGALRM, old_alarm)
+
+
+          def run_policy_suite(suite, result, expected):
+              with open('/work/policy.private', 'w') as output, contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                  result.startTestRun()
+                  try:
+                      suite.run(result)
+                  finally:
+                      result.stopTestRun()
+              need(Path('/work/policy.private').stat().st_size <= 1048576, 'POLICY_CAPTURE_CAP')
+              need(not cancelled and not result.shouldStop and type(result.testsRun) is int and
+                   result.testsRun == len(expected) and result.failed_subtests == 0 and
+                   not any((result.failures, result.errors, result.skipped, result.expectedFailures,
+                            result.unexpectedSuccesses)), 'POLICY_NOT_PASS_ONLY')
+              for values in (result.started, result.stopped, result.passed):
+                  need(sorted(values) == expected and len(values) == len(set(values)), 'POLICY_EVENTS')
+              return {'status': 'PASS', 'expected_ids': expected, 'started_ids': result.started,
+                      'stopped_ids': result.stopped, 'passed_ids': result.passed,
+                      'tests_run': result.testsRun, 'negative_outcomes': 0, 'failing_subtests': 0}
+
+
+          def native_process(command, environment):
+              global native_exit
+              process = None
+              stream = None
+              selector = selectors.DefaultSelector()
+              deadline = time.monotonic()+300
+              saved = 0
+              try:
+                  stream = open('/work/native.private', 'xb')
+                  process = subprocess.Popen(command, cwd='/work', env=environment, stdin=subprocess.DEVNULL,
+                                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+                  os.set_blocking(process.stdout.fileno(), False)
+                  selector.register(process.stdout, selectors.EVENT_READ)
+                  while selector.get_map() or process.poll() is None:
+                      need(not cancelled and time.monotonic() < deadline, 'NATIVE_TIMEOUT_OR_SIGNAL')
+                      for key, _event in selector.select(0.1):
+                          data = os.read(key.fd, 65536)
+                          if not data:
+                              selector.unregister(key.fileobj)
+                              continue
+                          saved += len(data)
+                          need(saved <= 1048576, 'NATIVE_CAPTURE_CAP')
+                          stream.write(data)
+                  return process.wait(timeout=1)
+              finally:
+                  if process is not None and process.poll() is None:
+                      for number, grace in ((signal.SIGINT, 45), (signal.SIGTERM, 5), (signal.SIGKILL, 5)):
+                          if process.poll() is None:
+                              os.killpg(process.pid, number)
+                              try:
+                                  process.wait(timeout=grace)
+                              except subprocess.TimeoutExpired:
+                                  pass
+                      need(process.poll() is not None, 'NATIVE_DRAIN_UNKNOWN')
+                  if process is not None:
+                      native_exit = process.poll()
+                  selector.close()
+                  if process is not None and process.stdout is not None:
+                      process.stdout.close()
+                  if stream is not None:
+                      stream.close()
+
+
+          def no_other_processes():
+              # This is an owned private container PID namespace: init and this controller
+              # are the only permitted remaining processes. Never signal unknown PIDs.
+              end = time.monotonic()+3
+              while time.monotonic() < end:
+                  remaining = []
+                  for item in Path('/proc').iterdir():
+                      if item.name.isdecimal() and int(item.name) not in (1, os.getpid()):
+                          try:
+                              (item/'stat').read_bytes()
+                              remaining.append(item.name)
+                          except FileNotFoundError:
+                              pass
+                  if not remaining:
+                      return
+                  time.sleep(0.05)
+              raise ValueError('CONTAINER_DESCENDANTS_REMAIN')
+
+
+          def main():
+              global stage
+              os.umask(0o077)
+              need(sys.platform == 'linux' and os.getuid() == os.getgid() == 1000 and
+                   set(os.getgroups()) <= {1000} and sys.version_info[:2] == (3, 11) and
+                   sys.flags.isolated and sys.dont_write_bytecode and sys.flags.optimize == 0, 'RUNTIME_IDENTITY')
+              for number in (signal.SIGINT, signal.SIGTERM):
+                  signal.signal(number, cancel)
+              for name in ('home', 'tmp', 'results'):
+                  p = Path('/work')/name
+                  p.mkdir(mode=0o700)
+                  need(stat.S_IMODE(p.stat().st_mode) == 0o700 and p.stat().st_uid == 1000, 'PRIVATE_WORK')
+              for path in (Path('/work'), *Path('/work').parents):
+                  need(not (path/'.env').exists() and not (path/'.env').is_symlink(), 'DOTENV')
+              project = Path('/project')
+              derived = derive_module['derive'](project)
+              expected_build = json.loads((control/'build.json').read_bytes())
+              full_source = derive_module['whole_tree'](project)
+              need(full_source['sha256'] == expected_build['source_sha256'], 'WHOLE_SOURCE_IDENTITY')
+              need(digest('/native/trueid-web') == expected_build['web'] and os.access('/native/trueid-web', os.X_OK), 'WEB_IDENTITY')
+              python = '/app/integrations/sycope/.venv/bin/python'
+              need(os.access(python, os.X_OK), 'FROZEN_PYTHON')
+              lock = tomllib.loads((project/'integrations/sycope/uv.lock').read_text())
+              versions = {p['name']: p['version'] for p in lock['package'] if 'registry' in p.get('source', {})}
+              need(set(versions) == {'certifi', 'charset-normalizer', 'idna', 'requests', 'urllib3'} and
+                   {name: importlib.metadata.version(name) for name in versions} == versions, 'FROZEN_PACKAGES')
+              openssl = shutil.which('openssl', path='/usr/bin:/bin')
+              need(openssl is not None and os.access(openssl, os.X_OK), 'OPENSSL_REQUIRED')
+              openssl = str(Path(openssl).resolve(strict=True))
+              environment = {'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8', 'LC_ALL': 'C.UTF-8', 'TZ': 'UTC',
+                             'HOME': '/work/home', 'TMPDIR': '/work/tmp', 'PYTHONDONTWRITEBYTECODE': '1',
+                             'PYTHONNOUSERSITE': '1', 'PYTHONOPTIMIZE': '0'}
+              metadata = subprocess.run([openssl, 'version'], env=environment, stdin=subprocess.DEVNULL,
+                                        capture_output=True, timeout=5, check=True)
+              version = metadata.stdout.decode('ascii').strip()
+              need(len(version) <= 256 and re.fullmatch(r'[A-Za-z0-9 .()+:/_-]+', version), 'OPENSSL_VERSION')
+              provenance = {'python_executable': sys.executable, 'python_realpath': str(Path(sys.executable).resolve()),
+                            'ssl_module': ssl._ssl.__file__, 'ssl_module_sha256': digest(ssl._ssl.__file__),
+                            'ssl_version': ssl.OPENSSL_VERSION, 'libc': list(platform.libc_ver())}
+              need(Path(sys.executable).resolve() == Path(python).resolve() and
+                   Path(ssl._ssl.__file__).resolve().is_relative_to(Path(sys.base_prefix).resolve()), 'PYTHON_SSL_ORIGIN')
+              hashes = {'runner': derived['runner'], 'python': digest(python),
+                        'web': digest('/native/trueid-web'), 'openssl': digest(openssl)}
+              stage = 'POLICY'
+              policy = policy_tests(project, derived['policy_ids'])
+              stage = 'NATIVE'
+              code = native_process([python, '-I', '-B', '/project/scripts/run-sycope-acceptance.py',
+                                     '--source-root', '/project', '--web-binary', '/native/trueid-web',
+                                     '--python', python, '--timeout', '240', '--report', '/work/results/native.json'], environment)
+              stage = 'REPORT'
+              raw = Path('/work/results/native.json').read_bytes()
+              native = validator['strict_report'](raw)
+              normalized = canonical(native)
+              accepted = validator['validate_native_report'](normalized, actual_exit=code,
+                  expected_ids=tuple(derived['expected_ids']), source_hashes=derived['source_hashes'],
+                  public_runtime_hashes=derived['public_runtime_hashes'], runtime_hashes=hashes, seconds=240)
+              need(derive_module['whole_tree'](project) == full_source, 'WHOLE_SOURCE_CHANGED')
+              need(derive_module['derive'](project) == derived and digest('/native/trueid-web') == hashes['web'], 'SOURCE_CHANGED')
+              no_other_processes()
+              need(not cancelled, 'CANCELLED')
+              # No child is live. Restore defaults so a late signal cannot be ignored or
+              # transformed into successful receipt/exit during the final emission window.
+              signal.signal(signal.SIGINT, signal.default_int_handler)
+              signal.signal(signal.SIGTERM, signal.SIG_DFL)
+              receipt = {'status': 'PASS', 'policy': policy, 'native_exit': code,
+                         'native': native, 'public_source_sha256': full_source['sha256'], 'native_validation': accepted,
+                         'runtime_hashes': hashes, 'versions': versions, 'openssl_version': version,
+                         'python_version': list(sys.version_info[:3]), 'architecture': platform.machine(),
+                         'uid': os.getuid(), 'gid': os.getgid(), 'groups': os.getgroups(), 'runtime_provenance': provenance}
+              output = canonical(receipt)
+              need(len(output) <= 524288, 'CURATED_RECEIPT_CAP')
+              sys.stdout.buffer.write(output+b'\n')
+              sys.stdout.buffer.flush()
+
+
+          if __name__ == '__main__':
+              try:
+                  main()
+              except BaseException as error:
+                  # Only fixed allowlisted categories/stages and actual child exit cross
+                  # the boundary; exception text, HTTP data and tracebacks never do.
+                  category = 'CI_RUNTIME_FAILED'
+                  if type(error) is ValueError and len(error.args) == 1 and error.args[0] in SAFE_CODES:
+                      category = error.args[0]
+                  elif isinstance(error, KeyboardInterrupt):
+                      category = 'POLICY_TIMEOUT_OR_SIGNAL'
+                  elif isinstance(error, subprocess.TimeoutExpired):
+                      category = 'METADATA_TIMEOUT'
+                  elif isinstance(error, OSError):
+                      category = 'RUNTIME_IO'
+                  sys.stdout.write(json.dumps({'status': 'FAIL', 'category': category,
+                                               'stage': stage, 'native_exit': native_exit})+'\n')
+                  sys.exit(1)
+          '''
+          BUILD = r'''set -eu
+          umask 077
+          test "$(id -u)" = 1000
+          test "$(id -g)" = 1000
+          for dir in / /src; do
+            test ! -e "$dir/.env"
+            test ! -L "$dir/.env"
+            test ! -e "$dir/.cargo/config"
+            test ! -e "$dir/.cargo/config.toml"
+          done
+          toolchain=''
+          for dir in /usr/local/rustup/toolchains/*; do
+            if test -x "$dir/bin/rustc"; then
+              case "$("$dir/bin/rustc" --version)" in
+                'rustc 1.95.0 '*) test -z "$toolchain"; toolchain="$dir" ;;
+              esac
+            fi
+          done
+          test -n "$toolchain"
+          export PATH="$toolchain/bin:/usr/bin:/bin"
+          export RUSTC="$toolchain/bin/rustc"
+          mkdir -p /work/home /work/tmp /work/cargo-home
+          case "$1" in
+            fetch) exec "$toolchain/bin/cargo" fetch --locked ;;
+            build)
+              test ! -e /work/web-target
+              mkdir /work/web-target
+              "$toolchain/bin/cargo" build --release --locked --offline -p trueid-web --bin trueid-web
+              binary=/work/web-target/release/trueid-web
+              test "$(readlink -f "$binary")" = "$binary"
+              test -f "$binary"
+              test "$(stat -c %u "$binary")" = 1000
+              test "$(stat -c %g "$binary")" = 1000
+              # Cargo may use internal target hardlinks; export independent bytes.
+              test ! -e /work/export
+              mkdir -m 0755 /work/export
+              cp --reflink=never "$binary" /work/export/trueid-web
+              chmod 0555 /work/export/trueid-web
+              test "$(stat -c %h /work/export/trueid-web)" = 1
+              test "$(sha256sum "$binary" | cut -d' ' -f1)" = "$(sha256sum /work/export/trueid-web | cut -d' ' -f1)"
+              readelf -h -l -d -V /work/export/trueid-web > /work/export/web-elf.txt
+              chmod 0444 /work/export/web-elf.txt
+              ;;
+            *) exit 2 ;;
+          esac
+          '''
+          FIXED_RUNTIME_CODES = ('ACTUAL_PROCESS_EXIT', 'ACTUAL_WORKER_AGGREGATE', 'CANCELLED', 'CI_RUNTIME_FAILED', 'COMPLETE_PASS_REQUIRED', 'CONTAINER_DESCENDANTS_REMAIN', 'CURATED_RECEIPT_CAP', 'DISCOVERY_HOOK', 'DISTINCT_NATIVE_FIXTURES', 'DOTENV', 'DUPLICATE_KEY', 'ELAPSED_BOUND', 'EXPECTED_INVENTORY', 'EXPECTED_LIVE_IDS', 'FROZEN_PACKAGES', 'FROZEN_PYTHON', 'INVENTORY', 'LIVE_FIXTURE_PROOF', 'METADATA_TIMEOUT', 'NATIVE_CAPTURE_CAP', 'NATIVE_DRAIN_UNKNOWN', 'NATIVE_TIMEOUT_OR_SIGNAL', 'NEGATIVE_OUTCOME', 'NESTED_TEST_LAYOUT', 'NONFINITE_VALUE', 'OBSERVATION_SCHEMA', 'OFFLINE_NO_FIXTURE', 'OPENSSL_REQUIRED', 'OPENSSL_VERSION', 'ORIGINAL_INVENTORY', 'PASS_TERMINAL_REQUIRED', 'POLICY_CAPTURE_CAP', 'POLICY_DISCOVERY', 'POLICY_EVENTS', 'POLICY_INVENTORY', 'POLICY_LEAF', 'POLICY_NOT_PASS_ONLY', 'POLICY_TIMEOUT_OR_SIGNAL', 'PRIVATE_WORK', 'PUBLIC_CERTIFICATE_DIGEST', 'PUBLIC_FILE', 'PUBLIC_RUNTIME_EMPTY', 'PUBLIC_RUNTIME_LINK', 'PYTHON_SSL_ORIGIN', 'REPORT_BYTES', 'REPORT_SCHEMA', 'RUNTIME_IDENTITY', 'RUNTIME_IO', 'SCOPE', 'SOURCE_AND_RUNTIME_IDENTITY', 'SOURCE_CHANGED', 'SOURCE_TREE_BOUND', 'SOURCE_TREE_EMPTY', 'SOURCE_TREE_LINK', 'SUBTEST_ABORT', 'TERMINAL_COUNT', 'TEST_CLASS', 'TEST_COUNT', 'TEST_METHOD', 'THREE_WORKERS_REQUIRED', 'WEB_IDENTITY', 'WHOLE_SOURCE_CHANGED', 'WHOLE_SOURCE_IDENTITY', 'WORKER_CLEAN_NO_LOADER_ERROR', 'WORKER_IDENTITY', 'WORKER_STATE')
+          failure_details = None
+          cancelled = False
+          owned = []
+          intents = []
+          cleanup_uncertain = False
+          images = []
+          environment = None
+          phase = 'SETUP'
+
+
+          class Failure(Exception):
+              def __init__(self, code):
+                  self.code = code
+
+
+          def need(ok, code):
+              if not ok:
+                  raise Failure(code)
+
+
+          def cancel(_number, _frame):
+              global cancelled
+              cancelled = True
+
+
+          def command(args, seconds, capture=False, cleanup=False, with_exit=False):
+              need(cleanup or not cancelled, 'COMMAND_CANCELLED')
+              process = None
+              selector = selectors.DefaultSelector()
+              data = bytearray()
+              try:
+                  process = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                             stderr=subprocess.DEVNULL, env=environment, start_new_session=True)
+                  os.set_blocking(process.stdout.fileno(), False)
+                  selector.register(process.stdout, selectors.EVENT_READ)
+                  end = time.monotonic()+seconds
+                  while selector.get_map() or process.poll() is None:
+                      need((cleanup or not cancelled) and time.monotonic() < end, 'COMMAND_INTERRUPTED_OR_TIMEOUT')
+                      for key, _mask in selector.select(0.1):
+                          part = os.read(key.fd, 65536)
+                          if not part:
+                              selector.unregister(key.fileobj)
+                          elif capture:
+                              data.extend(part)
+                              need(len(data) <= 524288, 'CAPTURE_LIMIT')
+                  code = process.wait(timeout=1)
+                  if with_exit:
+                      return code, bytes(data)
+                  need(code == 0, 'COMMAND_EXIT')
+                  return bytes(data)
+              finally:
+                  if process is not None and process.poll() is None:
+                      os.killpg(process.pid, signal.SIGTERM)
+                      try:
+                          process.wait(timeout=5)
+                      except subprocess.TimeoutExpired:
+                          os.killpg(process.pid, signal.SIGKILL)
+                          process.wait(timeout=5)
+                  selector.close()
+                  if process is not None and process.stdout is not None:
+                      process.stdout.close()
+
+
+          def inspect_container(cid, cleanup=False):
+              return json.loads(command(['docker', 'inspect', cid], 30, True, cleanup=cleanup))[0]
+
+
+          def recover_intent(intent):
+              raw = command(['docker', 'ps', '--all', '--no-trunc', '--filter',
+                             'label=org.trueid.c01.owner='+intent['owner'], '--format', '{{.ID}}'],
+                            30, True, cleanup=True)
+              ids = raw.decode('ascii').splitlines()
+              need(len(ids) <= 1 and all(re.fullmatch('[0-9a-f]{64}', cid) for cid in ids), 'INTENT_LOOKUP')
+              for cid in ids:
+                  info = inspect_container(cid, cleanup=True)
+                  need(info['Name'] == '/'+intent['name'] and info['Image'] == intent['image'] and
+                       info['Config']['Labels'].get('org.trueid.c01.owner') == intent['owner'], 'INTENT_OWNERSHIP')
+                  if cid not in owned:
+                      owned.append(cid)
+              return ids
+
+
+          def cleanup_intent(intent):
+              global cleanup_uncertain
+              if intent['closed']:
+                  return
+              try:
+                  for cid in recover_intent(intent):
+                      try:
+                          command(['docker', 'stop', '--signal', 'SIGINT', '--timeout', '45', cid], 60, cleanup=True)
+                      finally:
+                          command(['docker', 'rm', '--force', cid], 30, cleanup=True)
+                          owned.remove(cid)
+                  need(recover_intent(intent) == [], 'INTENT_REMAINS')
+                  intent['closed'] = True
+                  # An unacknowledged create can still be in flight after the client died.
+                  # Recover known IDs but never claim absence/readiness from that race.
+                  if not intent['acked']:
+                      cleanup_uncertain = True
+              except BaseException:
+                  cleanup_uncertain = True
+                  raise
+
+
+          def container(image, args, *, seconds, network, mounts, workdir, tmpfs=False, curated=False):
+              global failure_details
+              owner = secrets.token_hex(16)
+              intent = {'name': 'trueid-c01-'+owner, 'owner': owner, 'image': image, 'acked': False, 'closed': False}
+              intents.append(intent)  # Registered BEFORE docker create or signal/timeout.
+              config = ['docker', 'create', '--name', intent['name'], '--label', 'org.trueid.c01.owner='+owner,
+                        '--platform', 'linux/amd64', '--init', '--user', '1000:1000', '--log-driver', 'none',
+                        '--read-only', '--network', network, '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
+                        '--pids-limit', '256', '--cpus', '2', '--memory', '3g', '--memory-swap', '3g',
+                        '--stop-signal', 'SIGINT', '--stop-timeout', '45', '--workdir', workdir,
+                        '--entrypoint', '/usr/bin/env']
+              for source, destination, readonly in mounts:
+                  config += ['--mount', 'type=bind,source='+str(source)+',target='+destination+(',readonly' if readonly else '')]
+              if tmpfs:
+                  config += ['--tmpfs', '/work:rw,nosuid,nodev,noexec,size=512m,uid=1000,gid=1000,mode=0700', '--tmpfs', '/tmp:rw,nosuid,nodev,noexec,size=128m,uid=1000,gid=1000,mode=0700']
+              try:
+                  cid = command(config+[image]+args, 30, True).decode('ascii').strip()
+                  intent['acked'] = True
+                  need(re.fullmatch('[0-9a-f]{64}', cid) and recover_intent(intent) == [cid], 'CONTAINER_ID')
+                  client_exit, raw = command(['docker', 'start', '--attach', cid], seconds, curated, with_exit=True)
+                  info = inspect_container(cid)
+                  failure_details = {'client_exit': client_exit, 'container_exit': info['State']['ExitCode'],
+                                     'container_running': info['State']['Running'], 'oom': info['State']['OOMKilled']}
+                  if curated:
+                      try:
+                          problem = json.loads(raw)
+                          if (type(problem) is dict and set(problem) == {'status', 'category', 'stage', 'native_exit'} and
+                              problem['status'] == 'FAIL' and problem['category'] in FIXED_RUNTIME_CODES and
+                              problem['stage'] in {'PREFLIGHT', 'POLICY', 'NATIVE', 'REPORT'} and
+                              (problem['native_exit'] is None or type(problem['native_exit']) is int)):
+                              failure_details.update(runtime_category=problem['category'], runtime_stage=problem['stage'],
+                                                     native_exit=problem['native_exit'])
+                      except (ValueError, TypeError):
+                          pass
+                  need(client_exit == 0 and info['Image'] == image and info['Config']['User'] == '1000:1000' and
+                       info['HostConfig']['NetworkMode'] == network and info['HostConfig']['ReadonlyRootfs'] is True and
+                       info['State']['Running'] is False and type(info['State']['ExitCode']) is int and
+                       info['State']['ExitCode'] == 0 and info['State']['OOMKilled'] is False, 'CONTAINER_OUTCOME')
+                  failure_details = None
+                  return raw
+              finally:
+                  cleanup_intent(intent)
+
+
+          def source_view(checkout, destination):
+              chosen = {checkout/p for p in ('Cargo.toml', 'Cargo.lock', 'LICENSE', 'deny.toml', 'rust-toolchain.toml',
+                  'scripts/run-sycope-acceptance.py', 'scripts/test_run_sycope_acceptance.py',
+                  'integrations/sycope/Dockerfile', 'integrations/sycope/pyproject.toml',
+                  'integrations/sycope/uv.lock', 'integrations/sycope/.python-version',
+                  'integrations/sycope/trueid_api.py', 'integrations/sycope/trueid_sync.py')}
+              for top in ('apps', 'crates', 'tests'):
+                  chosen.update((checkout/top).rglob('*.rs'))
+                  chosen.update((checkout/top).rglob('Cargo.toml'))
+              chosen.update((checkout/'sycope').glob('*.py'))
+              chosen.update((checkout/'integrations/sycope/tests').rglob('test_*.py'))
+              for folder in ('apps/web/assets', 'crates/common/migrations'):
+                  for path in (checkout/folder).rglob('*'):
+                      need(not path.is_symlink(), 'PUBLIC_DIRECTORY_LINK')
+                      if path.is_file():
+                          chosen.add(path)
+              for source in sorted(chosen):
+                  rel = source.relative_to(checkout)
+                  need(source.resolve(strict=True) == source and stat.S_ISREG(source.lstat().st_mode) and
+                       not any(p in ('.git', '.env', '.venv') for p in rel.parts), 'PUBLIC_SELECTION')
+                  target = destination/rel
+                  target.parent.mkdir(parents=True, exist_ok=True)
+                  shutil.copyfile(source, target)
+                  target.chmod(0o444)
+              for path in [destination, *destination.rglob('*')]:
+                  if path.is_dir():
+                      path.chmod(0o555)
+
+
+          def decode(raw, pairs):
+              need(0 < len(raw) <= 524288 and b'\x00' not in raw, 'RECEIPT_BYTES')
+              def nonfinite(_value):
+                  raise Failure('RECEIPT_NONFINITE')
+              return json.loads(raw.decode('utf-8', 'strict'), object_pairs_hook=pairs, parse_constant=nonfinite)
+
+
+          def validate_receipt(raw, derived, full_sha, web, versions, validate):
+              receipt = decode(raw, validate['pairs'])
+              keys = {'status', 'policy', 'native_exit', 'native', 'native_validation', 'runtime_hashes',
+                      'versions', 'openssl_version', 'python_version', 'architecture', 'uid', 'gid', 'groups', 'runtime_provenance', 'public_source_sha256'}
+              need(type(receipt) is dict and set(receipt) == keys and receipt['status'] == 'PASS' and
+                   receipt['public_source_sha256'] == full_sha, 'CURATED_SCHEMA')
+              need(type(receipt['uid']) is int and receipt['uid'] == 1000 and
+                   type(receipt['gid']) is int and receipt['gid'] == 1000 and
+                   type(receipt['groups']) is list and all(type(g) is int and g == 1000 for g in receipt['groups']) and
+                   receipt['architecture'] == 'x86_64' and receipt['versions'] == versions, 'RUNTIME_METADATA')
+              py = receipt['python_version']
+              need(type(py) is list and len(py) == 3 and all(type(v) is int for v in py) and py[:2] == [3, 11], 'PYTHON_VERSION')
+              need(type(receipt['openssl_version']) is str and len(receipt['openssl_version']) <= 256 and
+                   re.fullmatch(r'[A-Za-z0-9 .()+:/_-]+', receipt['openssl_version']), 'OPENSSL_METADATA')
+              hashes = receipt['runtime_hashes']
+              need(type(hashes) is dict and set(hashes) == {'runner', 'python', 'web', 'openssl'} and
+                   hashes['web'] == web and hashes['runner'] == derived['runner'] and
+                   all(type(v) is str and re.fullmatch('[0-9a-f]{64}', v) for v in hashes.values()), 'RUNTIME_HASHES')
+              provenance = receipt['runtime_provenance']
+              need(type(provenance) is dict and set(provenance) == {'python_executable', 'python_realpath',
+                   'ssl_module', 'ssl_module_sha256', 'ssl_version', 'libc'}, 'RUNTIME_PROVENANCE')
+              for name in ('python_executable', 'python_realpath', 'ssl_module'):
+                  need(type(provenance[name]) is str and len(provenance[name]) <= 512 and
+                       re.fullmatch(r'/(?:app|usr|opt/uv-pythons)/[A-Za-z0-9_./+-]+', provenance[name]), 'RUNTIME_PATH')
+              need(type(provenance['ssl_module_sha256']) is str and
+                   re.fullmatch('[0-9a-f]{64}', provenance['ssl_module_sha256']) and
+                   type(provenance['ssl_version']) is str and len(provenance['ssl_version']) <= 256 and
+                   re.fullmatch(r'[A-Za-z0-9 .()+:/_-]+', provenance['ssl_version']) and
+                   type(provenance['libc']) is list and len(provenance['libc']) == 2 and
+                   all(type(v) is str and re.fullmatch('[A-Za-z0-9. -]{0,80}', v) for v in provenance['libc']),
+                   'SSL_LIBC_METADATA')
+              policy = receipt['policy']
+              need(type(policy) is dict and set(policy) == {'status', 'expected_ids', 'started_ids', 'stopped_ids',
+                   'passed_ids', 'tests_run', 'negative_outcomes', 'failing_subtests'} and policy['status'] == 'PASS', 'POLICY_SCHEMA')
+              expected = derived['policy_ids']
+              need(policy['expected_ids'] == expected and type(policy['tests_run']) is int and
+                   policy['tests_run'] == len(expected) and type(policy['negative_outcomes']) is int and
+                   policy['negative_outcomes'] == 0 and type(policy['failing_subtests']) is int and
+                   policy['failing_subtests'] == 0, 'POLICY_COUNTERS')
+              for key in ('started_ids', 'stopped_ids', 'passed_ids'):
+                  validate['inventory'](policy[key], expected)
+              native_raw = json.dumps(receipt['native'], sort_keys=True, separators=(',', ':'), allow_nan=False).encode()
+              native = validate['validate_native_report'](native_raw, actual_exit=receipt['native_exit'],
+                  expected_ids=tuple(derived['expected_ids']), source_hashes=derived['source_hashes'],
+                  public_runtime_hashes=derived['public_runtime_hashes'], runtime_hashes=hashes, seconds=240)
+              need(receipt['native_validation'] == native, 'VALIDATION_RECEIPT')
+              return receipt
+
+
+          def main():
+              global environment, phase
+              os.umask(0o077)
+              for number in (signal.SIGINT, signal.SIGTERM):
+                  signal.signal(number, cancel)
+              temp = Path(os.environ['RUNNER_TEMP']).resolve(strict=True)
+              checkout = Path(os.environ['GITHUB_WORKSPACE']).resolve(strict=True)
+              output = Path(tempfile.mkdtemp(prefix='trueid-c01-receipts-', dir=temp))
+              final = output/'summary.json'
+              final.write_text('{"status":"FAIL","category":"NOT_COMPLETED"}\n')
+              final.chmod(0o600)
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
+                  stream.write('receipt_path='+str(final)+'\n')
+              root = Path(tempfile.mkdtemp(prefix='trueid-c01-private-', dir=temp))
+              result = None
+              failure = 'NOT_COMPLETED'
+              cleanup_ok = True
+              try:
+                  for name in ('home', 'docker', 'control', 'source', 'native', 'build'):
+                      (root/name).mkdir(mode=0o700)
+                  environment = {'PATH': '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
+                                 'HOME': str(root/'home'), 'DOCKER_CONFIG': str(root/'docker'),
+                                 'DOCKER_BUILDKIT': '1', 'LANG': 'C.UTF-8'}
+                  plugin_dirs = [Path(os.environ.get('DOCKER_CONFIG', str(Path(os.environ['HOME'])/'.docker')))/'cli-plugins',
+                                 Path('/usr/libexec/docker/cli-plugins'), Path('/usr/lib/docker/cli-plugins'),
+                                 Path('/usr/local/libexec/docker/cli-plugins'), Path('/usr/local/lib/docker/cli-plugins')]
+                  plugins = [d/'docker-buildx' for d in plugin_dirs if (d/'docker-buildx').is_file() and
+                             os.access(d/'docker-buildx', os.X_OK)]
+                  need(plugins, 'BUILDX_PLUGIN_REQUIRED')
+                  plugin_dir = root/'docker/cli-plugins'
+                  plugin_dir.mkdir(mode=0o700)
+                  shutil.copyfile(plugins[0].resolve(strict=True), plugin_dir/'docker-buildx')
+                  (plugin_dir/'docker-buildx').chmod(0o500)
+                  command(['docker', 'buildx', 'version'], 30)
+                  control = root/'control'
+                  for name, raw in [('derive.py', DERIVE), ('report_validator.py', VALIDATOR),
+                                    ('runtime.py', RUNTIME), ('build.sh', BUILD)]:
+                      p = control/name
+                      p.write_text(raw)
+                      p.chmod(0o444)
+                  need(hashlib.sha256(VALIDATOR.encode()).hexdigest() ==
+                       'fe06046c91096ec5e5747fa084fb9457d653f4a1bc8f7c88bf5aeff09b78474f', 'VALIDATOR_PIN')
+                  control.chmod(0o755)
+                  phase = 'PUBLIC_SOURCE'
+                  source_view(checkout, root/'source')
+                  derive = runpy.run_path(str(control/'derive.py'))
+                  validate = runpy.run_path(str(control/'report_validator.py'))
+                  derived = derive['derive'](root/'source')
+                  full_source = derive['whole_tree'](root/'source')
+                  versions = {p['name']: p['version'] for p in
+                              tomllib.loads((root/'source/integrations/sycope/uv.lock').read_text())['package']
+                              if 'registry' in p.get('source', {})}
+                  nonce = secrets.token_hex(8)
+                  builder_tag, sdk_tag = 'trueid-c01-builder:'+nonce, 'trueid-c01-sdk:'+nonce
+                  images.extend([builder_tag, sdk_tag])
+                  dockerfile = root/'Builder.Dockerfile'
+                  dockerfile.write_text('FROM rust:1.95.0-bookworm\nRUN apt-get update && apt-get install -y --no-install-recommends ca-certificates pkg-config libssl-dev binutils && rm -rf /var/lib/apt/lists/*\nWORKDIR /src\nCOPY . .\n')
+                  phase = 'BUILD_IMAGES'
+                  command(['docker', 'build', '--platform', 'linux/amd64', '-f', str(dockerfile), '-t', builder_tag, str(root/'source')], 1800)
+                  command(['docker', 'build', '--platform', 'linux/amd64', '-f', str(root/'source/integrations/sycope/Dockerfile'),
+                           '-t', sdk_tag, str(root/'source')], 1200)
+                  builder = command(['docker', 'image', 'inspect', '--format', '{{.Id}}', builder_tag], 30, True).decode().strip()
+                  sdk = command(['docker', 'image', 'inspect', '--format', '{{.Id}}', sdk_tag], 30, True).decode().strip()
+                  need(all(re.fullmatch('sha256:[0-9a-f]{64}', x) for x in (builder, sdk)), 'IMAGE_ID')
+                  command(['sudo', 'chown', '1000:1000', str(root/'build')], 30)
+                  base_env = ['-i', 'PATH=/usr/bin:/bin', 'HOME=/work/home', 'TMPDIR=/work/tmp',
+                              'CARGO_HOME=/work/cargo-home', 'CARGO_TARGET_DIR=/work/web-target',
+                              'CARGO_BUILD_JOBS=1', 'LANG=C.UTF-8']
+                  mounts = [(root/'build', '/work', False), (control, '/control', True)]
+                  phase = 'LOCKED_FETCH'
+                  container(builder, base_env+['/bin/sh', '/control/build.sh', 'fetch'], seconds=600,
+                            network='bridge', mounts=mounts, workdir='/src')
+                  phase = 'FRESH_WEB_BUILD'
+                  container(builder, base_env+['CARGO_NET_OFFLINE=true', '/bin/sh', '/control/build.sh', 'build'],
+                            seconds=1800, network='none', mounts=mounts, workdir='/src')
+                  # The build processes/containers are gone. Expose only the public export
+                  # to the host reader; the cache and target remain private numeric1000.
+                  command(['sudo', 'chmod', '0755', str(root/'build')], 30)
+                  exported = root/'build/export/trueid-web'
+                  need(exported.resolve(strict=True) == exported and stat.S_ISREG(exported.lstat().st_mode) and
+                       exported.stat().st_nlink == 1 and exported.stat().st_uid == 1000 and
+                       0 < exported.stat().st_size <= 134217728, 'FRESH_EXPORT')
+                  with exported.open('rb') as stream:
+                      header = stream.read(64)
+                  need(header[:6] == b'\x7fELF\x02\x01' and header[18:20] == b'\x3e\x00', 'WEB_ELF')
+                  binary = root/'native/trueid-web'
+                  shutil.copyfile(exported, binary)
+                  binary.chmod(0o555)
+                  (root/'native').chmod(0o755)
+                  web = derive['digest'](binary)
+                  need(web == derive['digest'](exported) and binary.stat().st_nlink == 1, 'EXPORTED_BYTES')
+                  elf_data = root/'build/export/web-elf.txt'
+                  need(0 < elf_data.stat().st_size <= 1048576, 'ELF_METADATA')
+                  build = {'web': web, 'elf_metadata_sha256': derive['digest'](elf_data),
+                           'source_sha256': full_source['sha256'], 'source_manifest': full_source['files']}
+                  (control/'build.json').write_text(json.dumps(build))
+                  (control/'build.json').chmod(0o444)
+                  control.chmod(0o555)
+                  phase = 'ISOLATED_ACCEPTANCE'
+                  runtime_env = ['-i', 'PATH=/usr/bin:/bin', 'LANG=C.UTF-8', 'HOME=/work/home', 'TMPDIR=/work/tmp',
+                                 'PYTHONDONTWRITEBYTECODE=1', 'PYTHONNOUSERSITE=1', 'PYTHONOPTIMIZE=0',
+                                 '/app/integrations/sycope/.venv/bin/python', '-I', '-B', '/control/runtime.py']
+                  raw = container(sdk, runtime_env, seconds=420, network='none', workdir='/work', tmpfs=True, curated=True,
+                                  mounts=[(root/'source', '/project', True), (root/'native', '/native', True), (control, '/control', True)])
+                  phase = 'HOST_RECEIPT_VALIDATION'
+                  need(derive['derive'](root/'source') == derived and
+                       derive['whole_tree'](root/'source') == full_source, 'PUBLIC_SOURCE_DRIFT')
+                  result = validate_receipt(raw, derived, full_source['sha256'], web, versions, validate)
+                  result = {'status': 'PASS', 'acceptance': result, 'build': build,
+                            'builder_image': builder, 'sdk_image': sdk, 'cleanup': True}
+              except BaseException as exc:
+                  failure = exc.code if type(exc) is Failure else type(exc).__name__
+              finally:
+                  for intent in reversed(intents):
+                      if not intent['closed']:
+                          try:
+                              cleanup_intent(intent)
+                          except BaseException:
+                              cleanup_ok = False
+                  for cid in list(reversed(owned)):
+                      try:
+                          command(['docker', 'stop', '--signal', 'SIGINT', '--timeout', '45', cid], 60, cleanup=True)
+                      except BaseException:
+                          pass
+                      try:
+                          command(['docker', 'rm', '--force', cid], 30, cleanup=True)
+                          owned.remove(cid)
+                      except BaseException:
+                          cleanup_ok = False
+                  for tag in images:
+                      try:
+                          command(['docker', 'image', 'rm', '--force', tag], 30, cleanup=True)
+                      except BaseException:
+                          try:
+                              remaining = command(['docker', 'image', 'ls', '--filter', 'reference='+tag,
+                                                   '--format', '{{.ID}}'], 30, True, cleanup=True)
+                              cleanup_ok &= remaining.strip() == b''
+                          except BaseException:
+                              cleanup_ok = False
+                  try:
+                      command(['sudo', 'rm', '-rf', '--', str(root)], 60, cleanup=True)
+                      cleanup_ok &= not root.exists()
+                  except BaseException:
+                      cleanup_ok = False
+              signal.signal(signal.SIGINT, signal.default_int_handler)
+              signal.signal(signal.SIGTERM, signal.SIG_DFL)
+              if result is None or not cleanup_ok or cleanup_uncertain or owned or cancelled:
+                  result = {'status': 'FAIL', 'phase': phase, 'category': failure if result is None else 'CLEANUP_OR_SIGNAL',
+                            'details': failure_details}
+              final.write_text(json.dumps(result, sort_keys=True, separators=(',', ':'), allow_nan=False)+'\n')
+              final.chmod(0o600)
+              if result['status'] != 'PASS':
+                  raise SystemExit(1)
+
+
+          try:
+              main()
+          except SystemExit:
+              raise
+          except BaseException:
+              sys.stderr.write('C01_CI_CONTROL_FAILED\n')
+              sys.exit(1)
+          PY
+      - name: Upload sanitized receipt
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: sycope-acceptance-receipt
+          path: ${{ steps.acceptance.outputs.receipt_path }}
+          if-no-files-found: error
+          retention-days: 7
