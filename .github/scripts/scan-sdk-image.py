@@ -1850,6 +1850,64 @@ def utc_now():
     return datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z')
 
 
+def scanner_diagnostic(code, stdout, stderr):
+    names = ('unknown_flag','db_download','db_schema','network','tls','rate_limit','permission','no_space','archive_load','unsupported')
+    result = {'scope':'C04_SCANNER_DIAGNOSTIC_ONLY','checkpoint':'SCAN_RETURN',
+              'exit':None,'stdout_bytes':None,'stderr_bytes':None,**{name:False for name in names}}
+    if not (type(code) is int and 0 <= code <= 255 and type(stdout) is bytes and
+            len(stdout) <= 67108864 and type(stderr) is bytes and len(stderr) <= 2097152):
+        return result
+    result.update(exit=code,stdout_bytes=len(stdout),stderr_bytes=len(stderr))
+    lower = stderr.lower()
+    signatures = ((b'unknown flag',),(b'failed to download',b'failed to fetch vulnerability db'),
+        (b'database schema',b'unsupported db version',b'db schema'),
+        (b'network is unreachable',b'no such host',b'connection refused',b'i/o timeout',b'dial tcp'),
+        (b'tls handshake',b'x509:',b'certificate signed by unknown authority'),
+        (b'too many requests',b'toomanyrequests',b'429'),(b'permission denied',),
+        (b'no space left on device',),(b'failed to load image',b'failed to open archive',b'unable to initialize an image'),
+        (b'unsupported media type',b'unsupported image',b'unsupported platform',b'unsupported flag'))
+    for name, patterns in zip(names, signatures): result[name] = any(value in lower for value in patterns)
+    return result
+
+
+def emit_scanner_diagnostic(code, stdout, stderr):
+    fallback = b'{"archive_load":false,"checkpoint":"SCAN_RETURN","db_download":false,"db_schema":false,"exit":null,"network":false,"no_space":false,"permission":false,"rate_limit":false,"scope":"C04_SCANNER_DIAGNOSTIC_ONLY","stderr_bytes":null,"stdout_bytes":null,"tls":false,"unknown_flag":false,"unsupported":false}\n'
+    try:
+        line = canonical(scanner_diagnostic(code,stdout,stderr))+b'\n'
+        if len(line) > 1024: line = fallback
+    except Exception:
+        line = fallback
+    try:
+        sys.stderr.write(line.decode('ascii'))
+        sys.stderr.flush()
+    except Exception:
+        pass
+
+
+def run_scanner_diagnostic_controls():
+    fixtures = (
+        (1,b'{}',b'failed to download vulnerability DB; database schema; dial tcp; x509:; too many requests',
+         {'db_download','db_schema','network','tls','rate_limit'}),
+        (2,b'',b'unknown flag; permission denied; no space left on device; failed to load image; unsupported platform',
+         {'unknown_flag','permission','no_space','archive_load','unsupported'}),
+        (255,b'PRIVATE_SCANNER_CANARY /private/example',b'PRIVATE_SCANNER_CANARY https://example.invalid/token',set()),
+        (1,b'{}',b'x'*2097153,set()))
+    count = 0
+    for code, stdout, stderr, expected in fixtures:
+        result = scanner_diagnostic(code,stdout,stderr)
+        need(set(result) == {'scope','checkpoint','exit','stdout_bytes','stderr_bytes',
+             'unknown_flag','db_download','db_schema','network','tls','rate_limit','permission','no_space','archive_load','unsupported'},'INTERNAL')
+        flags = {name for name in expected | {'unknown_flag','db_download','db_schema','network','tls','rate_limit','permission','no_space','archive_load','unsupported'} if result[name] is True}
+        need(flags == expected and all(type(result[name]) is bool for name in flags | {'unknown_flag','db_download','db_schema','network','tls','rate_limit','permission','no_space','archive_load','unsupported'}),'INTERNAL')
+        need(result['scope'] == 'C04_SCANNER_DIAGNOSTIC_ONLY' and result['checkpoint'] == 'SCAN_RETURN' and
+             result['exit'] == (None if len(stderr)>2097152 else code) and
+             result['stdout_bytes'] == (None if len(stderr)>2097152 else len(stdout)) and
+             result['stderr_bytes'] == (None if len(stderr)>2097152 else len(stderr)) and
+             len(canonical(result))+1 <= 1024 and b'PRIVATE_SCANNER_CANARY' not in canonical(result),'INTERNAL')
+        count += 1
+    return {'status':'PASS','case_count':count,'passed':count,'failed':0}
+
+
 def main():
     global ENV, END, WORK_END, DOCKER, UID, GID, PHASE, UNCERTAIN
     UID, GID = os.getuid(), os.getgid()
@@ -1881,6 +1939,7 @@ def main():
              type(controls['case_count']) is type(controls['passed']) is type(controls['failed']) is int and
              0 < controls['case_count'] == controls['passed'] <= 4096 and controls['failed'] == 0, 'INTERNAL')
         selector_controls = run_metadata_selector_controls()
+        diagnostic_controls = run_scanner_diagnostic_controls()
         runner = Path(os.environ['RUNNER_TEMP']).resolve(strict=True)
         checkout = Path(os.environ['GITHUB_WORKSPACE']).resolve(strict=True)
         need(runner.is_dir() and not runner.is_symlink() and not runner.is_relative_to(checkout), 'BOOTSTRAP')
@@ -1934,7 +1993,7 @@ def main():
             'groups':{name:{key:value[key] for key in ('case_count','passed','failed')}
                       for name,value in (('reducer',controls),('capture',host_controls),('witness',witness_controls),
                       ('metadata_selector',selector_controls),('physical_tar',physical_controls),
-                      ('archive_auth',archive_controls))}},
+                      ('archive_auth',archive_controls),('scanner_diagnostic',diagnostic_controls))}},
             sort_keys=True), flush=True)
         archive_checkpoint('UNOBSERVED')
         PHASE = 'TOOL'
@@ -2028,10 +2087,11 @@ def main():
         need(file_identity(archive) == archive_row['auth']['source_fd']['path_after'] and
              hash_file(archive, MAX_ARCHIVE) == archive_row['sha256'], 'ARCHIVE')
         bounded_json_size(evidence)
-        code, report_raw, _stderr, _elapsed = scanner(tool, prefix + ['--timeout', '10m', 'image',
+        code, report_raw, scan_stderr, _elapsed = scanner(tool, prefix + ['--timeout', '10m', 'image',
             '--input', '/input/sdk.tar', '--scanners', 'vuln', '--pkg-types', 'os,library', '--list-all-pkgs',
             '--format', 'json', '--severity', 'HIGH,CRITICAL', '--exit-code', '1', '--ignorefile', '/control/empty.ignore'],
             mounts, seconds=600, network='bridge', scan=True)
+        emit_scanner_diagnostic(code, report_raw, scan_stderr)
         evidence['scanner']['scan_exit'] = code
         PHASE = 'DB'
         version_exit, version_raw, _stderr, _elapsed = scanner(tool, prefix + ['version', '--format', 'json'], mounts)
