@@ -1908,6 +1908,106 @@ def run_scanner_diagnostic_controls():
     return {'status':'PASS','case_count':count,'passed':count,'failed':0}
 
 
+def os_diagnostic(evidence, report_raw):
+    fields = ('metadata_ok','name_ok','witness_release_ok','major_match','table_known','supported_at_scan',
+              'eosl_ok','extended_ok','os_result_count','os_package_rows','os_pair_count','os_pairs_ok','os_inventory_nonempty')
+    result = {'scope':'C04_OS_PREDICATES_ONLY','checkpoint':'UNOBSERVED',**{key:None for key in fields}}
+    unavailable = {**result,'checkpoint':'DIAGNOSTIC_UNAVAILABLE'}
+    try:
+        check = REDUCER['sr_need']
+        report = REDUCER['sr_json'](report_raw,REDUCER['SR_RAW_MAX'])
+        if type(report) is not dict or type(report.get('Metadata')) is not dict: return unavailable
+        osmeta = report['Metadata'].get('OS')
+        result['checkpoint'] = 'OS_METADATA'
+        result['metadata_ok'] = type(osmeta) is dict and osmeta.get('Family') == 'debian'
+        check(result['metadata_ok'],'OS')
+        result.update(checkpoint='OS_NAME',name_ok=False)
+        name = REDUCER['sr_text'](osmeta.get('Name'),32,'OS')
+        result['name_ok'] = re.fullmatch(r'[0-9]+(?:\.[0-9]+)*',name) is not None
+        check(result['name_ok'],'OS')
+        result.update(checkpoint='WITNESS_RELEASE',witness_release_ok=False)
+        major = REDUCER['sr_os_release'](evidence['witness']['os_release'])
+        result['witness_release_ok'] = True
+        result.update(checkpoint='MAJOR_JOIN',major_match=major == name.split('.')[0])
+        check(result['major_match'],'OS')
+        result.update(checkpoint='TAGGED_SUPPORT',table_known=major in REDUCER['SR_DEBIAN_EOL'])
+        check(result['table_known'],'OS')
+        result['supported_at_scan'] = REDUCER['sr_timestamp'](evidence['scanner']['scan_utc'],'OS') < REDUCER['sr_timestamp'](REDUCER['SR_DEBIAN_EOL'][major],'OS')
+        check(result['supported_at_scan'],'OS')
+        result.update(checkpoint='EOSL',eosl_ok='EOSL' not in osmeta or type(osmeta['EOSL']) is bool and osmeta['EOSL'] is False)
+        check(result['eosl_ok'],'OS')
+        result.update(checkpoint='EXTENDED',extended_ok='extended' not in osmeta or osmeta['extended'] is False)
+        check(result['extended_ok'],'OS')
+        rows = report.get('Results')
+        if type(rows) is not list or not rows or not all(type(row) is dict for row in rows): return unavailable
+        selected = [row for row in rows if row.get('Class') == 'os-pkgs']
+        if len(selected) > 200000: return unavailable
+        result.update(checkpoint='OS_PACKAGE_PAIRS',os_result_count=len(selected),os_package_rows=0,os_pair_count=0,os_pairs_ok=True)
+        inventory = set()
+        for row in selected:
+            work_check(cleanup=True)
+            result['os_pairs_ok'] = False
+            packages = row.get('Packages',[])
+            if type(packages) is list:
+                result['os_package_rows'] += len(packages)
+                if result['os_package_rows'] > 200000: return unavailable
+            else: result['os_package_rows'] = None
+            pairs = REDUCER['sr_pairs'](packages,'OS',row.get('Type') == 'python-pkg')
+            check(row.get('Type') == 'debian' and pairs,'OS')
+            inventory.update(pairs)
+            if len(inventory) > 200000: return unavailable
+            result.update(os_pair_count=len(inventory),os_pairs_ok=True)
+        result.update(checkpoint='OS_INVENTORY',os_inventory_nonempty=bool(inventory))
+        check(result['os_inventory_nonempty'],'OS')
+        result['checkpoint'] = 'OS_GUARDS_OK'
+        return result
+    except Exception as error:
+        if type(error) is REDUCER.get('SRRejected') and error.code == 'OS': return result
+        return unavailable
+
+
+def emit_os_diagnostic(evidence, report_raw):
+    fallback = b'{"checkpoint":"DIAGNOSTIC_UNAVAILABLE","eosl_ok":null,"extended_ok":null,"major_match":null,"metadata_ok":null,"name_ok":null,"os_inventory_nonempty":null,"os_package_rows":null,"os_pair_count":null,"os_pairs_ok":null,"os_result_count":null,"scope":"C04_OS_PREDICATES_ONLY","supported_at_scan":null,"table_known":null,"witness_release_ok":null}\n'
+    try:
+        line = canonical(os_diagnostic(evidence,report_raw))+b'\n'
+        if len(line) > 1024: line = fallback
+    except Exception:
+        line = fallback
+    try:
+        sys.stderr.write(line.decode('ascii'))
+        sys.stderr.flush()
+    except Exception:
+        pass
+
+
+def run_os_diagnostic_controls():
+    count = 0
+    for change, expected in (('positive-private','OS_GUARDS_OK'),('absent-os','OS_METADATA'),
+                             ('unsupported','TAGGED_SUPPORT'),('packages','OS_PACKAGE_PAIRS')):
+        release = b'ID=debian\nVERSION_ID="13"\n'
+        report = {'Metadata':{'OS':{'Family':'debian','Name':'13'}},'Results':[
+            {'Class':'os-pkgs','Type':'debian','Packages':[{'Name':'PRIVATE_OS_CANARY','Version':'1.0'}]}]}
+        if change == 'absent-os': report['Metadata'].pop('OS')
+        elif change == 'unsupported':
+            release = b'ID=debian\nVERSION_ID="99"\n'; report['Metadata']['OS']['Name'] = '99'
+        elif change == 'packages': report['Results'][0]['Packages'] = {}
+        evidence = {'scanner':{'scan_utc':'2026-10-29T12:00:00Z'},'witness':{'os_release':{
+            'path':'/etc/os-release','sha256':digest(release),
+            'data_b64':base64.b64encode(release).decode('ascii')}}}
+        result = os_diagnostic(evidence,canonical(report))
+        names = {'metadata_ok','name_ok','witness_release_ok','major_match','table_known','supported_at_scan',
+                 'eosl_ok','extended_ok','os_result_count','os_package_rows','os_pair_count','os_pairs_ok','os_inventory_nonempty'}
+        need(set(result) == names | {'scope','checkpoint'} and result['scope'] == 'C04_OS_PREDICATES_ONLY' and
+             result['checkpoint'] == expected and len(canonical(result))+1 <= 1024 and
+             b'PRIVATE_OS_CANARY' not in canonical(result),'INTERNAL')
+        for key in names:
+            value = result[key]
+            need(value is None or type(value) is int and 0 <= value <= 200000 if key in
+                 {'os_result_count','os_package_rows','os_pair_count'} else value is None or type(value) is bool,'INTERNAL')
+        count += 1
+    return {'status':'PASS','case_count':count,'passed':count,'failed':0}
+
+
 def main():
     global ENV, END, WORK_END, DOCKER, UID, GID, PHASE, UNCERTAIN
     UID, GID = os.getuid(), os.getgid()
@@ -1940,6 +2040,7 @@ def main():
              0 < controls['case_count'] == controls['passed'] <= 4096 and controls['failed'] == 0, 'INTERNAL')
         selector_controls = run_metadata_selector_controls()
         diagnostic_controls = run_scanner_diagnostic_controls()
+        os_diagnostic_controls = run_os_diagnostic_controls()
         runner = Path(os.environ['RUNNER_TEMP']).resolve(strict=True)
         checkout = Path(os.environ['GITHUB_WORKSPACE']).resolve(strict=True)
         need(runner.is_dir() and not runner.is_symlink() and not runner.is_relative_to(checkout), 'BOOTSTRAP')
@@ -1993,7 +2094,8 @@ def main():
             'groups':{name:{key:value[key] for key in ('case_count','passed','failed')}
                       for name,value in (('reducer',controls),('capture',host_controls),('witness',witness_controls),
                       ('metadata_selector',selector_controls),('physical_tar',physical_controls),
-                      ('archive_auth',archive_controls),('scanner_diagnostic',diagnostic_controls))}},
+                      ('archive_auth',archive_controls),('scanner_diagnostic',diagnostic_controls),
+                      ('os_diagnostic',os_diagnostic_controls))}},
             sort_keys=True), flush=True)
         archive_checkpoint('UNOBSERVED')
         PHASE = 'TOOL'
@@ -2179,6 +2281,8 @@ def main():
         result = REDUCER['validate_scan_evidence'](evidence, report_raw, version_raw)
         if CANCELLED or UNCERTAIN:
             need(result['status'] != 'PASS', 'INTERNAL')
+        if result['status'] == 'ERROR' and result['category'] == 'OS':
+            emit_os_diagnostic(evidence, report_raw)
         save_safe_result(result)
     # Alarm remains armed through cleanup, parse, fsync and this normal return.
     return 0 if result['status'] == 'PASS' and not CANCELLED and not UNCERTAIN else 1
