@@ -36,6 +36,13 @@ DOCKER = None
 UID = None
 GID = None
 PHASE = 'BOOTSTRAP'
+LINEAGE_FIELDS = ('config_present', 'config_matches', 'provenance_key_count', 'provenance_object', 'materials_list', 'materials_count', 'docker_material_count', 'selected_uv_count')
+LINEAGE_BOOL_FIELDS = ('config_present', 'config_matches', 'provenance_object', 'materials_list')
+LINEAGE_STAGES = ('UNOBSERVED', 'METADATA_READ', 'METADATA_JSON', 'METADATA_CONFIG', 'PROVENANCE_OBJECT', 'MATERIALS_LIST', 'MATERIAL_ROW', 'URI_PREFIX', 'URI_TAG', 'URI_QUERY', 'URI_QUALIFIER_KEYS', 'URI_PLATFORM', 'UV_IDENTITY', 'UV_SELECTION', 'MATERIAL_RAW_FETCH', 'MATERIAL_RAW_HASH', 'MATERIAL_RAW_JSON', 'MATERIAL_SCHEMA', 'INDEX_MANIFESTS', 'PLATFORM_DESCRIPTOR', 'CHILD_RAW_FETCH', 'CHILD_RAW_HASH', 'CHILD_RAW_JSON', 'FINAL_MANIFEST_SCHEMA', 'DONE', 'DIAGNOSTIC_UNAVAILABLE')
+LINEAGE_STAGE = "UNOBSERVED"
+LINEAGE_VALUES = dict.fromkeys(LINEAGE_FIELDS)
+LINEAGE_BROKEN = False
+LINEAGE_FALLBACK = '{"checkpoint":"DIAGNOSTIC_UNAVAILABLE","config_matches":null,"config_present":null,"docker_material_count":null,"materials_count":null,"materials_list":null,"provenance_key_count":null,"provenance_object":null,"scope":"C04_LINEAGE_DIAGNOSTIC_ONLY","selected_uv_count":null}\n'
 
 
 class Failure(Exception):
@@ -46,6 +53,60 @@ class Failure(Exception):
 def need(ok, code):
     if not ok:
         raise Failure(code)
+
+
+def lineage_mark(checkpoint, **values):
+    # Observation-only: diagnostic faults cannot replace an existing scan decision.
+    global LINEAGE_STAGE, LINEAGE_BROKEN
+    try:
+        if type(checkpoint) is not str or checkpoint not in LINEAGE_STAGES or not set(values) <= set(LINEAGE_FIELDS):
+            raise ValueError
+        for name, value in values.items():
+            if value is not None:
+                if name in LINEAGE_BOOL_FIELDS:
+                    if type(value) is not bool:
+                        raise ValueError
+                elif type(value) is not int or not 0 <= value <= 4194304:
+                    raise ValueError
+        LINEAGE_STAGE = checkpoint
+        LINEAGE_VALUES.update(values)
+    except Exception:
+        LINEAGE_BROKEN = True
+
+
+def lineage_diagnostic_line(checkpoint, observations, broken=False):
+    # Only static field names, an enum and primitive values enter this console line.
+    try:
+        if type(broken) is not bool or broken or type(checkpoint) is not str or checkpoint not in LINEAGE_STAGES:
+            raise ValueError
+        if type(observations) is not dict or set(observations) != set(LINEAGE_FIELDS):
+            raise ValueError
+        projected = {'scope': 'C04_LINEAGE_DIAGNOSTIC_ONLY', 'checkpoint': checkpoint}
+        for name in LINEAGE_FIELDS:
+            value = observations[name]
+            if value is not None:
+                if name in LINEAGE_BOOL_FIELDS:
+                    if type(value) is not bool:
+                        raise ValueError
+                elif type(value) is not int or not 0 <= value <= 4194304:
+                    raise ValueError
+            projected[name] = value
+        line = json.dumps(projected, sort_keys=True, separators=(',', ':'), ensure_ascii=True, allow_nan=False) + '\n'
+        if len(line.encode('ascii')) > 2048:
+            raise ValueError
+        return line
+    except Exception:
+        return LINEAGE_FALLBACK
+
+
+def emit_lineage_diagnostic():
+    # A failed diagnostic write never retries, changes the original error or skips cleanup.
+    try:
+        line = lineage_diagnostic_line(LINEAGE_STAGE, LINEAGE_VALUES, LINEAGE_BROKEN)
+        sys.stderr.write(line)
+        sys.stderr.flush()
+    except Exception:
+        pass
 
 
 def digest(raw):
@@ -669,16 +730,21 @@ def archive_image(path, image):
 
 
 def material_uri(uri):
+    lineage_mark('URI_PREFIX')
     need(type(uri) is str and 0 < len(uri) <= 2048 and uri.startswith('pkg:docker/'), 'LINEAGE')
     encoded = uri[len('pkg:docker/'):]
     path, separator, query = encoded.partition('?')
+    lineage_mark('URI_TAG')
     need('#' not in path and path.count('@') == 1, 'LINEAGE')
     name, version = path.rsplit('@', 1)
     name, version = urllib.parse.unquote(name), urllib.parse.unquote(version)
+    lineage_mark('URI_QUERY')
     pairs = urllib.parse.parse_qsl(query, keep_blank_values=True, strict_parsing=True) if separator else []
+    lineage_mark('URI_QUALIFIER_KEYS')
     need(len(pairs) == len({key for key, _value in pairs}), 'LINEAGE')
     qualifiers = dict(pairs)
     platform = qualifiers.get('platform')
+    lineage_mark('URI_PLATFORM')
     need(platform == 'linux/amd64' and set(qualifiers) <= {'platform', 'repository_url'}, 'LINEAGE')
     repository = qualifiers.get('repository_url', '')
     if repository:
@@ -700,15 +766,27 @@ def exact_manifest_bytes(raw, expected):
 
 
 def build_lineage(metadata_raw, sdk_id):
+    lineage_mark('METADATA_JSON')
     meta = owner_json(metadata_raw, 4194304)
+    lineage_mark('METADATA_CONFIG',
+        config_present=('containerimage.config.digest' in meta) if type(meta) is dict else None,
+        config_matches=(meta.get('containerimage.config.digest') == sdk_id) if type(meta) is dict else None)
     need(type(meta) is dict and meta.get('containerimage.config.digest') == sdk_id, 'LINEAGE')
     keys = [key for key in meta if key == 'buildx.build.provenance' or
             key == 'buildx.build.provenance/linux/amd64']
+    lineage_mark('PROVENANCE_OBJECT', provenance_key_count=len(keys),
+        provenance_object=(type(meta[keys[0]]) is dict) if len(keys) == 1 else None)
     need(len(keys) == 1 and type(meta[keys[0]]) is dict, 'LINEAGE')
     provenance = meta[keys[0]]
+    lineage_mark('MATERIALS_LIST', materials_list=type(provenance.get('materials')) is list,
+        materials_count=len(provenance['materials']) if type(provenance.get('materials')) is list else None,
+        docker_material_count=sum(1 for row in provenance['materials'] if type(row) is dict and
+            type(row.get('uri')) is str and row['uri'].startswith('pkg:docker/'))
+            if type(provenance.get('materials')) is list else None)
     need(type(provenance.get('materials')) is list and provenance['materials'], 'LINEAGE')
     selected = []
     for row in provenance['materials']:
+        lineage_mark('MATERIAL_ROW')
         need(type(row) is dict and type(row.get('uri')) is str and type(row.get('digest')) is dict, 'LINEAGE')
         if row['uri'].startswith('pkg:docker/'):
             try:
@@ -718,42 +796,55 @@ def build_lineage(metadata_raw, sdk_id):
                     raise
                 continue
             if name == 'ghcr.io/astral-sh/uv':
+                lineage_mark('UV_IDENTITY')
                 need(version == '0.12.8' and platform == 'linux/amd64' and
                      set(row['digest']) == {'sha256'} and
                      re.fullmatch('[0-9a-f]{64}', row['digest']['sha256']) is not None, 'LINEAGE')
                 selected.append(row)
+    lineage_mark('UV_SELECTION', selected_uv_count=len(selected))
     need(len(selected) == 1, 'LINEAGE')
     material = selected[0]
     material_digest = 'sha256:' + material['digest']['sha256']
     reference = 'ghcr.io/astral-sh/uv@' + material_digest
+    lineage_mark('MATERIAL_RAW_FETCH')
     raw = cli(['docker', 'buildx', 'imagetools', 'inspect', '--raw', reference], 120, stdout_cap=2097152)
+    lineage_mark('MATERIAL_RAW_HASH')
     raw = exact_manifest_bytes(raw, material_digest)
+    lineage_mark('MATERIAL_RAW_JSON')
     record = owner_json(raw)
+    lineage_mark('MATERIAL_SCHEMA')
     need(type(record) is dict and type(record.get('schemaVersion')) is int and record['schemaVersion'] == 2 and type(record.get('mediaType')) is str,
          'LINEAGE')
     index_digest = index_sha = None
     if record['mediaType'] in ('application/vnd.oci.image.index.v1+json',
                                'application/vnd.docker.distribution.manifest.list.v2+json'):
+        lineage_mark('INDEX_MANIFESTS')
         need(type(record.get('manifests')) is list, 'LINEAGE')
         matching = [row for row in record['manifests'] if type(row) is dict and type(row.get('platform')) is dict and
                     row['platform'].get('os') == 'linux' and row['platform'].get('architecture') == 'amd64' and
                     row['platform'].get('variant', '') in ('', 'v1')]
+        lineage_mark('PLATFORM_DESCRIPTOR')
         need(len(matching) == 1 and type(matching[0].get('digest')) is str and
              re.fullmatch('sha256:[0-9a-f]{64}', matching[0]['digest']) is not None and
              matching[0]['mediaType'] in ('application/vnd.oci.image.manifest.v1+json',
                                         'application/vnd.docker.distribution.manifest.v2+json'), 'LINEAGE')
         index_digest, index_sha = material_digest, digest(raw)
         chosen = matching[0]['digest']
+        lineage_mark('CHILD_RAW_FETCH')
         raw = cli(['docker', 'buildx', 'imagetools', 'inspect', '--raw',
                    'ghcr.io/astral-sh/uv@' + chosen], 120, stdout_cap=2097152)
+        lineage_mark('CHILD_RAW_HASH')
         raw = exact_manifest_bytes(raw, chosen)
+        lineage_mark('CHILD_RAW_JSON')
         record = owner_json(raw)
     else:
         chosen = material_digest
+    lineage_mark('FINAL_MANIFEST_SCHEMA')
     need(type(record.get('schemaVersion')) is int and record['schemaVersion'] == 2 and record.get('mediaType') in ('application/vnd.oci.image.manifest.v1+json',
                                     'application/vnd.docker.distribution.manifest.v2+json') and
          type(record.get('config')) is dict and type(record.get('layers')) is list and record['layers'] and
          re.fullmatch('sha256:[0-9a-f]{64}', record['config'].get('digest', '')) is not None, 'LINEAGE')
+    lineage_mark('DONE')
     return {'reference': 'ghcr.io/astral-sh/uv:0.12.8', 'material_uri': material['uri'],
             'material_digest': material_digest, 'index_digest': index_digest,
             'platform_manifest_digest': chosen, 'platform': 'linux/amd64',
@@ -1317,6 +1408,7 @@ def main():
         evidence['image'] = {'id': image['Id'], 'os': image['Os'], 'architecture': image['Architecture'],
                              'variant': image.get('Variant', ''), 'iid_matches': True}
         PHASE = 'LINEAGE'
+        lineage_mark('METADATA_READ')
         metadata_raw = read_file(root / 'build-metadata.json', 4194304)
         evidence['build'] = {'actual_exit': code, 'metadata_sha256': digest(metadata_raw),
                              'metadata_config_image_id': image['Id'], 'uv': None}
@@ -1388,6 +1480,8 @@ def main():
                'OVERFLOW' if type(error) is Failure and error.code == 'CAPTURE_CAP' else PHASE
         evidence.setdefault('error_codes', []).append(code if code in fixed else 'INTERNAL')
         print('C04 fixed failure category: ' + (code if code in fixed else 'INTERNAL'), file=sys.stderr, flush=True)
+        if code == 'LINEAGE':
+            emit_lineage_diagnostic()
     finally:
         cleanup = True
         for intent in reversed(INTENTS):
