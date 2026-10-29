@@ -30,6 +30,7 @@ import unittest
 MAX_REPORT = 1048576
 MAX_FILE = 16 * 1048576
 MAX_SOURCE = 128 * 1048576
+MAX_HOST_TOOL = 128 * 1048576
 MAX_FILES = 4096
 MAX_ELF = 256 * 1048576
 MAX_CLI = 2 * 1048576  # Complete captures only; oversize fails closed.
@@ -723,7 +724,7 @@ def container(image, args, *, seconds, mounts, network='none', workdir='/',
 def prepare_environment(root):
     global environment, docker_tool
     docker = shutil.which('docker'); need(docker is not None, 'DOCKER_REQUIRED')
-    docker = Path(docker).resolve(strict=True); descriptor(docker); docker_tool = str(docker)
+    docker = Path(docker).resolve(strict=True); descriptor(docker,MAX_HOST_TOOL); docker_tool = str(docker)
     home = root/'host-home'; home.mkdir(mode=0o700)
     config = home/'.docker'; (config/'cli-plugins').mkdir(parents=True,mode=0o700)
     original_home = Path.home()
@@ -731,12 +732,12 @@ def prepare_environment(root):
                   Path('/usr/lib/docker/cli-plugins/docker-buildx'),Path('/usr/local/lib/docker/cli-plugins/docker-buildx')]
     plugin = next((p.resolve(strict=True) for p in candidates if p.is_file()),None)
     need(plugin is not None, 'BUILDX_REQUIRED')
-    plugin_raw = regular(plugin,64*1048576); atomic(config/'cli-plugins/docker-buildx',plugin_raw,0o500)
+    plugin_raw = regular(plugin,MAX_HOST_TOOL); atomic(config/'cli-plugins/docker-buildx',plugin_raw,0o500)
     environment = {'PATH':str(docker.parent)+':/usr/bin:/bin','HOME':str(home),'DOCKER_CONFIG':str(config),'LANG':'C.UTF-8'}
     _, raw, _, _ = command(['docker','buildx','version'], 30, cap=65536)
     need(b'buildx' in raw, 'BUILDX_VERSION')
     command(['docker','info','--format','{{.ID}}'], 30, cap=65536)
-    return {'docker':descriptor(docker),'buildx':descriptor(config/'cli-plugins/docker-buildx',64*1048576)}
+    return {'docker':descriptor(docker,MAX_HOST_TOOL),'buildx':descriptor(config/'cli-plugins/docker-buildx',MAX_HOST_TOOL)}
 
 
 def image_record(intent, *, cleanup=False):
@@ -1509,7 +1510,7 @@ def execute(root, source, source_files):
     accepted = validate_native_report(raw,expected=expected,actual_exit=received['actual_exit'])
     need(accepted['valid'] is True, 'NATIVE_REPORT_REJECTED')
     need(source_map(source) == source_files and source_map(root/'sealed/source') == source_files, 'FINAL_SOURCE_IDENTITY')
-    need(all(descriptor(Path(item['path']),64*1048576) == item for item in tools_host.values()), 'HOST_TOOL_DRIFT')
+    need(all(descriptor(Path(item['path']),MAX_HOST_TOOL) == item for item in tools_host.values()), 'HOST_TOOL_DRIFT')
     return {'counts':dict(accepted['report']['counts'],policy_methods=policy_counts['methods'],policy_subtests=policy_counts['subtests']),
             'identities':expected['identities'],'images':{'builder':builder,'sdk':sdk},
             'tools':tools_host,'tls':tls,'native_report_sha256':digest(raw)}
