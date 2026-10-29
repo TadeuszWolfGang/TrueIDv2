@@ -284,7 +284,7 @@ def create_container(image, argv, mounts, *, network='none', witness=False):
     owner = secrets.token_hex(16)
     intent = {'owner': owner, 'name': 'trueid-c04-' + owner, 'image': image, 'acked': False, 'closed': False}
     INTENTS.append(intent)  # The exact recovery capability exists before Docker can create a resource.
-    environment = ['-i', 'PATH=/usr/local/bin:/usr/bin:/bin', 'HOME=/tmp', 'TMPDIR=/tmp',
+    environment = ['-i', 'PATH=/usr/local/bin:/usr/bin:/bin', 'HOME=/tmp', 'TMPDIR=/cache',
                    'LANG=C.UTF-8', 'PYTHONDONTWRITEBYTECODE=1', *argv]
     entrypoint = '/bin/true' if witness else '/usr/bin/env'
     command = ['trueid-never-started-witness'] if witness else environment
