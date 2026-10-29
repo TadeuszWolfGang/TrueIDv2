@@ -1563,6 +1563,7 @@ def inspect_rootfs(path, image_id, image_info, evidence_prefix=None):
                         'bytes': count, 'mode': member.mode & 0o7777, 'executable': True}
 
             os_release = metadata('/etc/os-release')
+            os_release = {key: os_release[key] for key in ('path', 'sha256', 'data_b64')}
             version_path, version_raw = content('/usr/local/include/python3.11/patchlevel.h')
             version_text = version_raw.decode('utf-8')
             components = []
@@ -1759,6 +1760,10 @@ def run_witness_controls(write_fixture):
         need('/' + long_name in names and '/extra-long-link.dist-info/METADATA' in names, 'WITNESS')
         cases += 1
     need(cases == 14, 'WITNESS')
+    os_observed = inspect_rootfs(write_fixture('os-release-seam.tar', complete), image_id, image_info)
+    need(REDUCER['sr_os_release'](os_observed['os_release']) == '13', 'WITNESS')
+    cases += 1
+    need(cases == 15, 'WITNESS')
     return {'status': 'PASS', 'case_count': cases, 'passed': cases, 'failed': 0}
 
 
