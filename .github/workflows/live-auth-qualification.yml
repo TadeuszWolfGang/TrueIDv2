@@ -144,6 +144,26 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
+          python3 -I -B - <<'PYTHON'
+          import json, shutil, stat, sys
+          from pathlib import Path
+          def metadata(path):
+              try:
+                  item = Path(path).resolve(strict=True).stat()
+                  return {"bytes": item.st_size, "nlink": item.st_nlink,
+                          "regular": stat.S_ISREG(item.st_mode)}
+              except (OSError, TypeError):
+                  return None
+          docker = shutil.which("docker")
+          plugins = [Path.home() / ".docker/cli-plugins/docker-buildx",
+                     Path("/usr/libexec/docker/cli-plugins/docker-buildx"),
+                     Path("/usr/lib/docker/cli-plugins/docker-buildx"),
+                     Path("/usr/local/lib/docker/cli-plugins/docker-buildx")]
+          print(json.dumps({"scope": "S4_HOST_TOOL_METADATA_ONLY",
+                            "host_python": list(sys.version_info[:3]),
+                            "docker": metadata(docker),
+                            "buildx_candidates": [metadata(path) for path in plugins]}, sort_keys=True))
+          PYTHON
           env -i PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin HOME="$HOME" LANG=C.UTF-8 \
             "$HOST_PYTHON" -I -B "$INPUTS/step_entry.py" verify
           set +e
