@@ -765,13 +765,53 @@ def exact_manifest_bytes(raw, expected):
     return matching[0]
 
 
+def metadata_image_id(metadata, sdk_id):
+    # A present config key is authoritative, including malformed or mismatched values.
+    need(type(metadata) is dict, 'LINEAGE')
+    key = 'containerimage.config.digest' if 'containerimage.config.digest' in metadata else 'containerimage.digest'
+    selected = metadata.get(key)
+    need(type(selected) is str and re.fullmatch('sha256:[0-9a-f]{64}', selected) is not None and
+         selected == sdk_id, 'LINEAGE')
+    return selected
+
+
+def run_metadata_selector_controls():
+    # Same production selector, synthetic DATA only; fresh legacy baseline per negative.
+    expected = 'sha256:' + 'a' * 64
+    other = 'sha256:' + 'b' * 64
+    legacy = {'containerimage.config.digest': expected, 'containerimage.digest': other}
+    generic = {'containerimage.digest': expected}
+    count = 0
+    for fixture in (dict(legacy), dict(generic)):
+        need(metadata_image_id(fixture, expected) == expected, 'INTERNAL')
+        count += 1
+    negatives = (
+        {'containerimage.config.digest': 'malformed', 'containerimage.digest': expected},
+        {'containerimage.config.digest': other, 'containerimage.digest': expected},
+        {},
+        {'containerimage.digest': other},
+        {'containerimage.digest': True},
+    )
+    for fixture in negatives:
+        need(metadata_image_id(dict(legacy), expected) == expected, 'INTERNAL')
+        count += 1
+        try:
+            metadata_image_id(dict(fixture), expected)
+        except Failure as error:
+            need(type(error) is Failure and error.code == 'LINEAGE', 'INTERNAL')
+        else:
+            raise Failure('INTERNAL')
+        count += 1
+    return {'status': 'PASS', 'case_count': count, 'passed': count, 'failed': 0}
+
+
 def build_lineage(metadata_raw, sdk_id):
     lineage_mark('METADATA_JSON')
     meta = owner_json(metadata_raw, 4194304)
     lineage_mark('METADATA_CONFIG',
         config_present=('containerimage.config.digest' in meta) if type(meta) is dict else None,
         config_matches=(meta.get('containerimage.config.digest') == sdk_id) if type(meta) is dict else None)
-    need(type(meta) is dict and meta.get('containerimage.config.digest') == sdk_id, 'LINEAGE')
+    metadata_image_id(meta, sdk_id)
     keys = [key for key in meta if key == 'buildx.build.provenance' or
             key == 'buildx.build.provenance/linux/amd64']
     lineage_mark('PROVENANCE_OBJECT', provenance_key_count=len(keys),
@@ -1321,6 +1361,7 @@ def main():
              controls['status'] == 'C04_REDUCER_DATA_CONTROLS_PASSED' and
              type(controls['case_count']) is type(controls['passed']) is type(controls['failed']) is int and
              0 < controls['case_count'] == controls['passed'] <= 4096 and controls['failed'] == 0, 'INTERNAL')
+        selector_controls = run_metadata_selector_controls()
         runner = Path(os.environ['RUNNER_TEMP']).resolve(strict=True)
         checkout = Path(os.environ['GITHUB_WORKSPACE']).resolve(strict=True)
         need(runner.is_dir() and not runner.is_symlink() and not runner.is_relative_to(checkout), 'BOOTSTRAP')
@@ -1370,7 +1411,8 @@ def main():
              'INTERNAL')
         print(json.dumps({'scope':'C04_SAME_CODE_CONTROLS_ONLY',
             'groups':{name:{key:value[key] for key in ('case_count','passed','failed')}
-                      for name,value in (('reducer',controls),('capture',host_controls),('witness',witness_controls))}},
+                      for name,value in (('reducer',controls),('capture',host_controls),('witness',witness_controls),
+                      ('metadata_selector',selector_controls))}},
             sort_keys=True), flush=True)
         PHASE = 'TOOL'
         cli(['docker', 'version', '--format', '{{json .}}'])
@@ -1411,8 +1453,11 @@ def main():
         lineage_mark('METADATA_READ')
         metadata_raw = read_file(root / 'build-metadata.json', 4194304)
         evidence['build'] = {'actual_exit': code, 'metadata_sha256': digest(metadata_raw),
-                             'metadata_config_image_id': image['Id'], 'uv': None}
+                             'metadata_config_image_id': None, 'uv': None}
         evidence['build']['uv'] = build_lineage(metadata_raw, image['Id'])
+        # Historical field: selected metadata ID, not a claim the optional config key exists.
+        # archive_image independently hashes the actual config bytes before any valid verdict.
+        evidence['build']['metadata_config_image_id'] = image['Id']
         PHASE = 'ARCHIVE'
         archive = root / 'input/sdk.tar'
         cli(['docker', 'image', 'save', '--output', str(archive), image['Id']], 300)
