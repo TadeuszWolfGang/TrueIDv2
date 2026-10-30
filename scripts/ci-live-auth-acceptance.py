@@ -67,6 +67,57 @@ def digest(raw):
     return hashlib.sha256(raw).hexdigest()
 
 
+def ci_fixture_read(path):
+    path = Path(path)
+    need(path.is_absolute() and path.resolve(strict=True) == path, 'CI_FIXTURE_PATH')
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    try:
+        before = os.fstat(fd)
+        need(stat.S_ISREG(before.st_mode) and before.st_uid == os.geteuid() and
+             before.st_nlink == 1 and stat.S_IMODE(before.st_mode) == 0o444 and
+             before.st_size in (1422, 1424), 'CI_FIXTURE_FILE')
+        raw = os.read(fd, 4097)
+        identity = lambda value: (value.st_dev, value.st_ino, value.st_uid, value.st_gid,
+                                  value.st_mode, value.st_nlink, value.st_size,
+                                  value.st_mtime_ns, value.st_ctime_ns)
+        need(len(raw) == before.st_size and identity(before) == identity(os.fstat(fd)) ==
+             identity(path.lstat()), 'CI_FIXTURE_DRIFT')
+        return raw
+    finally:
+        os.close(fd)
+
+
+def ci_fixture_recipe(raw):
+    need(type(raw) is bytes and len(raw) in (1422, 1424), 'CI_FIXTURE_SOURCE')
+    source_sha = hashlib.sha256(raw).hexdigest()
+    alpine = b'FROM python:3.11-alpine@sha256:09d17d5e4c16d0a7a1eea690bcb7c6ab8616b211f8421e429e97c1bef5bd0ed2\n'
+    debian = b'FROM python:3.11-slim@sha256:673719e071ecf27434fd2635bbd8d00f49f4fdd81f243143438a42ced8bedf60\n'
+    if source_sha == '1534d7edfdefb1bbc465f44cef038ff0bf18fed978f18b78ca599e7b38d85d1c':
+        need(raw.count(alpine) == 1 and raw.count(debian) == 0, 'CI_FIXTURE_SOURCE')
+        recipe = raw.replace(alpine, debian, 1)
+    else:
+        need(source_sha == '2101be4a4970e1e15eb4e272a50a1ff38c5b71f1556b5fd6eba6d64647ad0ad7' and
+             raw.count(debian) == 1 and raw.count(alpine) == 0, 'CI_FIXTURE_SOURCE')
+        recipe = raw
+    need(hashlib.sha256(recipe).hexdigest() ==
+         '2101be4a4970e1e15eb4e272a50a1ff38c5b71f1556b5fd6eba6d64647ad0ad7', 'CI_FIXTURE_RECIPE')
+    return recipe
+
+
+def ci_fixture_record(source_raw, recipe_raw, image_id):
+    need(type(recipe_raw) is bytes and recipe_raw == ci_fixture_recipe(source_raw), 'CI_FIXTURE_RECIPE')
+    need(type(image_id) is str and re.fullmatch(r'sha256:[0-9a-f]{64}', image_id) is not None,
+         'CI_FIXTURE_IMAGE')
+    record = {'purpose': 'CI_NATIVE_DEBIAN_FIXTURE_ONLY',
+              'source_recipe_sha256': hashlib.sha256(source_raw).hexdigest(),
+              'derived_recipe_sha256': hashlib.sha256(recipe_raw).hexdigest(),
+              'ci_image_id': image_id}
+    raw = json.dumps(record, sort_keys=True, separators=(',', ':'),
+                     ensure_ascii=True, allow_nan=False).encode('ascii') + b'\n'
+    need(len(raw) <= 512, 'CI_FIXTURE_PROOF')
+    return raw
+
+
 def closed(value, keys):
     need(type(value) is dict and set(value) == set(keys), 'SCHEMA')
 
@@ -1470,7 +1521,21 @@ def execute(root, source, source_files):
     builder_file = root/'Builder.Dockerfile'
     atomic(builder_file,b'FROM rust:1.95.0-bookworm\nRUN apt-get update && apt-get install -y --no-install-recommends ca-certificates pkg-config libssl-dev binutils && rm -rf /var/lib/apt/lists/*\nWORKDIR /src\n')
     builder = build_image(root,root/'source',builder_file,'builder')
-    sdk = build_image(root,root/'source',root/'source/integrations/sycope/Dockerfile','sdk')
+    # Legacy images.sdk is this CI-only fixture, not the product Alpine SDK image.
+    source_recipe = ci_fixture_read(root/'source/integrations/sycope/Dockerfile')
+    need({'sha256':digest(source_recipe),'bytes':len(source_recipe)} ==
+         source_files['integrations/sycope/Dockerfile'], 'CI_FIXTURE_SOURCE')
+    fixture_recipe = ci_fixture_recipe(source_recipe)
+    fixture_file = root/'CI-Fixture.Dockerfile'
+    atomic(fixture_file,fixture_recipe)
+    need(ci_fixture_read(fixture_file) == fixture_recipe, 'CI_FIXTURE_RECIPE')
+    sdk = build_image(root,root/'source',fixture_file,'sdk')
+    need(ci_fixture_read(fixture_file) == fixture_recipe and
+         ci_fixture_read(root/'source/integrations/sycope/Dockerfile') == source_recipe,
+         'CI_FIXTURE_DRIFT')
+    fixture_proof = ci_fixture_record(source_recipe,fixture_recipe,sdk)
+    need(sys.stderr.buffer.write(fixture_proof) == len(fixture_proof), 'CI_FIXTURE_PROOF')
+    sys.stderr.buffer.flush()
     root_io(root,{'mode':'prepare','source_files':source_files})
     mounts = [(root/'build','/work',False),(root/'sealed/source','/src',True)]
     discovery = container(builder,['/bin/sh','-c',TOOL_DISCOVERY],seconds=45,mounts=mounts,workdir='/src')
