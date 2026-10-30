@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # Pinned by digest; Dependabot (docker ecosystem, this directory) bumps it.
-FROM python:3.11-slim@sha256:d1e9ca7c4e78d1e8ecadb5d44bfc8e956e7a65b659a9950f569f243d72b326d0
+FROM python:3.11-slim@sha256:673719e071ecf27434fd2635bbd8d00f49f4fdd81f243143438a42ced8bedf60
 
 COPY --from=ghcr.io/astral-sh/uv:0.12.8 /uv /uvx /bin/
 
