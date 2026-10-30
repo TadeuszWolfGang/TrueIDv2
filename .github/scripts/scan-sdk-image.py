@@ -642,6 +642,57 @@ def write_new(path, raw, mode=0o600):
         os.close(fd)
 
 
+def source_base_profile(dockerfile):
+    need(type(dockerfile) is str, 'SOURCE')
+    approved = (
+        'FROM python:3.11-slim@sha256:673719e071ecf27434fd2635bbd8d00f49f4fdd81f243143438a42ced8bedf60',
+        'FROM python:3.11-alpine@sha256:09d17d5e4c16d0a7a1eea690bcb7c6ab8616b211f8421e429e97c1bef5bd0ed2',
+    )
+    from_lines = [line for line in dockerfile.split('\n')
+                  if re.match(r'(?i)^\s*FROM(?:\s|$)', line) is not None]
+    need(len(from_lines) == 1 and from_lines[0] in approved, 'SOURCE')
+
+
+def run_source_base_controls():
+    debian = 'FROM python:3.11-slim@sha256:673719e071ecf27434fd2635bbd8d00f49f4fdd81f243143438a42ced8bedf60'
+    alpine = 'FROM python:3.11-alpine@sha256:09d17d5e4c16d0a7a1eea690bcb7c6ab8616b211f8421e429e97c1bef5bd0ed2'
+    suffix = '\nCOPY --from=ghcr.io/astral-sh/uv:0.12.8 /uv /uvx /bin/\n'
+    cases = (
+        ('approved-debian', debian + suffix, False),
+        ('approved-alpine', alpine + suffix, False),
+        ('unapproved-debian-digest', debian[:-64] + '0' * 64 + suffix, True),
+        ('unapproved-alpine-digest', alpine[:-64] + '0' * 64 + suffix, True),
+        ('crossed-debian-digest', debian[:-64] + alpine[-64:] + suffix, True),
+        ('crossed-alpine-digest', alpine[:-64] + debian[-64:] + suffix, True),
+        ('unpinned-debian-tag', 'FROM python:3.11-slim' + suffix, True),
+        ('unpinned-alpine-tag', 'FROM python:3.11-alpine' + suffix, True),
+        ('unapproved-tag', alpine.replace('3.11-alpine', '3.12-alpine') + suffix, True),
+        ('explicit-registry', alpine.replace('FROM python:', 'FROM docker.io/library/python:') + suffix, True),
+        ('short-digest', alpine[:-1] + suffix, True),
+        ('uppercase-digest', alpine[:-64] + alpine[-64:].upper() + suffix, True),
+        ('missing-from', suffix, True),
+        ('multiple-from', debian + '\n' + alpine + suffix, True),
+        ('second-lowercase-from', alpine + '\n' + debian.lower() + suffix, True),
+        ('stage-alias', alpine + ' AS approved' + suffix, True),
+        ('platform-option', alpine.replace('FROM ', 'FROM --platform=linux/amd64 ') + suffix, True),
+        ('comment-only-from', '# ' + alpine + suffix, True),
+        ('indented-from', ' ' + alpine + suffix, True),
+        ('trailing-comment', alpine + ' # approved' + suffix, True),
+        ('non-text-input', alpine.encode('ascii'), True),
+    )
+    count = 0
+    for _name, dockerfile, reject in cases:
+        try:
+            source_base_profile(dockerfile)
+        except Failure as error:
+            need(reject and type(error) is Failure and error.code == 'SOURCE', 'INTERNAL')
+        else:
+            need(not reject, 'INTERNAL')
+        count += 1
+    need(count == 21, 'INTERNAL')
+    return {'status': 'PASS', 'case_count': count, 'passed': count, 'failed': 0}
+
+
 def source_context(checkout, context):
     need(checkout.resolve(strict=True) == checkout and checkout.is_dir() and context.resolve() == context,
          'SOURCE')
@@ -711,9 +762,9 @@ def source_context(checkout, context):
                 'integrations/sycope/uv.lock', 'integrations/sycope/.python-version', '.dockerignore'}
     need(required <= set(result), 'SOURCE')
     dockerfile = read_file(context / 'integrations/sycope/Dockerfile', 1048576).decode('utf-8')
+    source_base_profile(dockerfile)
     need('COPY --from=ghcr.io/astral-sh/uv:0.12.8 /uv /uvx /bin/' in dockerfile and
          'RUN cd integrations/sycope && uv sync --frozen --no-dev --compile-bytecode' in dockerfile and
-         re.search(r'^FROM python:3\.11-slim@sha256:[0-9a-f]{64}$', dockerfile, re.M) is not None and
          'COPY sycope/ /app/sycope/' in dockerfile and
          'COPY integrations/sycope/ /app/integrations/sycope/' in dockerfile, 'SOURCE')
     need(read_file(context / '.dockerignore', 1048576, empty=True) ==
@@ -2419,6 +2470,7 @@ def main():
         os_diagnostic_controls = run_os_diagnostic_controls()
         sdk_runtime_controls = run_sdk_runtime_controls()
         sdk_tls_controls = run_sdk_tls_controls()
+        source_base_controls = run_source_base_controls()
         runner = Path(os.environ['RUNNER_TEMP']).resolve(strict=True)
         checkout = Path(os.environ['GITHUB_WORKSPACE']).resolve(strict=True)
         need(runner.is_dir() and not runner.is_symlink() and not runner.is_relative_to(checkout), 'BOOTSTRAP')
@@ -2475,7 +2527,8 @@ def main():
                       ('metadata_selector',selector_controls),('physical_tar',physical_controls),
                       ('archive_auth',archive_controls),('scanner_diagnostic',diagnostic_controls),
                       ('os_diagnostic',os_diagnostic_controls),('sdk_runtime_admission',sdk_runtime_controls),
-                       ('sdk_tls_admission',sdk_tls_controls),('sdk_tls_identity',tls_identity_controls))}},
+                       ('sdk_tls_admission',sdk_tls_controls),('sdk_tls_identity',tls_identity_controls),
+                       ('source_base_profile',source_base_controls))}},
             sort_keys=True), flush=True)
         archive_checkpoint('UNOBSERVED')
         PHASE = 'TOOL'
