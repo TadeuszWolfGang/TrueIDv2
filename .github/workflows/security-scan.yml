@@ -143,7 +143,7 @@ jobs:
           python3 -m pip install --upgrade pip
           python3 -m pip install schemathesis
           docker pull ghcr.io/zaproxy/zaproxy:stable
-          docker pull projectdiscovery/nuclei:latest
+          docker pull projectdiscovery/nuclei@sha256:582d5546902e67052097cb2d07296c642d50a1afc5e44623cb038845df9a32eb
 
       - name: Generate ephemeral runtime secrets
         env:
@@ -280,17 +280,67 @@ jobs:
           python3 scripts/check-zap-report.py security-reports/zap-report.json
 
       - name: Run Nuclei
+        timeout-minutes: 15
         run: |
           mkdir -p security-reports
           rm -f security-reports/nuclei-report.jsonl
           docker run --rm --network host \
+            --entrypoint /bin/sh \
             -v "$PWD/security-reports:/reports:rw" \
-            projectdiscovery/nuclei:latest \
-            -u http://127.0.0.1:3000 \
-            -severity high,critical \
-            -jsonl \
-            -silent \
-            -o /reports/nuclei-report.jsonl
+            projectdiscovery/nuclei@sha256:582d5546902e67052097cb2d07296c642d50a1afc5e44623cb038845df9a32eb \
+            -ec '
+              umask 077
+              template_dir="$(mktemp -d /tmp/trueid-nuclei-templates.XXXXXX)"
+              chmod 0700 "$template_dir"
+              umask 022
+              nuclei -h > /reports/nuclei-help.txt 2>&1
+              for flag in ut ud duc tl tv; do
+                if ! grep -Eq "(^|[[:space:],])-${flag}([[:space:],]|$)" /reports/nuclei-help.txt; then
+                  echo "Pinned Nuclei image lacks a required template flag"
+                  exit 1
+                fi
+              done
+              nuclei -version > /reports/nuclei-version.txt 2>&1
+              nuclei -ut -ud "$template_dir" -no-color \
+                > /reports/nuclei-bootstrap.log 2>&1
+              nuclei -duc -ud "$template_dir" -t "$template_dir" \
+                -severity high,critical -tl -silent -no-color \
+                > /reports/nuclei-eligible-templates.txt \
+                2> /reports/nuclei-list.log
+              if [ ! -s /reports/nuclei-eligible-templates.txt ]; then
+                echo "No HIGH/CRITICAL Nuclei templates available"
+                exit 1
+              fi
+              wc -l < /reports/nuclei-eligible-templates.txt \
+                > /reports/nuclei-template-count.txt
+              sha256sum /reports/nuclei-eligible-templates.txt \
+                > /reports/nuclei-template-list.sha256
+              nuclei -duc -ud "$template_dir" -tv -no-color \
+                > /reports/nuclei-template-version.txt 2>&1
+              [ -s /reports/nuclei-template-version.txt ]
+              if nuclei -duc -ud "$template_dir" -t "$template_dir" \
+                -u http://127.0.0.1:3000 \
+                -severity high,critical -jsonl -no-color \
+                -o /reports/nuclei-report.jsonl \
+                > /reports/nuclei-scan.log 2>&1; then
+                scan_rc=0
+              else
+                scan_rc=$?
+              fi
+              printf "%s\n" "$scan_rc" > /reports/nuclei-scan-exit.txt
+              cat /reports/nuclei-scan.log
+              [ "$scan_rc" -eq 0 ] || exit "$scan_rc"
+              if ! grep -Eq "Templates loaded for current scan: [1-9][0-9]*([[:space:]]|$)" \
+                /reports/nuclei-scan.log; then
+                echo "Nuclei did not confirm a nonempty actual loaded template set"
+                exit 1
+              fi
+              if ! grep -Eq "Scan completed in .+\. (No results found\.|[0-9]+ matches found\.)$" \
+                /reports/nuclei-scan.log; then
+                echo "Nuclei did not confirm actual scan completion"
+                exit 1
+              fi
+            '
           if [ -s security-reports/nuclei-report.jsonl ]; then
             echo "Nuclei reported HIGH/CRITICAL findings"
             cat security-reports/nuclei-report.jsonl
