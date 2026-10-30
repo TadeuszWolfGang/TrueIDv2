@@ -45,6 +45,10 @@ LINEAGE_BROKEN = False
 LINEAGE_FALLBACK = '{"checkpoint":"DIAGNOSTIC_UNAVAILABLE","config_matches":null,"config_present":null,"docker_material_count":null,"materials_count":null,"materials_list":null,"provenance_key_count":null,"provenance_object":null,"scope":"C04_LINEAGE_DIAGNOSTIC_ONLY","selected_uv_count":null}\n'
 
 
+SDK_TLS_ARGV = ('/app/integrations/sycope/.venv/bin/python', '-I', '-B', '-m', 'unittest', 'discover', '-v', '-s', '/app/integrations/sycope/tests', '-p', 'test_trueid_api_transport.py')
+SDK_TLS_METHOD_IDS = ('test_trueid_api_transport.TrueIdRealTransportTests.test_both_ca_environment_variables_work_through_requests_merging', 'test_trueid_api_transport.TrueIdRealTransportTests.test_caller_ca_bundle_and_trust_env_are_preserved_with_verified_tls', 'test_trueid_api_transport.TrueIdRealTransportTests.test_foreign_https_and_http_redirects_never_receive_requests_or_keys', 'test_trueid_api_transport.TrueIdRealTransportTests.test_same_origin_redirects_are_also_never_followed', 'test_trueid_api_transport.TrueIdRealTransportTests.test_shared_sycope_verified_login_and_methods_use_provided_ca', 'test_trueid_api_transport.TrueIdRealTransportTests.test_shared_sycope_wrong_ca_rejects_login_before_http', 'test_trueid_api_transport.TrueIdRealTransportTests.test_untrusted_ca_fails_before_http_without_insecure_fallback', 'test_trueid_api_transport.TrueIdRealTransportTests.test_wrong_ca_bundle_fails_before_http_without_insecure_fallback', 'test_trueid_api_transport.TrueIdResponseAndLogTests.test_both_sync_fetch_catches_exclude_exception_url_headers_and_data', 'test_trueid_api_transport.TrueIdResponseAndLogTests.test_every_3xx_is_rejected_before_status_check_or_json_for_both_methods', 'test_trueid_api_transport.TrueIdResponseAndLogTests.test_headers_json_formats_since_timeout_and_success_logs_are_preserved', 'test_trueid_api_transport.TrueIdResponseAndLogTests.test_http_error_contract_and_failure_logs_remain_safe', 'test_trueid_api_transport.TrueIdResponseAndLogTests.test_request_exception_and_invalid_json_are_not_logged_raw', 'test_trueid_api_transport.TrueIdResponseAndLogTests.test_skipped_ipv6_mapping_does_not_log_its_payload', 'test_trueid_api_transport.TrueIdResponseAndLogTests.test_sync_injection_failure_does_not_log_raw_exception_or_advance_state', 'test_trueid_api_transport.TrueIdResponseAndLogTests.test_sync_since_value_is_sent_unchanged_without_logging_it', 'test_trueid_api_transport.TrueIdResponseAndLogTests.test_sync_success_and_malformed_event_timestamp_do_not_log_identity_payload', 'test_trueid_api_transport.TrueIdResponseAndLogTests.test_validation_never_logs_or_raises_embedded_userinfo', 'test_trueid_api_transport.TrueIdUrlValidationTests.test_invalid_api_bases_are_rejected_before_credential_assignment_or_send', 'test_trueid_api_transport.TrueIdUrlValidationTests.test_invalid_hosts_are_rejected_before_credential_assignment_or_send', 'test_trueid_api_transport.TrueIdUrlValidationTests.test_loopback_https_idna_ipv6_and_default_ports_remain_valid', 'test_trueid_api_transport.TrueIdUrlValidationTests.test_mutated_fields_are_validated_before_both_methods_send', 'test_trueid_api_transport.TrueIdUrlValidationTests.test_valid_public_host_and_path_mutations_preserve_dispatch')
+
+
 class Failure(Exception):
     def __init__(self, code):
         self.code = code
@@ -283,18 +287,25 @@ SDK_RUNTIME_SCRIPT = 'P=/app/integrations/sycope/.venv/bin/python\nT=/app/integr
 SDK_RUNTIME_ARGV = ('/bin/sh', '-ec', SDK_RUNTIME_SCRIPT)
 
 
-def create_container(image, argv, mounts, *, network='none', witness=False, sdk_runtime=False):
+def create_container(image, argv, mounts, *, network='none', witness=False, sdk_runtime=False, sdk_tls=False):
     need(re.fullmatch('sha256:[0-9a-f]{64}', image) is not None and network in ('none', 'bridge'), 'SCANNER')
     need(type(sdk_runtime) is bool, 'SCANNER')
     if sdk_runtime:
         need(not witness and network == 'none' and mounts == [] and argv == list(SDK_RUNTIME_ARGV), 'SCANNER')
-    container_uid, container_gid = (1000, 1000) if sdk_runtime else (UID, GID)
+    need(type(sdk_tls) is bool and not (sdk_runtime and sdk_tls), 'SCANNER')
+    if sdk_tls:
+        need(not witness and network == 'none' and argv == list(SDK_TLS_ARGV) and type(mounts) is list and
+             len(mounts) == 1 and mounts[0][1:] == ('/control/tls',True), 'SCANNER')
+        sdk_tls_bundle_snapshot(mounts[0][0])
+    container_uid, container_gid = (1000, 1000) if sdk_runtime or sdk_tls else (UID, GID)
     container_user = str(container_uid) + ':' + str(container_gid)
     owner = secrets.token_hex(16)
     intent = {'owner': owner, 'name': 'trueid-c04-' + owner, 'image': image, 'acked': False, 'closed': False}
     INTENTS.append(intent)  # The exact recovery capability exists before Docker can create a resource.
-    environment = ['-i', 'PATH=/usr/local/bin:/usr/bin:/bin', 'HOME=/tmp', 'TMPDIR=/tmp' if sdk_runtime else 'TMPDIR=/cache',
+    environment = ['-i', 'PATH=/usr/local/bin:/usr/bin:/bin', 'HOME=/tmp', 'TMPDIR=/tmp' if sdk_runtime or sdk_tls else 'TMPDIR=/cache',
                    'LANG=C.UTF-8', 'PYTHONDONTWRITEBYTECODE=1', *argv]
+    if sdk_tls:
+        environment.insert(-len(argv),'TRUEID_TEST_TLS_FIXTURE_DIR=/control/tls')
     entrypoint = '/bin/true' if witness else '/usr/bin/env'
     command = ['trueid-never-started-witness'] if witness else environment
     config = ['docker', 'create', '--name', intent['name'], '--label', 'org.trueid.c04.owner=' + owner,
@@ -303,11 +314,11 @@ def create_container(image, argv, mounts, *, network='none', witness=False, sdk_
               '--pids-limit', '256', '--cpus', '2', '--memory', '3g', '--memory-swap', '3g',
               '--stop-signal', 'SIGTERM', '--stop-timeout', '20', '--workdir', '/tmp',
               '--tmpfs', '/tmp:rw,nosuid,nodev,noexec,size=256m,uid=' + str(container_uid) + ',gid=' + str(container_gid) + ',mode=0700']
-    if sdk_runtime:
+    if sdk_runtime or sdk_tls:
         config += ['--tmpfs', '/app/integrations/sycope/state:rw,nosuid,nodev,noexec,size=16m,uid=1000,gid=1000,mode=0700']
     for source, target, readonly in mounts:
         need(source.resolve(strict=True) == source and source.is_dir() and
-             target in ('/input', '/control', '/cache') and type(readonly) is bool, 'SCANNER')
+             target in (('/control/tls',) if sdk_tls else ('/input', '/control', '/cache')) and type(readonly) is bool, 'SCANNER')
         config += ['--mount', 'type=bind,source=' + str(source) + ',target=' + target +
                    (',readonly' if readonly else '')]
     cid = cli(config + ['--entrypoint', entrypoint, image] + command).decode('ascii').strip()
@@ -328,7 +339,7 @@ def create_container(image, argv, mounts, *, network='none', witness=False, sdk_
          all(item['Type'] in ('bind', 'tmpfs') for item in row['Mounts']) and
          row['State']['Running'] is False and row['State']['Pid'] == 0,
          'SCANNER')
-    if sdk_runtime:
+    if sdk_runtime or sdk_tls:
         need(row['Image'] == image and row['HostConfig'].get('Tmpfs') == {
             '/tmp':'rw,nosuid,nodev,noexec,size=256m,uid=1000,gid=1000,mode=0700',
             '/app/integrations/sycope/state':'rw,nosuid,nodev,noexec,size=16m,uid=1000,gid=1000,mode=0700'} and
@@ -2125,6 +2136,254 @@ def run_sdk_image_runtime(image):
                       'methods':proof['methods'],'cleanup':True},sort_keys=True),flush=True)
 
 
+def sdk_tls_identity_profile(identity, profile):
+    names = {'device','inode','uid','gid','mode','links','bytes','mtime_ns','ctime_ns'}
+    need(type(identity) is dict and set(identity) == names and
+         all(type(identity[key]) is int for key in names) and identity['links'] == 1 and
+         identity['device'] >= 0 and identity['inode'] > 0 and 0 <= identity['mode'] <= 0o7777, 'SCANNER')
+    if profile == 'tool':
+        need(identity['uid'] == 0 and identity['mode'] & 0o111 and
+             not identity['mode'] & 0o6022 and 0 < identity['bytes'] <= MAX_HOST_TOOL, 'SCANNER')
+    else:
+        need(profile == 'bundle' and identity['uid'] == UID and identity['mode'] == 0o444 and
+             0 < identity['bytes'] <= 65536, 'SCANNER')
+    return identity
+
+
+def sdk_tls_file_identity(path, profile, *, expected=None):
+    need(profile in ('tool','bundle') and path.resolve(strict=True) == path, 'SCANNER')
+    if profile == 'tool':
+        parent = path.parent.lstat()
+        need(path.parent == Path('/usr/bin') and path.name == 'openssl' and
+             stat.S_ISDIR(parent.st_mode) and parent.st_uid == 0 and not parent.st_mode & 0o022, 'TOOL')
+    fd = os.open(path,os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NONBLOCK)
+    try:
+        before = os.fstat(fd)
+        need(stat.S_ISREG(before.st_mode) and before.st_nlink == 1, 'SCANNER')
+        identity = sdk_tls_identity_profile(info_identity(before),profile)
+        need(identity == info_identity(path.lstat()) == info_identity(os.fstat(fd)) and
+             path.resolve(strict=True) == path and (expected is None or identity == expected), 'SCANNER')
+        return identity
+    finally:
+        os.close(fd)
+
+
+def run_sdk_tls_identity_controls(write_fixture):
+    count = 0
+    def observe(call, reject=False):
+        nonlocal count
+        try: call()
+        except Failure as error:
+            need(reject and type(error) is Failure and error.code == 'SCANNER','INTERNAL')
+        else:
+            need(not reject,'INTERNAL')
+        count += 1
+    path = write_fixture('tls-identity-public.pem',b'SYNTHETIC TLS IDENTITY CONTROL\n')
+    os.chmod(path,0o444)
+    before = sdk_tls_file_identity(path,'bundle')
+    observe(lambda: sdk_tls_file_identity(path,'bundle',expected=before))
+    os.chmod(path,0o600)
+    observe(lambda: sdk_tls_file_identity(path,'bundle'),True)
+    os.chmod(path,0o444)
+    observe(lambda: sdk_tls_identity_profile({**before,'uid':UID + 1},'bundle'),True)
+    executable = {**before,'uid':0,'mode':0o755}
+    observe(lambda: sdk_tls_identity_profile(executable,'tool'))
+    observe(lambda: sdk_tls_identity_profile({**executable,'mode':0o644},'tool'),True)
+    observe(lambda: sdk_tls_identity_profile({**executable,'mode':0o777},'tool'),True)
+    held = path.with_name('tls-identity-held.pem')
+    need(not held.exists() and not held.is_symlink(),'INTERNAL')
+    before = sdk_tls_file_identity(path,'bundle')
+    raw = read_file(path,65536)
+    path.rename(held)
+    try:
+        replacement = write_fixture('tls-identity-public.pem',raw)
+        os.chmod(replacement,0o444)
+        need(read_file(replacement,65536) == raw,'INTERNAL')
+        observe(lambda: sdk_tls_file_identity(replacement,'bundle',expected=before),True)
+    finally:
+        if path.exists(): path.unlink()
+        held.rename(path)
+    return {'status':'PASS','case_count':count,'passed':count,'failed':0}
+
+
+
+def sdk_tls_bundle_snapshot(bundle):
+    need(bundle.resolve(strict=True) == bundle and bundle.is_dir() and not bundle.is_symlink(), 'SCANNER')
+    info = bundle.lstat()
+    need(info.st_uid == UID and stat.S_IMODE(info.st_mode) == 0o755, 'SCANNER')
+    names = {'ca.pem','server.pem','server-key.pem','wrong-ca.pem','manifest.json'}
+    need({p.name for p in bundle.iterdir()} == names, 'SCANNER')
+    result = {}
+    for name in sorted(names):
+        path = bundle / name
+        before = sdk_tls_file_identity(path,'bundle')
+        need(before['uid'] == UID and before['mode'] == 0o444 and before['links'] == 1, 'SCANNER')
+        raw = read_file(path,16384 if name == 'manifest.json' else 65536)
+        need(sdk_tls_file_identity(path,'bundle',expected=before) == before, 'SCANNER')
+        result[name] = {'identity':before,'sha256':digest(raw),'bytes':len(raw)}
+    manifest = owner_json(read_file(bundle / 'manifest.json',16384),16384)
+    need(type(manifest) is dict and set(manifest) == {'schemaVersion','files'} and
+         type(manifest['schemaVersion']) is int and manifest['schemaVersion'] == 1 and
+         type(manifest['files']) is dict and set(manifest['files']) == names - {'manifest.json'}, 'SCANNER')
+    for name, row in manifest['files'].items():
+        need(type(row) is dict and set(row) == {'bytes','sha256'} and type(row['bytes']) is int and
+             1 <= row['bytes'] <= 65536 and type(row['sha256']) is str and
+             re.fullmatch('[0-9a-f]{64}',row['sha256']) is not None and
+             row == {key:result[name][key] for key in ('bytes','sha256')}, 'SCANNER')
+    need(sdk_tls_file_identity(bundle / 'manifest.json','bundle',expected=result['manifest.json']['identity']) == result['manifest.json']['identity'] and
+         info_identity(bundle.lstat()) == info_identity(info), 'SCANNER')
+    return result
+
+
+def sdk_tls_prepare_bundle(fixture):
+    deadline = min(WORK_END - 7,time.monotonic() + 120)
+    need(deadline > time.monotonic() + 7 and fixture.resolve(strict=True) == fixture and
+         fixture.is_dir() and fixture.stat().st_uid == UID and stat.S_IMODE(fixture.stat().st_mode) == 0o700,
+         'SCANNER')
+    signal.setitimer(signal.ITIMER_REAL,max(0.001,min(END,deadline) - time.monotonic()))
+    try:
+        private = fixture / 'private'
+        bundle = fixture / 'bundle'
+        private.mkdir(mode=0o700)
+        bundle.mkdir(mode=0o700)
+        chosen = shutil.which('openssl',path='/usr/bin:/bin')
+        need(chosen is not None, 'TOOL')
+        tool = Path(chosen).resolve(strict=True)
+        tool_raw = read_file(tool,MAX_HOST_TOOL,owned=False)
+        tool_identity = sdk_tls_file_identity(tool,'tool')
+        need(tool_identity['mode'] & 0o111 and not tool_identity['mode'] & 0o6000, 'TOOL')
+
+        def run(args, *, reject=False):
+            remaining = deadline - time.monotonic() - 7
+            need(remaining > 0 and sdk_tls_file_identity(tool,'tool',expected=tool_identity) == tool_identity and
+                 read_file(tool,MAX_HOST_TOOL,owned=False) == tool_raw, 'TOOL')
+            code, _out, _err, _elapsed = cli(['/usr/bin/env','-i','PATH=/usr/bin:/bin',
+                'HOME=' + str(private),'LANG=C','OPENSSL_CONF=/dev/null',str(tool),*args],
+                min(30,remaining),allow_exit=True)
+            need(type(code) is int and 0 <= code <= 255 and (code != 0 if reject else code == 0), 'SCANNER')
+
+        run(['version'])
+        for prefix, subject in (('ca','TrueID SDK TLS Test CA'),('wrong-ca','Unrelated SDK TLS Test CA')):
+            run(['req','-x509','-newkey','rsa:2048','-nodes','-sha256','-days','2','-subj','/CN=' + subject,
+                 '-addext','basicConstraints=critical,CA:TRUE','-addext','keyUsage=critical,keyCertSign,cRLSign',
+                 '-keyout',str(private / (prefix + '-key.pem')),'-out',str(private / (prefix + '.pem'))])
+        run(['req','-new','-newkey','rsa:2048','-nodes','-sha256','-subj','/CN=localhost',
+             '-keyout',str(private / 'server-key.pem'),'-out',str(private / 'server.csr')])
+        write_new(private / 'server.ext',b'subjectAltName=DNS:localhost,IP:127.0.0.1\n'
+                  b'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\n'
+                  b'extendedKeyUsage=serverAuth\n')
+        run(['x509','-req','-in',str(private / 'server.csr'),'-CA',str(private / 'ca.pem'),
+             '-CAkey',str(private / 'ca-key.pem'),'-set_serial','1','-days','2','-sha256',
+             '-extfile',str(private / 'server.ext'),'-out',str(private / 'server.pem')])
+        run(['verify','-CAfile',str(private / 'wrong-ca.pem'),str(private / 'wrong-ca.pem')])
+        for identity_option, identity in (('-verify_hostname','localhost'),('-verify_ip','127.0.0.1')):
+            tail = ['-purpose','sslserver',identity_option,identity,str(private / 'server.pem')]
+            run(['verify','-CAfile',str(private / 'ca.pem'),*tail])
+            run(['verify','-CAfile',str(private / 'wrong-ca.pem'),*tail],reject=True)
+        names = ('ca.pem','server.pem','server-key.pem','wrong-ca.pem')
+        rows = {}
+        for name in names:
+            need(time.monotonic() < deadline, 'SCANNER')
+            raw = read_file(private / name,65536)
+            write_new(bundle / name,raw,0o400)
+            rows[name] = {'bytes':len(raw),'sha256':digest(raw)}
+        need(rows['ca.pem']['sha256'] != rows['wrong-ca.pem']['sha256'], 'SCANNER')
+        write_new(bundle / 'manifest.json',canonical({'schemaVersion':1,'files':rows}),0o400)
+        for path in [*(bundle / name for name in names),bundle / 'manifest.json',bundle]:
+            before = path.lstat()
+            directory = path == bundle
+            flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | (os.O_DIRECTORY if directory else 0)
+            fd = os.open(path,flags)
+            try:
+                need(info_identity(os.fstat(fd)) == info_identity(before) and before.st_uid == UID and
+                     (stat.S_ISDIR(before.st_mode) if directory else stat.S_ISREG(before.st_mode) and before.st_nlink == 1),
+                     'SCANNER')
+                os.fchmod(fd,0o755 if directory else 0o444)
+                after = os.fstat(fd)
+                need((after.st_dev,after.st_ino,after.st_uid,after.st_gid) ==
+                     (before.st_dev,before.st_ino,before.st_uid,before.st_gid) and
+                     stat.S_IMODE(after.st_mode) == (0o755 if directory else 0o444) and
+                     info_identity(after) == info_identity(path.lstat()), 'SCANNER')
+            finally:
+                os.close(fd)
+        snapshot = sdk_tls_bundle_snapshot(bundle)
+        need(time.monotonic() < deadline and sdk_tls_file_identity(tool,'tool',expected=tool_identity) == tool_identity and
+             read_file(tool,MAX_HOST_TOOL,owned=False) == tool_raw, 'TOOL')
+        return bundle,snapshot,tool,tool_identity,tool_raw
+    finally:
+        # Restore the unchanged absolute terminal boundary, including cleanup reserve.
+        signal.setitimer(signal.ITIMER_REAL,max(0.001,END - time.monotonic()))
+
+
+def sdk_tls_result(code, stdout, stderr):
+    need(type(code) is int and code == 0 and type(stdout) is bytes and len(stdout) <= 1048576 and
+         type(stderr) is bytes and len(stderr) <= 2097152, 'SCANNER')
+    counts = [int(value) for value in re.findall(rb'^Ran ([0-9]{1,3}) tests? in [0-9]+(?:\.[0-9]+)?s$',stderr,re.M)]
+    identifiers = re.findall(rb'\((test_trueid_api_transport\.[A-Za-z_][A-Za-z_0-9]*\.[A-Za-z_][A-Za-z_0-9]*)\)',stderr)
+    expected = {value.encode('ascii') for value in SDK_TLS_METHOD_IDS}
+    need(counts == [23] and len(identifiers) == len(set(identifiers)) == 23 and set(identifiers) == expected and
+         len(re.findall(rb'^OK$',stderr,re.M)) == 1 and
+         re.search(rb'^(?:FAILED|FAIL:|ERROR:|UNEXPECTED SUCCESS:)',stderr,re.M) is None and
+         re.search(rb'\.\.\. (?:skipped|expected failure|unexpected success)',stderr) is None, 'SCANNER')
+    return {'suites':1,'methods':23}
+
+
+def run_sdk_tls_controls():
+    complete = b''.join(value.split('.')[-1].encode('ascii') + b' (' + value.encode('ascii') + b') ... ok\n'
+                        for value in SDK_TLS_METHOD_IDS) + b'\nRan 23 tests in 0.123s\n\nOK\n'
+    first = SDK_TLS_METHOD_IDS[0].encode('ascii')
+    cases = ((0,complete,False),
+             (0,complete.replace(first,b'test_trueid_api_transport.Unknown.missing',1),True),
+             (0,complete.replace(b'Ran 23',b'Ran 22'),True),
+             (0,complete.replace(b'OK\n',b'OK (skipped=1)\n'),True),
+             (1,complete,True))
+    count = 0
+    for code, stderr, rejected in cases:
+        try: result = sdk_tls_result(code,b'',stderr)
+        except Failure as error:
+            need(rejected and type(error) is Failure and error.code == 'SCANNER','INTERNAL')
+        else:
+            need(not rejected and result == {'suites':1,'methods':23},'INTERNAL')
+        count += 1
+    return {'status':'PASS','case_count':count,'passed':count,'failed':0}
+
+
+def run_sdk_image_tls(image, root):
+    intent = None
+    fixture = root / 'tls-fixture'
+    need(root.resolve(strict=True) == root and root.is_dir() and root.stat().st_uid == UID and
+         stat.S_IMODE(root.stat().st_mode) == 0o700 and not fixture.exists() and not fixture.is_symlink(), 'SCANNER')
+    fixture.mkdir(mode=0o700)
+    identity = fixture.lstat()
+    try:
+        bundle,snapshot,tool,tool_identity,tool_raw = sdk_tls_prepare_bundle(fixture)
+        intent,cid = create_container(image,list(SDK_TLS_ARGV),[(bundle,'/control/tls',True)],
+                                      network='none',sdk_tls=True)
+        code,stdout,stderr,_elapsed = cli(['docker','start','--attach',cid],120,allow_exit=True)
+        row = inspect_container(cid)
+        need(row['Image'] == image and row['State']['Running'] is False and row['State']['Pid'] == 0 and
+             row['State']['OOMKilled'] is False and row['State'].get('Error','') == '' and
+             type(row['State']['ExitCode']) is int and row['State']['ExitCode'] == code,'SCANNER')
+        need(sdk_tls_bundle_snapshot(bundle) == snapshot and sdk_tls_file_identity(tool,'tool',expected=tool_identity) == tool_identity and
+             read_file(tool,MAX_HOST_TOOL,owned=False) == tool_raw, 'SCANNER')
+        proof = sdk_tls_result(code,stdout,stderr)
+    finally:
+        if intent is not None: retire(intent)
+        if not UNCERTAIN and (intent is None or intent['closed'] is True):
+            current = fixture.lstat()
+            need(fixture.resolve(strict=True) == fixture and fixture.parent == root and
+                 (current.st_dev,current.st_ino,current.st_uid) ==
+                 (identity.st_dev,identity.st_ino,identity.st_uid) and
+                 stat.S_IMODE(current.st_mode) == 0o700 and shutil.rmtree.avoids_symlink_attacks,'SCANNER')
+            shutil.rmtree(fixture)
+            need(not fixture.exists() and not fixture.is_symlink(),'SCANNER')
+    need(intent is not None and intent['closed'] is True and not CANCELLED and not UNCERTAIN and
+         not fixture.exists() and not fixture.is_symlink(),'SCANNER')
+    print(json.dumps({'scope':'C04_SDK_IMAGE_TLS_ONLY','status':'PASS','suites':proof['suites'],
+                      'methods':proof['methods'],'cleanup':True},sort_keys=True),flush=True)
+
+
+
 def main():
     global ENV, END, WORK_END, DOCKER, UID, GID, PHASE, UNCERTAIN
     UID, GID = os.getuid(), os.getgid()
@@ -2159,6 +2418,7 @@ def main():
         diagnostic_controls = run_scanner_diagnostic_controls()
         os_diagnostic_controls = run_os_diagnostic_controls()
         sdk_runtime_controls = run_sdk_runtime_controls()
+        sdk_tls_controls = run_sdk_tls_controls()
         runner = Path(os.environ['RUNNER_TEMP']).resolve(strict=True)
         checkout = Path(os.environ['GITHUB_WORKSPACE']).resolve(strict=True)
         need(runner.is_dir() and not runner.is_symlink() and not runner.is_relative_to(checkout), 'BOOTSTRAP')
@@ -2200,6 +2460,7 @@ def main():
             target = fixture_dir / name
             write_new(target, data)
             return target
+        tls_identity_controls = run_sdk_tls_identity_controls(write_fixture)
         physical_controls = run_physical_tar_controls(write_fixture)
         archive_controls = run_archive_controls(write_fixture)
         witness_controls = run_witness_controls(write_fixture)
@@ -2213,7 +2474,8 @@ def main():
                       for name,value in (('reducer',controls),('capture',host_controls),('witness',witness_controls),
                       ('metadata_selector',selector_controls),('physical_tar',physical_controls),
                       ('archive_auth',archive_controls),('scanner_diagnostic',diagnostic_controls),
-                      ('os_diagnostic',os_diagnostic_controls),('sdk_runtime_admission',sdk_runtime_controls))}},
+                      ('os_diagnostic',os_diagnostic_controls),('sdk_runtime_admission',sdk_runtime_controls),
+                       ('sdk_tls_admission',sdk_tls_controls),('sdk_tls_identity',tls_identity_controls))}},
             sort_keys=True), flush=True)
         archive_checkpoint('UNOBSERVED')
         PHASE = 'TOOL'
@@ -2285,6 +2547,7 @@ def main():
         finally:
             retire(witness_intent)
         run_sdk_image_runtime(image['Id'])
+        run_sdk_image_tls(image['Id'],root)
         PHASE = 'SCANNER'
         cli(['docker', 'pull', '--platform', 'linux/amd64', 'aquasec/trivy@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c'], 120)
         tool = image_info('aquasec/trivy@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c')['Id']
