@@ -4,6 +4,13 @@ FROM python:3.11-slim@sha256:673719e071ecf27434fd2635bbd8d00f49f4fdd81f243143438
 
 COPY --from=ghcr.io/astral-sh/uv:0.12.8 /uv /uvx /bin/
 
+# Update inherited packaging tooling separately from the locked application environment.
+RUN set -eux; \
+    packaging_requirements="$(mktemp)"; \
+    printf '%s\n' 'setuptools==84.2.0 --hash=sha256:8cc107ac7a403105dc8d6477664171f36135fab26adf8b5e0edaebc313f39b21' > "$packaging_requirements"; \
+    python -m pip install --no-cache-dir --no-deps --require-hashes --only-binary=:all: -r "$packaging_requirements"; \
+    rm -f "$packaging_requirements"
+
 ENV UV_PYTHON_INSTALL_DIR=/opt/uv-pythons \
     UV_PROJECT_ENVIRONMENT=/app/integrations/sycope/.venv \
     PYTHONUNBUFFERED=1
