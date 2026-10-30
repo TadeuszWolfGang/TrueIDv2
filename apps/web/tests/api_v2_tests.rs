@@ -5461,6 +5461,276 @@ async fn test_mapping_includes_geo_fields() {
     );
 }
 
+/// Captures sorted nonsecret key records and all API-key creation audits.
+async fn c07_api_key_state(db: &trueid_common::db::Db) -> (Value, i64) {
+    let mut rows = db.list_api_keys().await.expect("C07 key query failed");
+    rows.sort_by_key(|row| row.id);
+    let records = serde_json::to_value(rows).expect("C07 record serialization failed");
+    let audits = db
+        .count_audit_logs(Some("api_key_created"), None)
+        .await
+        .expect("C07 audit query failed");
+    (records, audits)
+}
+
+/// Issues a real valid creation and checks its persisted record and date bracket.
+async fn c07_create_valid(
+    app: &Router,
+    db: &trueid_common::db::Db,
+    cookie: &str,
+    description: &str,
+    expiry: Option<Option<i64>>,
+) {
+    let before = c07_api_key_state(db).await;
+    let old_rows = before.0.as_array().expect("C07 expected key array");
+    assert!(!old_rows.iter().any(|row| row["description"] == description));
+    let mut body = json!({"description": description, "role": "Viewer"});
+    if let Some(days) = expiry {
+        body["expires_in_days"] = json!(days);
+    }
+    let started = Utc::now();
+    let (status, headers, raw) = auth_post_raw(app, cookie, "/api/v1/api-keys", &body).await;
+    let ended = Utc::now();
+    assert_eq!(status, StatusCode::CREATED);
+    assert!(
+        headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            == Some("application/json"),
+        "C07 expected JSON content type"
+    );
+    let created: Value = serde_json::from_slice(&raw).expect("C07 invalid creation JSON");
+    assert!(
+        created["key"].as_str().is_some_and(|key| !key.is_empty()),
+        "C07 key missing"
+    );
+    let record = created.get("record").expect("C07 response record missing");
+    assert!(
+        record["description"] == description,
+        "C07 description mismatch"
+    );
+    assert!(record["role"] == "Viewer", "C07 role mismatch");
+    assert!(record["rate_limit_rpm"] == 100, "C07 default RPM mismatch");
+    assert!(record["rate_limit_burst"] == 20, "C07 burst mismatch");
+    let after = c07_api_key_state(db).await;
+    let rows = after
+        .0
+        .as_array()
+        .expect("C07 expected persisted key array");
+    assert_eq!(rows.len(), old_rows.len() + 1);
+    assert_eq!(
+        after.1,
+        before.1.checked_add(1).expect("C07 audit count overflow")
+    );
+    assert!(rows.iter().any(|row| row == record), "C07 record mismatch");
+    assert!(
+        !old_rows.iter().any(|row| row["id"] == record["id"]),
+        "C07 key ID reused"
+    );
+    assert!(
+        old_rows.iter().all(|old| rows.contains(old)),
+        "C07 existing key changed"
+    );
+    assert_eq!(
+        rows.iter()
+            .filter(|row| row["description"] == description)
+            .count(),
+        1
+    );
+    if let Some(days) = expiry.flatten() {
+        let text = record["expires_at"].as_str().expect("C07 expiry missing");
+        let actual = chrono::DateTime::parse_from_rfc3339(text)
+            .expect("C07 invalid expiry timestamp")
+            .with_timezone(&Utc);
+        let delta = Duration::try_days(days).expect("C07 valid fixture duration overflow");
+        let lower = started
+            .checked_add_signed(delta)
+            .expect("C07 lower bracket overflow");
+        let upper = ended
+            .checked_add_signed(delta)
+            .expect("C07 upper bracket overflow");
+        assert!(
+            lower <= actual && actual <= upper,
+            "C07 expiry outside request bracket"
+        );
+        if days < 0 {
+            assert!(
+                actual < ended,
+                "C07 negative expiry must remain in the past"
+            );
+        }
+    } else {
+        assert!(
+            record["expires_at"].is_null(),
+            "C07 omitted/null expiry must stay null"
+        );
+    }
+}
+
+/// Rejects one real request without accepting a route panic as an HTTP response.
+async fn c07_reject_expiry(days: i64, case: &str) {
+    let (app, db) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    c07_create_valid(&app, &db, &cookie, &format!("c07-sentinel-{case}"), None).await;
+    let description = format!("c07-invalid-{case}");
+    let before = c07_api_key_state(&db).await;
+    let rows = before
+        .0
+        .as_array()
+        .expect("C07 expected baseline key array");
+    assert!(!rows.is_empty(), "C07 sentinel baseline must be nonempty");
+    assert!(!rows.iter().any(|row| row["description"] == description));
+    let body = json!({"description": description, "role": "Viewer", "expires_in_days": days});
+    let owned_app = app.clone();
+    let owned_cookie = cookie.clone();
+    let mut request = tokio::spawn(async move {
+        auth_post_raw(&owned_app, &owned_cookie, "/api/v1/api-keys", &body).await
+    });
+    let joined = match tokio::time::timeout(std::time::Duration::from_secs(10), &mut request).await
+    {
+        Ok(result) => result,
+        Err(_) => {
+            request.abort();
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(1), request).await;
+            panic!("C07 owned request timed out");
+        }
+    };
+    assert!(
+        joined.is_ok(),
+        "C07 route panicked instead of returning the required 400"
+    );
+    let (status, headers, raw) = joined.expect("C07 owned request failed");
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            == Some("application/json"),
+        "C07 expected rejection JSON content type"
+    );
+    let error: Value = serde_json::from_slice(&raw).expect("C07 invalid rejection JSON");
+    assert!(error["code"] == "INVALID_INPUT", "C07 wrong rejection code");
+    assert!(
+        error["error"] == "expires_in_days is out of range",
+        "C07 wrong expiry error"
+    );
+    let request_id = error["request_id"]
+        .as_str()
+        .expect("C07 request ID missing");
+    assert!(!request_id.is_empty(), "C07 request ID empty");
+    assert!(
+        headers.get("x-request-id").and_then(|v| v.to_str().ok()) == Some(request_id),
+        "C07 request ID header/body mismatch"
+    );
+    assert!(
+        error.get("key").is_none() && error.get("record").is_none(),
+        "C07 rejection exposed success fields"
+    );
+    let after = c07_api_key_state(&db).await;
+    assert!(
+        after.0 == before.0,
+        "C07 rejection mutated stored key records"
+    );
+    assert_eq!(after.1, before.1, "C07 rejection added a creation audit");
+    assert!(!after
+        .0
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|row| row["description"] == description));
+    c07_create_valid(&app, &db, &cookie, &format!("c07-followup-{case}"), None).await;
+}
+
+#[tokio::test]
+async fn test_c07_api_key_expiry_rejects_i64_max() {
+    assert!(Duration::try_days(i64::MAX).is_none());
+    c07_reject_expiry(i64::MAX, "i64-max").await;
+}
+
+#[tokio::test]
+async fn test_c07_api_key_expiry_rejects_i64_min() {
+    assert!(Duration::try_days(i64::MIN).is_none());
+    c07_reject_expiry(i64::MIN, "i64-min").await;
+}
+
+#[tokio::test]
+async fn test_c07_api_key_expiry_rejects_above_duration_max() {
+    let days = Duration::MAX
+        .num_days()
+        .checked_add(1)
+        .expect("C07 upper input overflow");
+    assert!(Duration::try_days(days).is_none());
+    c07_reject_expiry(days, "above-duration-max").await;
+}
+
+#[tokio::test]
+async fn test_c07_api_key_expiry_rejects_below_duration_min() {
+    let days = Duration::MIN
+        .num_days()
+        .checked_sub(1)
+        .expect("C07 lower input overflow");
+    assert!(Duration::try_days(days).is_none());
+    c07_reject_expiry(days, "below-duration-min").await;
+}
+
+#[tokio::test]
+async fn test_c07_api_key_expiry_rejects_duration_max_date_overflow() {
+    let days = Duration::MAX.num_days();
+    let delta = Duration::try_days(days).expect("C07 duration maximum must be representable");
+    assert!(Utc::now().checked_add_signed(delta).is_none());
+    c07_reject_expiry(days, "duration-max-date-overflow").await;
+}
+
+#[tokio::test]
+async fn test_c07_api_key_expiry_rejects_duration_min_date_overflow() {
+    let days = Duration::MIN.num_days();
+    let delta = Duration::try_days(days).expect("C07 duration minimum must be representable");
+    assert!(Utc::now().checked_add_signed(delta).is_none());
+    c07_reject_expiry(days, "duration-min-date-overflow").await;
+}
+
+#[tokio::test]
+async fn test_c07_api_key_expiry_rejects_above_datetime_max() {
+    let now = Utc::now();
+    let days = chrono::DateTime::<Utc>::MAX_UTC
+        .signed_duration_since(now)
+        .num_days()
+        .checked_add(2)
+        .expect("C07 near-upper input overflow");
+    let delta = Duration::try_days(days).expect("C07 near-upper duration must be representable");
+    assert!(now.checked_add_signed(delta).is_none());
+    c07_reject_expiry(days, "above-datetime-max").await;
+}
+
+#[tokio::test]
+async fn test_c07_api_key_expiry_rejects_below_datetime_min() {
+    let now = Utc::now();
+    let days = chrono::DateTime::<Utc>::MIN_UTC
+        .signed_duration_since(now)
+        .num_days()
+        .checked_sub(2)
+        .expect("C07 near-lower input overflow");
+    let delta = Duration::try_days(days).expect("C07 near-lower duration must be representable");
+    assert!(now.checked_add_signed(delta).is_none());
+    c07_reject_expiry(days, "below-datetime-min").await;
+}
+
+#[tokio::test]
+async fn test_c07_api_key_expiry_preserves_valid_values() {
+    let (app, db) = build_test_app().await;
+    let cookie = login_and_get_cookie(&app, "testadmin", "testpassword123").await;
+    let cases = [
+        ("omitted", None),
+        ("null", Some(None)),
+        ("zero", Some(Some(0))),
+        ("plus-one", Some(Some(1))),
+        ("minus-one", Some(Some(-1))),
+    ];
+    for (name, expiry) in cases {
+        c07_create_valid(&app, &db, &cookie, &format!("c07-valid-{name}"), expiry).await;
+    }
+}
+
 #[tokio::test]
 async fn test_api_key_rate_limit_headers() {
     let (app, _) = build_test_app().await;
