@@ -1,6 +1,7 @@
 """Offline transport regressions; TLS keys and sync state stay outside source."""
 
 from contextlib import contextmanager, ExitStack
+import hashlib
 import importlib.util
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
@@ -8,6 +9,7 @@ import os
 from pathlib import Path
 import shutil
 import ssl
+import stat
 import subprocess
 import sys
 import tempfile
@@ -24,6 +26,8 @@ sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(SYNC_DIR))
 
 from trueid_api import TrueIdApi
+from sycope.api import SycopeApi
+from sycope.exceptions import SycopeAuthError
 
 
 OPERATIONS = ("mappings", "events")
@@ -391,14 +395,17 @@ def running_server(certificate=None, private_key=None):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             with recorder.lock:
-                recorder.requests.append({"path": self.path, "key": self.headers.get("X-API-Key")})
+                recorder.requests.append({"path": self.path, "key": self.headers.get("X-API-Key"), "method": self.command})
                 status = recorder.status
                 location = recorder.location
             # A same-origin redirect has a successful terminal route, making
             # the old automatic-follow behavior observable without a loop.
             if self.path.startswith("/redirected-target"):
                 status, location = 200, None
-            body = json.dumps({"data": [{"fixture": CANARIES["data"]}]}).encode()
+            payload = {"data": [{"fixture": CANARIES["data"]}]}
+            if self.path.startswith("/npm/api/v1/"):
+                payload["status"] = 200
+            body = json.dumps(payload).encode()
             self.send_response(status, CANARIES["reason"])
             if location is not None:
                 self.send_header("Location", location)
@@ -407,6 +414,19 @@ def running_server(certificate=None, private_key=None):
             self.send_header("Connection", "close")
             self.end_headers()
             self.wfile.write(body)
+
+        def do_POST(self):
+            length = self.headers.get("Content-Length", "0")
+            if not 1 <= len(length) <= 4 or not length.isascii() or not length.isdecimal() or int(length) > 4096:
+                self.send_error(400)
+                return
+            if len(self.rfile.read(int(length))) != int(length):
+                self.send_error(400)
+                return
+            self.do_GET()
+
+        do_PUT = do_POST
+        do_DELETE = do_POST
 
         def log_message(self, format, *args):
             pass
@@ -461,13 +481,120 @@ def generate_tls_fixture(directory):
     return ca, certificate, key
 
 
+def _fixture_bytes(path, limit):
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        before = os.fstat(descriptor)
+        if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1
+                or stat.S_IMODE(before.st_mode) != 0o444 or not 1 <= before.st_size <= limit):
+            raise ValueError
+        data = b""
+        while len(data) <= limit:
+            block = os.read(descriptor, min(4096, limit + 1 - len(data)))
+            if not block:
+                break
+            data += block
+        def identity(item):
+            return (item.st_dev, item.st_ino, item.st_mode, item.st_nlink,
+                    item.st_size, item.st_mtime_ns, item.st_ctime_ns)
+        after = os.fstat(descriptor)
+        if (len(data) != before.st_size or identity(before) != identity(after)
+                or identity(after) != identity(path.lstat())):
+            raise ValueError
+        return data
+    finally:
+        os.close(descriptor)
+
+
+def provided_tls_fixture():
+    setting = os.environ.get("TRUEID_TEST_TLS_FIXTURE_DIR")
+    if setting is None:
+        return None
+    try:
+        if setting != "/control/tls":
+            raise ValueError
+        directory = Path(setting)
+        before = directory.lstat()
+        names = ("ca.pem", "server.pem", "server-key.pem", "wrong-ca.pem")
+        if (not stat.S_ISDIR(before.st_mode) or stat.S_IMODE(before.st_mode) != 0o755
+                or directory.resolve(strict=True) != directory
+                or set(os.listdir(directory)) != set(names) | {"manifest.json"}):
+            raise ValueError
+        raw = _fixture_bytes(directory / "manifest.json", 16384)
+        if b"\0" in raw:
+            raise ValueError
+
+        def unique_pairs(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError
+                result[key] = value
+            return result
+
+        def reject_constant(value):
+            raise ValueError
+
+        manifest = json.loads(raw.decode("utf-8", "strict"), object_pairs_hook=unique_pairs,
+                              parse_constant=reject_constant)
+        if (type(manifest) is not dict or set(manifest) != {"schemaVersion", "files"}
+                or type(manifest["schemaVersion"]) is not int or manifest["schemaVersion"] != 1
+                or type(manifest["files"]) is not dict or set(manifest["files"]) != set(names)):
+            raise ValueError
+        material = {}
+        for name in names:
+            entry = manifest["files"][name]
+            if type(entry) is not dict or set(entry) != {"bytes", "sha256"}:
+                raise ValueError
+            size, digest = entry["bytes"], entry["sha256"]
+            if (type(size) is not int or not 1 <= size <= 65536 or type(digest) is not str
+                    or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest)):
+                raise ValueError
+            data = _fixture_bytes(directory / name, 65536)
+            if len(data) != size or hashlib.sha256(data).hexdigest() != digest:
+                raise ValueError
+            material[name] = data
+        after = directory.lstat()
+        if (material["ca.pem"] == material["wrong-ca.pem"]
+                or (before.st_dev, before.st_ino, before.st_mode, before.st_mtime_ns, before.st_ctime_ns)
+                != (after.st_dev, after.st_ino, after.st_mode, after.st_mtime_ns, after.st_ctime_ns)):
+            raise ValueError
+        return tuple(directory / name for name in names)
+    except (OSError, ValueError, TypeError, KeyError, RecursionError):
+        raise RuntimeError("Invalid provided TLS fixture") from None
+
+
+def generate_wrong_ca_fixture(directory):
+    openssl = shutil.which("openssl")
+    if openssl is None:
+        raise RuntimeError("openssl is required for the offline TLS fixture")
+    certificate = Path(directory) / "wrong-ca.pem"
+    subprocess.run(
+        [openssl, "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-sha256", "-days", "1",
+         "-subj", "/CN=Unrelated TrueID transport fixture CA", "-keyout",
+         str(Path(directory) / "wrong-ca-key.pem"), "-out", str(certificate),
+         "-addext", "basicConstraints=critical,CA:TRUE",
+         "-addext", "keyUsage=critical,keyCertSign,cRLSign"],
+        check=True, capture_output=True, timeout=30,
+    )
+    return certificate
+
+
 class TrueIdRealTransportTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         stack = ExitStack()
         cls.addClassCleanup(stack.close)
         directory = stack.enter_context(tempfile.TemporaryDirectory(prefix="trueid-tls-transport-", dir="/tmp"))
-        cls.ca, certificate, key = generate_tls_fixture(directory)
+        provided = provided_tls_fixture()
+        if provided is None:
+            cls.ca, certificate, key = generate_tls_fixture(directory)
+            cls.wrong_ca = generate_wrong_ca_fixture(directory)
+        else:
+            cls.ca, certificate, key, cls.wrong_ca = provided
+        for bundle in (cls.ca, cls.wrong_ca):
+            if len(ssl.create_default_context(cafile=str(bundle)).get_ca_certs()) != 1:
+                raise RuntimeError("Invalid TLS CA fixture")
         # Both HTTPS origins use the same CA, so old redirect following can
         # actually reach the foreign recorder rather than fail TLS first.
         cls.source = stack.enter_context(running_server(certificate, key))
@@ -595,6 +722,57 @@ class TrueIdRealTransportTests(unittest.TestCase):
                 self.assertEqual(len(forwarded), 0)
                 self.assertEqual(key_count, 0)
                 self.assertIsInstance(caught, ValueError)
+
+
+    def test_wrong_ca_bundle_fails_before_http_without_insecure_fallback(self):
+        for operation in OPERATIONS:
+            with self.subTest(operation=operation):
+                self.source.configure()
+                connection = self.connection(verify=str(self.wrong_ca))
+                api = TrueIdApi(connection, self.source.url, api_key=CANARIES["key"])
+                with mock.patch.object(connection, "send", wraps=connection.send) as sent:
+                    with self.assertRaises(requests.exceptions.SSLError):
+                        read(api, operation)
+                self.assertEqual(self.source.snapshot(), [])
+                self.assertEqual(sent.call_args.kwargs["verify"], str(self.wrong_ca))
+                self.assert_dispatch(connection, sent, str(self.wrong_ca), True)
+                sent.assert_called_once()
+
+    def test_shared_sycope_verified_login_and_methods_use_provided_ca(self):
+        connection = self.connection(verify=str(self.ca), trust_env=False)
+        with mock.patch.object(connection, "send", wraps=connection.send) as sent:
+            api = SycopeApi(connection, self.source.url, "fixture-user", CANARIES["password"])
+            for method in ("GET", "POST", "PUT", "DELETE"):
+                result = api._make_request(
+                    method, self.source.url + "/npm/api/v1/fixture", {"fixture": CANARIES["data"]}
+                )
+                self.assertEqual(result.status_code, 200)
+                self.assertEqual(result.json()["status"], 200)
+        records = self.source.snapshot()
+        self.assertEqual([item["method"] for item in records], ["POST", "GET", "POST", "PUT", "DELETE"])
+        self.assertEqual([item["path"] for item in records],
+                         ["/npm/api/v1/login"] + ["/npm/api/v1/fixture"] * 4)
+        self.assertEqual(sent.call_count, 5)
+        self.assertEqual(connection.verify, str(self.ca))
+        self.assertIs(connection.trust_env, False)
+        for call in sent.call_args_list:
+            self.assertEqual(call.kwargs["verify"], str(self.ca))
+            self.assertEqual(call.kwargs["timeout"], (5, 30))
+            self.assertFalse(call.kwargs["allow_redirects"])
+
+    def test_shared_sycope_wrong_ca_rejects_login_before_http(self):
+        connection = self.connection(verify=str(self.wrong_ca), trust_env=False)
+        with mock.patch.object(connection, "send", wraps=connection.send) as sent:
+            with self.assertRaises(SycopeAuthError) as caught:
+                SycopeApi(connection, self.source.url, "fixture-user", CANARIES["password"])
+        self.assertIsInstance(caught.exception.__context__, requests.exceptions.SSLError)
+        self.assertEqual(self.source.snapshot(), [])
+        self.assertEqual(connection.verify, str(self.wrong_ca))
+        self.assertIs(connection.trust_env, False)
+        self.assertEqual(sent.call_args.kwargs["verify"], str(self.wrong_ca))
+        self.assertEqual(sent.call_args.kwargs["timeout"], (5, 30))
+        self.assertFalse(sent.call_args.kwargs["allow_redirects"])
+        sent.assert_called_once()
 
 
 if __name__ == "__main__":

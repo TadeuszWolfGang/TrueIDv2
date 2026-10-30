@@ -1,8 +1,15 @@
 # syntax=docker/dockerfile:1.7
 # Pinned by digest; Dependabot (docker ecosystem, this directory) bumps it.
-FROM python:3.11-slim@sha256:d1e9ca7c4e78d1e8ecadb5d44bfc8e956e7a65b659a9950f569f243d72b326d0
+FROM python:3.11-alpine@sha256:09d17d5e4c16d0a7a1eea690bcb7c6ab8616b211f8421e429e97c1bef5bd0ed2
 
 COPY --from=ghcr.io/astral-sh/uv:0.12.8 /uv /uvx /bin/
+
+# Update inherited packaging tooling separately from the locked application environment.
+RUN set -eux; \
+    packaging_requirements="$(mktemp)"; \
+    printf '%s\n' 'setuptools==84.2.0 --hash=sha256:8cc107ac7a403105dc8d6477664171f36135fab26adf8b5e0edaebc313f39b21' > "$packaging_requirements"; \
+    python -m pip install --no-cache-dir --no-deps --require-hashes --only-binary=:all: -r "$packaging_requirements"; \
+    rm -f "$packaging_requirements"
 
 ENV UV_PYTHON_INSTALL_DIR=/opt/uv-pythons \
     UV_PROJECT_ENVIRONMENT=/app/integrations/sycope/.venv \
