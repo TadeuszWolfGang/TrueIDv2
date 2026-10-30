@@ -2178,7 +2178,7 @@ def run_sdk_tls_identity_controls(write_fixture):
         else:
             need(not reject,'INTERNAL')
         count += 1
-    path = write_fixture('tls-identity-public.pem',b'SYNTHETIC TLS IDENTITY CONTROL\n')
+    path = write_fixture('tls-identity-public.tar',b'SYNTHETIC TLS IDENTITY CONTROL\n')
     os.chmod(path,0o444)
     before = sdk_tls_file_identity(path,'bundle')
     observe(lambda: sdk_tls_file_identity(path,'bundle',expected=before))
@@ -2190,13 +2190,13 @@ def run_sdk_tls_identity_controls(write_fixture):
     observe(lambda: sdk_tls_identity_profile(executable,'tool'))
     observe(lambda: sdk_tls_identity_profile({**executable,'mode':0o644},'tool'),True)
     observe(lambda: sdk_tls_identity_profile({**executable,'mode':0o777},'tool'),True)
-    held = path.with_name('tls-identity-held.pem')
+    held = path.with_name('tls-identity-held.tar')
     need(not held.exists() and not held.is_symlink(),'INTERNAL')
     before = sdk_tls_file_identity(path,'bundle')
     raw = read_file(path,65536)
     path.rename(held)
     try:
-        replacement = write_fixture('tls-identity-public.pem',raw)
+        replacement = write_fixture('tls-identity-public.tar',raw)
         os.chmod(replacement,0o444)
         need(read_file(replacement,65536) == raw,'INTERNAL')
         observe(lambda: sdk_tls_file_identity(replacement,'bundle',expected=before),True)
