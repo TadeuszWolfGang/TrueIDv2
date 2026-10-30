@@ -279,21 +279,32 @@ def retire(intent):
         raise
 
 
-def create_container(image, argv, mounts, *, network='none', witness=False):
+SDK_RUNTIME_SCRIPT = 'P=/app/integrations/sycope/.venv/bin/python\nT=/app/integrations/sycope/tests\n"$P" -I -B -c \'import sys; sys.path[:0]=["/app","/app/integrations/sycope"]; import requests,idna,trueid_api,trueid_sync; from sycope.api import SycopeApi; assert callable(trueid_sync.main); print("SDK_IMPORTS_OK")\'\n"$P" -I -B -m unittest discover -v -s "$T" -p test_trueid_api.py\n"$P" -I -B -m unittest discover -v -s "$T" -p test_trueid_sync.py\n"$P" -I -B -m unittest discover -v -s "$T" -p test_sycope_security.py\n'
+SDK_RUNTIME_ARGV = ('/bin/sh', '-ec', SDK_RUNTIME_SCRIPT)
+
+
+def create_container(image, argv, mounts, *, network='none', witness=False, sdk_runtime=False):
     need(re.fullmatch('sha256:[0-9a-f]{64}', image) is not None and network in ('none', 'bridge'), 'SCANNER')
+    need(type(sdk_runtime) is bool, 'SCANNER')
+    if sdk_runtime:
+        need(not witness and network == 'none' and mounts == [] and argv == list(SDK_RUNTIME_ARGV), 'SCANNER')
+    container_uid, container_gid = (1000, 1000) if sdk_runtime else (UID, GID)
+    container_user = str(container_uid) + ':' + str(container_gid)
     owner = secrets.token_hex(16)
     intent = {'owner': owner, 'name': 'trueid-c04-' + owner, 'image': image, 'acked': False, 'closed': False}
     INTENTS.append(intent)  # The exact recovery capability exists before Docker can create a resource.
-    environment = ['-i', 'PATH=/usr/local/bin:/usr/bin:/bin', 'HOME=/tmp', 'TMPDIR=/cache',
+    environment = ['-i', 'PATH=/usr/local/bin:/usr/bin:/bin', 'HOME=/tmp', 'TMPDIR=/tmp' if sdk_runtime else 'TMPDIR=/cache',
                    'LANG=C.UTF-8', 'PYTHONDONTWRITEBYTECODE=1', *argv]
     entrypoint = '/bin/true' if witness else '/usr/bin/env'
     command = ['trueid-never-started-witness'] if witness else environment
     config = ['docker', 'create', '--name', intent['name'], '--label', 'org.trueid.c04.owner=' + owner,
-              '--platform', 'linux/amd64', '--init', '--user', str(UID) + ':' + str(GID), '--log-driver', 'none',
+              '--platform', 'linux/amd64', '--init', '--user', container_user, '--log-driver', 'none',
               '--read-only', '--network', network, '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
               '--pids-limit', '256', '--cpus', '2', '--memory', '3g', '--memory-swap', '3g',
               '--stop-signal', 'SIGTERM', '--stop-timeout', '20', '--workdir', '/tmp',
-              '--tmpfs', '/tmp:rw,nosuid,nodev,noexec,size=256m,uid=' + str(UID) + ',gid=' + str(GID) + ',mode=0700']
+              '--tmpfs', '/tmp:rw,nosuid,nodev,noexec,size=256m,uid=' + str(container_uid) + ',gid=' + str(container_gid) + ',mode=0700']
+    if sdk_runtime:
+        config += ['--tmpfs', '/app/integrations/sycope/state:rw,nosuid,nodev,noexec,size=16m,uid=1000,gid=1000,mode=0700']
     for source, target, readonly in mounts:
         need(source.resolve(strict=True) == source and source.is_dir() and
              target in ('/input', '/control', '/cache') and type(readonly) is bool, 'SCANNER')
@@ -306,7 +317,7 @@ def create_container(image, argv, mounts, *, network='none', witness=False):
     binds = [item for item in row['Mounts'] if item['Type'] == 'bind']
     expected = sorted((target, str(source), not readonly) for source, target, readonly in mounts)
     actual = sorted((item['Destination'], item['Source'], item['RW']) for item in binds)
-    need(row['Config']['User'] == str(UID) + ':' + str(GID) and
+    need(row['Config']['User'] == container_user and
          row['Config']['Entrypoint'] == [entrypoint] and row['Config']['Cmd'] == command and
          row['Config']['Tty'] is False and actual == expected and
          row['HostConfig']['ReadonlyRootfs'] is True and row['HostConfig']['NetworkMode'] == network and
@@ -317,6 +328,12 @@ def create_container(image, argv, mounts, *, network='none', witness=False):
          all(item['Type'] in ('bind', 'tmpfs') for item in row['Mounts']) and
          row['State']['Running'] is False and row['State']['Pid'] == 0,
          'SCANNER')
+    if sdk_runtime:
+        need(row['Image'] == image and row['HostConfig'].get('Tmpfs') == {
+            '/tmp':'rw,nosuid,nodev,noexec,size=256m,uid=1000,gid=1000,mode=0700',
+            '/app/integrations/sycope/state':'rw,nosuid,nodev,noexec,size=16m,uid=1000,gid=1000,mode=0700'} and
+            row['HostConfig']['Memory'] == 3 * 1073741824 and row['HostConfig']['MemorySwap'] == 3 * 1073741824 and
+            row['HostConfig']['NanoCpus'] == 2000000000 and row['HostConfig']['PidsLimit'] == 256, 'SCANNER')
     return intent, cid
 
 
@@ -643,6 +660,22 @@ def source_context(checkout, context):
     result = {}
     total = 0
     context.mkdir(mode=0o700)
+    def public_context_mode(path, mode, directory=False):
+        need(path != context and path.is_relative_to(context) and path.resolve(strict=True) == path, 'SOURCE')
+        flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | (os.O_DIRECTORY if directory else 0)
+        fd = os.open(path, flags)
+        try:
+            first = os.fstat(fd)
+            need(first.st_uid == UID and (stat.S_ISDIR(first.st_mode) if directory else
+                 stat.S_ISREG(first.st_mode) and first.st_nlink == 1) and
+                 info_identity(first) == info_identity(path.lstat()), 'SOURCE')
+            os.fchmod(fd, mode)
+            last = os.fstat(fd)
+            need((last.st_dev,last.st_ino,last.st_uid,last.st_gid) ==
+                 (first.st_dev,first.st_ino,first.st_uid,first.st_gid) and
+                 stat.S_IMODE(last.st_mode) == mode and info_identity(last) == info_identity(path.lstat()), 'SOURCE')
+        finally:
+            os.close(fd)
     for name in sorted(names):
         pieces = name.split('/')
         need(not name.startswith('/') and '..' not in pieces and
@@ -655,8 +688,14 @@ def source_context(checkout, context):
         need(total <= 128 * 1048576, 'SOURCE')
         target = context / name
         target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        for directory in target.parents:
+            if directory == context: break
+            public_context_mode(directory, 0o755, True)
         write_new(target, raw, 0o400)
+        public_context_mode(target, 0o444)
         result[name] = {'sha256': digest(raw), 'bytes': len(raw)}
+    need(context.resolve(strict=True) == context and context.lstat().st_uid == UID and
+         stat.S_IMODE(context.lstat().st_mode) == 0o700, 'SOURCE')
     required = {'integrations/sycope/Dockerfile', 'integrations/sycope/pyproject.toml',
                 'integrations/sycope/uv.lock', 'integrations/sycope/.python-version', '.dockerignore'}
     need(required <= set(result), 'SOURCE')
@@ -2031,6 +2070,50 @@ def emit_validation_guard(guard):
         pass
 
 
+def sdk_runtime_result(code, stdout, stderr):
+    need(type(code) is int and code == 0 and type(stdout) is bytes and len(stdout) <= 1048576 and
+         type(stderr) is bytes and len(stderr) <= 2097152, 'SCANNER')
+    need(stdout.splitlines().count(b'SDK_IMPORTS_OK') == 1, 'SCANNER')
+    counts = [int(value) for value in re.findall(rb'^Ran ([0-9]{1,3}) tests? in [0-9]+(?:\.[0-9]+)?s$', stderr, re.M)]
+    need(counts == [4, 14, 18] and len(re.findall(rb'^OK$', stderr, re.M)) == 3 and
+         re.search(rb'^(?:FAILED|FAIL:|ERROR:|UNEXPECTED SUCCESS:)', stderr, re.M) is None and
+         re.search(rb'\.\.\. (?:skipped|expected failure|unexpected success)', stderr) is None, 'SCANNER')
+    return {'suites':3,'methods':sum(counts)}
+
+
+def run_sdk_runtime_controls():
+    complete = b'Ran 4 tests in 0.001s\n\nOK\nRan 14 tests in 0.002s\n\nOK\nRan 18 tests in 0.003s\n\nOK\n'
+    cases = ((0,complete,False),(0,complete.split(b'Ran 18')[0],True),
+             (0,complete.replace(b'OK\n',b'OK (skipped=1)\n',1),True),
+             (1,complete.replace(b'OK\n',b'FAILED (failures=1)\n',1),True))
+    count = 0
+    for code, stderr, rejected in cases:
+        try: result = sdk_runtime_result(code,b'SDK_IMPORTS_OK\n',stderr)
+        except Failure as error:
+            need(rejected and type(error) is Failure and error.code == 'SCANNER','INTERNAL')
+        else:
+            need(not rejected and result == {'suites':3,'methods':36},'INTERNAL')
+        count += 1
+    return {'status':'PASS','case_count':count,'passed':count,'failed':0}
+
+
+def run_sdk_image_runtime(image):
+    intent = None
+    try:
+        intent, cid = create_container(image,list(SDK_RUNTIME_ARGV),[],network='none',sdk_runtime=True)
+        code, stdout, stderr, _elapsed = cli(['docker','start','--attach',cid],120,allow_exit=True)
+        row = inspect_container(cid)
+        need(row['Image'] == image and row['State']['Running'] is False and row['State']['Pid'] == 0 and
+             row['State']['OOMKilled'] is False and row['State'].get('Error','') == '' and
+             type(row['State']['ExitCode']) is int and row['State']['ExitCode'] == code,'SCANNER')
+        proof = sdk_runtime_result(code,stdout,stderr)
+    finally:
+        if intent is not None: retire(intent)
+    need(intent is not None and intent['closed'] is True and not CANCELLED and not UNCERTAIN,'SCANNER')
+    print(json.dumps({'scope':'C04_SDK_IMAGE_RUNTIME_ONLY','status':'PASS','suites':proof['suites'],
+                      'methods':proof['methods'],'cleanup':True},sort_keys=True),flush=True)
+
+
 def main():
     global ENV, END, WORK_END, DOCKER, UID, GID, PHASE, UNCERTAIN
     UID, GID = os.getuid(), os.getgid()
@@ -2064,6 +2147,7 @@ def main():
         selector_controls = run_metadata_selector_controls()
         diagnostic_controls = run_scanner_diagnostic_controls()
         os_diagnostic_controls = run_os_diagnostic_controls()
+        sdk_runtime_controls = run_sdk_runtime_controls()
         runner = Path(os.environ['RUNNER_TEMP']).resolve(strict=True)
         checkout = Path(os.environ['GITHUB_WORKSPACE']).resolve(strict=True)
         need(runner.is_dir() and not runner.is_symlink() and not runner.is_relative_to(checkout), 'BOOTSTRAP')
@@ -2118,7 +2202,7 @@ def main():
                       for name,value in (('reducer',controls),('capture',host_controls),('witness',witness_controls),
                       ('metadata_selector',selector_controls),('physical_tar',physical_controls),
                       ('archive_auth',archive_controls),('scanner_diagnostic',diagnostic_controls),
-                      ('os_diagnostic',os_diagnostic_controls))}},
+                      ('os_diagnostic',os_diagnostic_controls),('sdk_runtime_admission',sdk_runtime_controls))}},
             sort_keys=True), flush=True)
         archive_checkpoint('UNOBSERVED')
         PHASE = 'TOOL'
@@ -2189,6 +2273,7 @@ def main():
             bounded_json_size(evidence)
         finally:
             retire(witness_intent)
+        run_sdk_image_runtime(image['Id'])
         PHASE = 'SCANNER'
         cli(['docker', 'pull', '--platform', 'linux/amd64', 'aquasec/trivy:0.57.1'], 120)
         tool = image_info('aquasec/trivy:0.57.1')['Id']
