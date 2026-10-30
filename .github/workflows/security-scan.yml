@@ -31,7 +31,12 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install SAST dependencies
-        run: docker pull ghcr.io/gitleaks/gitleaks:v8.30.0
+        run: |
+          docker pull ghcr.io/gitleaks/gitleaks:v8.30.0
+          if ! command -v sqlite3 >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends sqlite3
+          fi
 
       - name: Secret scan (Gitleaks)
         run: |
@@ -44,6 +49,9 @@ jobs:
             --report-path /repo/security-reports/gitleaks.sarif \
             --redact \
             --exit-code 1
+
+      - name: Backup and restore safety regressions
+        run: python3 -I -B -m unittest discover -v -s scripts -p test_backup_restore.py
 
       - name: Rust fmt check
         run: cargo fmt --all -- --check
