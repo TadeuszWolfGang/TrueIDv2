@@ -5,4 +5,6 @@ Description=TrueID Database Backup
 Type=oneshot
 User=trueid
 WorkingDirectory=/opt/trueid
+EnvironmentFile=/opt/trueid/.env
+UMask=0077
 ExecStart=/opt/trueid/scripts/backup.sh /opt/trueid/backups
