@@ -5677,15 +5677,31 @@ async fn test_rate_limit_usage_tracking() {
             .expect("execute request failed");
         assert_eq!(resp.status(), StatusCode::OK);
     }
-    let (status, usage) = auth_get(
-        &app,
-        &cookie,
-        &format!("/api/v2/api-keys/{key_id}/usage?days=1"),
-    )
+    // Usage is persisted by detached tasks after each API response.
+    let mut usage = json!({});
+    let mut total = 0;
+    let polling = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let (status, body) = auth_get(
+                &app,
+                &cookie,
+                &format!("/api/v2/api-keys/{key_id}/usage?days=1"),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            usage = body;
+            total = usage["total_requests_7d"].as_i64().unwrap_or(0);
+            if total >= 5 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+    })
     .await;
-    assert_eq!(status, StatusCode::OK);
-    let total = usage["total_requests_7d"].as_i64().unwrap_or(0);
-    assert!(total >= 5, "expected at least 5 requests, got {total}");
+    assert!(
+        polling.is_ok() && total >= 5,
+        "expected at least 5 requests within 5 seconds, got {total}, body: {usage}"
+    );
 }
 
 #[tokio::test]
