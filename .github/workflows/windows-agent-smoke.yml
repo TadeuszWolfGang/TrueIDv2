@@ -21,10 +21,20 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Run net-identity-agent tests on Windows
-        run: cargo test -p net-identity-agent
+        run: cargo test --locked -p net-identity-agent
 
       - name: Build release agent binary
-        run: cargo build --release -p net-identity-agent
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (Test-Path -LiteralPath 'target/release' -ErrorAction Stop) {
+            throw 'Release output directory must be absent before the fresh build.'
+          }
+          if ((Test-Path Env:CARGO_TARGET_DIR) -or (Test-Path Env:CARGO_BUILD_TARGET)) {
+            throw 'Unexpected Cargo output or target override.'
+          }
+          cargo build --locked --release -p net-identity-agent
+          if ($LASTEXITCODE -ne 0) { throw 'Agent release build failed.' }
 
       - name: Create dry-run config
         shell: pwsh
@@ -50,8 +60,11 @@ jobs:
           '@ | Set-Content -Path "$env:RUNNER_TEMP\\agent-config.toml" -Encoding ASCII
 
       - name: Smoke run release binary in dry-run mode
+        id: agent_smoke
+        timeout-minutes: 1
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
           $stdout = "$env:RUNNER_TEMP\\agent-stdout.log"
           $stderr = "$env:RUNNER_TEMP\\agent-stderr.log"
           $process = Start-Process `
@@ -61,11 +74,41 @@ jobs:
             -RedirectStandardError $stderr `
             -PassThru
 
-          Start-Sleep -Seconds 3
-
-          if (-not $process.HasExited) {
-            Stop-Process -Id $process.Id -Force
+          $ownedHandle = $null
+          $settled = $false
+          $stopRequested = $false
+          $termination = $null
+          $nativeExit = $null
+          try {
+            $ownedHandle = $process.SafeHandle
+            if ($null -eq $ownedHandle -or $ownedHandle.IsInvalid -or $ownedHandle.IsClosed) { throw 'Owned process handle unavailable.' }
+            if ($process.WaitForExit(3000) -or $process.HasExited) {
+              $settled = $true
+              $nativeExit = $process.ExitCode
+              if ($nativeExit -ne 0) { throw 'Dry-run exited naturally with nonzero status.' }
+              $termination = 'NATURAL_ZERO'
+            } else {
+              $termination = 'STOP_REQUESTED_SETTLED_SENTINEL'
+              $stopRequested = $true
+              $process.Kill()
+              if (-not $process.WaitForExit(5000)) { throw 'Own dry-run process did not settle after stop.' }
+              $settled = $true
+              $nativeExit = $process.ExitCode
+              if ($nativeExit -isnot [int] -or $nativeExit -ne -1) { throw 'Stop request did not yield the expected Windows termination sentinel.' }
+            }
+          } finally {
+            try {
+              if (-not $settled) {
+                if ($null -eq $ownedHandle -or $ownedHandle.IsInvalid -or $ownedHandle.IsClosed) { throw 'Own dry-run closure is unknown.' }
+                if (-not $process.HasExited -and -not $stopRequested) {
+                  $stopRequested = $true
+                  $process.Kill()
+                }
+                if (-not $process.WaitForExit(5000)) { throw 'Own dry-run cleanup failed.' }
+              }
+            } finally { $process.Dispose() }
           }
+          if (-not $settled) { throw 'Own dry-run closure was not accepted.' }
 
           $output = @()
           if (Test-Path $stdout) { $output += Get-Content $stdout }
@@ -79,6 +122,8 @@ jobs:
           if ($joined -notmatch "Dry-run complete") {
             throw "Dry-run output missing completion marker. Output:`n$joined"
           }
+          $public = 'termination=' + $termination + "`nnative_exit_code=" + $nativeExit.ToString([Globalization.CultureInfo]::InvariantCulture) + "`nprocess_closed=true`n"
+          [IO.File]::AppendAllText($env:GITHUB_OUTPUT, $public, [Text.UTF8Encoding]::new($false))
 
       - name: Verify PowerShell helper syntax
         shell: pwsh
@@ -94,3 +139,137 @@ jobs:
             $errors | ForEach-Object { Write-Error $_ }
             throw "PowerShell helper contains parse errors."
           }
+
+      - name: Prepare checked Windows agent artifact
+        id: agent_artifact
+        if: ${{ success() }}
+        timeout-minutes: 5
+        shell: pwsh
+        env:
+          TRUEID_ARTIFACT_RUN_ID: ${{ github.run_id }}
+          TRUEID_ARTIFACT_RUN_ATTEMPT: ${{ github.run_attempt }}
+          TRUEID_SMOKE_TERMINATION: ${{ steps.agent_smoke.outputs.termination }}
+          TRUEID_SMOKE_EXIT: ${{ steps.agent_smoke.outputs.native_exit_code }}
+          TRUEID_SMOKE_CLOSED: ${{ steps.agent_smoke.outputs.process_closed }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Plain([string]$path, [bool]$directory) {
+            $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
+            if ($item.PSIsContainer -ne $directory -or
+                ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+              throw 'Artifact input must be an ordinary file or directory.'
+            }
+            return $item
+          }
+          function Write-New([string]$path, [byte[]]$bytes) {
+            $file = [IO.File]::Open($path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+            try { $file.Write($bytes, 0, $bytes.Length); $file.Flush($true) }
+            finally { $file.Dispose() }
+          }
+          $runId = $env:TRUEID_ARTIFACT_RUN_ID
+          $attempt = $env:TRUEID_ARTIFACT_RUN_ATTEMPT
+          $smokeKind = $env:TRUEID_SMOKE_TERMINATION
+          $smokeExitText = $env:TRUEID_SMOKE_EXIT
+          $smokeExit = 0
+          if ($env:TRUEID_SMOKE_CLOSED -cne 'true' -or $smokeKind -cnotin @('NATURAL_ZERO', 'STOP_REQUESTED_SETTLED_SENTINEL') -or
+              $smokeExitText -cnotmatch '^-?(0|[1-9][0-9]{0,9})$' -or
+              -not [int]::TryParse($smokeExitText, [ref]$smokeExit) -or
+              ($smokeKind -ceq 'NATURAL_ZERO' -and $smokeExit -ne 0) -or
+              ($smokeKind -ceq 'STOP_REQUESTED_SETTLED_SENTINEL' -and ($smokeExit -ne -1 -or $smokeExitText -cne '-1'))) { throw 'Dry-run settlement receipt is invalid.' }
+          if ($runId -cnotmatch '^[1-9][0-9]{0,19}$' -or $attempt -cnotmatch '^[1-9][0-9]{0,8}$') {
+            throw 'Invalid public run identity.'
+          }
+          $commit = @(git rev-parse --verify HEAD)
+          if ($LASTEXITCODE -ne 0 -or $commit.Count -ne 1 -or $commit[0] -cnotmatch '^[0-9a-f]{40}$') { throw 'Checkout commit unavailable.' }
+          $commit = $commit[0]
+          $tree = @(git rev-parse --verify 'HEAD^{tree}')
+          if ($LASTEXITCODE -ne 0 -or $tree.Count -ne 1 -or $tree[0] -cnotmatch '^[0-9a-f]{40}$') { throw 'Checkout tree unavailable.' }
+          $tree = $tree[0]
+          git diff --quiet --no-ext-diff HEAD --
+          if ($LASTEXITCODE -ne 0) { throw 'Tracked checkout differs from the recorded commit.' }
+          $rustc = @(rustc --version --verbose)
+          if ($LASTEXITCODE -ne 0 -or $rustc.Count -gt 16 -or
+              $rustc[0] -cnotmatch '^rustc 1\.95\.0 \([0-9a-f]+ [0-9]{4}-[0-9]{2}-[0-9]{2}\)$') { throw 'Compiler metadata unavailable.' }
+          $hosts = @($rustc | Where-Object { $_ -clike 'host: *' })
+          $releases = @($rustc | Where-Object { $_ -clike 'release: *' })
+          if ($hosts.Count -ne 1 -or $hosts[0] -cne 'host: x86_64-pc-windows-msvc' -or
+              $releases.Count -ne 1 -or $releases[0] -cne 'release: 1.95.0') { throw 'Unexpected native compiler host or release.' }
+          $active = @(rustup show active-toolchain)
+          if ($LASTEXITCODE -ne 0 -or $active.Count -ne 1 -or
+              $active[0] -cnotmatch '^(1\.95\.0-x86_64-pc-windows-msvc)(?:\s|$)') { throw 'Unexpected active toolchain.' }
+          $toolchain = $Matches[1]
+          $cargo = @(cargo --version)
+          if ($LASTEXITCODE -ne 0 -or $cargo.Count -ne 1 -or
+              $cargo[0] -cnotmatch '^cargo 1\.95\.0 \([0-9a-f]+ [0-9]{4}-[0-9]{2}-[0-9]{2}\)$') { throw 'Unexpected Cargo metadata.' }
+          $powershellVersion = $PSVersionTable.PSVersion.ToString()
+          $dotnetFramework = [Runtime.InteropServices.RuntimeInformation]::FrameworkDescription
+          if ($powershellVersion -cnotmatch '\A[ -~]{1,64}\z' -or $dotnetFramework -cnotmatch '\A[ -~]{1,128}\z') { throw 'Unexpected public runtime metadata.' }
+          $null = Plain (Get-Location).ProviderPath $true
+          $null = Plain 'target' $true
+          $release = Plain 'target/release' $true
+          $binary = Plain (Join-Path $release.FullName 'net-identity-agent.exe') $false
+          if ($binary.Length -le 0) { throw 'Empty agent output.' }
+          $lock = Plain 'Cargo.lock' $false
+          $lockSha = (Get-FileHash -LiteralPath $lock.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $temp = Plain $env:RUNNER_TEMP $true
+          if ($temp.FullName -match '[\r\n\[\]*?]') { throw 'Unexpected artifact parent path.' }
+          $artifactName = 'trueid-agent-windows-x86_64-{0}-{1}-{2}' -f $runId, $attempt, $commit
+          $stage = Join-Path $temp.FullName $artifactName
+          if (Test-Path -LiteralPath $stage -ErrorAction Stop) { throw 'Artifact staging collision.' }
+          $null = New-Item -Path $stage -ItemType Directory -ErrorAction Stop
+          $null = Plain $stage $true
+          $stagedBinary = Join-Path $stage 'net-identity-agent.exe'
+          $inputFile = [IO.File]::Open($binary.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+          $sha = [Security.Cryptography.SHA256]::Create()
+          try {
+            $size = $inputFile.Length
+            if ($size -ne $binary.Length) { throw 'Agent output changed.' }
+            $exeSha = [Convert]::ToHexString($sha.ComputeHash($inputFile)).ToLowerInvariant()
+            $inputFile.Position = 0
+            $outputFile = [IO.File]::Open($stagedBinary, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+            try { $inputFile.CopyTo($outputFile); $outputFile.Flush($true) }
+            finally { $outputFile.Dispose() }
+            $inputFile.Position = 0
+            if ([Convert]::ToHexString($sha.ComputeHash($inputFile)).ToLowerInvariant() -cne $exeSha) { throw 'Agent output hash drift.' }
+          } finally { $sha.Dispose(); $inputFile.Dispose() }
+          $copy = Plain $stagedBinary $false
+          if ($copy.Length -ne $size -or (Get-FileHash -LiteralPath $stagedBinary -Algorithm SHA256).Hash.ToLowerInvariant() -cne $exeSha) { throw 'Staged binary mismatch.' }
+          $receipt = [ordered]@{
+            schema_version = 1; purpose = 'ci-build-candidate-only'
+            checkout_commit = $commit; checkout_tree = $tree; cargo_lock_sha256 = $lockSha
+            rustc_version = $rustc[0]; rustc_release = '1.95.0'; rustc_host = 'x86_64-pc-windows-msvc'; active_toolchain = $toolchain
+            cargo_version = $cargo[0]; build_target = 'x86_64-pc-windows-msvc'; target_mode = 'native-host-default'
+            run_id = $runId; run_attempt = $attempt
+            binary_name = 'net-identity-agent.exe'; binary_bytes = $size; binary_sha256 = $exeSha
+            dry_run_termination = $smokeKind; dry_run_native_exit = $smokeExit; dry_run_process_closed = $true
+            successful_native_zero_proven = ($smokeKind -ceq 'NATURAL_ZERO'); termination_cause_proven = $false; graceful_exit_proven = $false
+            powershell_version = $powershellVersion; dotnet_framework_description = $dotnetFramework; runtime_implementation_identity_proven = $false
+            signing_verified = $false; reproducible_build_proven = $false; deployment_compatibility_proven = $false
+          }
+          $utf8 = [Text.UTF8Encoding]::new($false)
+          Write-New (Join-Path $stage 'agent-build-receipt.json') ($utf8.GetBytes(($receipt | ConvertTo-Json -Depth 3 -Compress) + "`n"))
+          Write-New (Join-Path $stage 'SHA256SUMS.txt') ($utf8.GetBytes($exeSha + '  net-identity-agent.exe' + "`n"))
+          $entries = @(Get-ChildItem -LiteralPath $stage -Force)
+          $expected = @('SHA256SUMS.txt', 'agent-build-receipt.json', 'net-identity-agent.exe') | Sort-Object -CaseSensitive
+          if ($entries.Count -ne 3 -or (@($entries.Name | Sort-Object -CaseSensitive) -join "`n") -cne ($expected -join "`n")) { throw 'Unexpected artifact file set.' }
+          foreach ($entry in $entries) { $null = Plain $entry.FullName $false }
+          git diff --quiet --no-ext-diff HEAD --
+          if ($LASTEXITCODE -ne 0 -or (Get-FileHash -LiteralPath $lock.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -cne $lockSha) { throw 'Checkout or Cargo.lock drift.' }
+          [IO.File]::AppendAllText($env:GITHUB_OUTPUT, 'directory=' + $stage + "`nname=" + $artifactName + "`n", $utf8)
+
+      - name: Retain checked Windows agent build
+        if: ${{ success() && steps.agent_artifact.outcome == 'success' }}
+        timeout-minutes: 5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.agent_artifact.outputs.name }}
+          path: |
+            ${{ steps.agent_artifact.outputs.directory }}/net-identity-agent.exe
+            ${{ steps.agent_artifact.outputs.directory }}/SHA256SUMS.txt
+            ${{ steps.agent_artifact.outputs.directory }}/agent-build-receipt.json
+          archive: 'true'
+          retention-days: 7
+          if-no-files-found: error
+          overwrite: 'false'
+          include-hidden-files: 'false'
+          compression-level: 6
