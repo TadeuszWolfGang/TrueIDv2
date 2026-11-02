@@ -11,10 +11,9 @@
 
 If you discover a security vulnerability in TrueID, **please do not open a public issue.**
 
-Instead, report it privately:
-
-1. **GitHub Security Advisories** (preferred): Use the "Report a vulnerability" button on the [Security tab](../../security/advisories) of this repository.
-2. **Email**: Send details to **security@trueid.dev** (or update this with your preferred contact).
+Report it privately through [GitHub Security Advisories](https://github.com/TadeuszWolfGang/TrueIDv2/security/advisories).
+Click **Report a vulnerability** and submit the report to the repository maintainers.
+You must be signed in to GitHub to use this private reporting channel.
 
 ### What to include
 
