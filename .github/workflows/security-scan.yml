@@ -34,8 +34,11 @@ jobs:
         run: |
           docker pull ghcr.io/gitleaks/gitleaks:v8.30.0
           if ! command -v sqlite3 >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends sqlite3
+            # Runner DNS blips used to redden the daily scan: apt has no retry of
+            # its own, so bound the retries inside apt itself (DNS + fetch retries).
+            sudo apt-get update -o Acquire::Retries=5 -o Acquire::http::Timeout=15
+            sudo apt-get install -y --no-install-recommends \
+              -o Acquire::Retries=5 -o Acquire::http::Timeout=15 sqlite3
           fi
 
       - name: Secret scan (Gitleaks)
@@ -146,8 +149,10 @@ jobs:
 
       - name: Install DAST dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y nmap
+          # See the SAST job note: retry transient DNS/mirror failures in apt.
+          sudo apt-get update -o Acquire::Retries=5 -o Acquire::http::Timeout=15
+          sudo apt-get install -y \
+            -o Acquire::Retries=5 -o Acquire::http::Timeout=15 nmap
           python3 -m pip install --upgrade pip
           python3 -m pip install schemathesis
           docker pull ghcr.io/zaproxy/zaproxy:stable
