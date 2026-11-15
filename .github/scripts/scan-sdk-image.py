@@ -646,7 +646,7 @@ def source_base_profile(dockerfile):
     need(type(dockerfile) is str, 'SOURCE')
     approved = (
         'FROM python:3.11-slim@sha256:673719e071ecf27434fd2635bbd8d00f49f4fdd81f243143438a42ced8bedf60',
-        'FROM python:3.11-alpine@sha256:09d17d5e4c16d0a7a1eea690bcb7c6ab8616b211f8421e429e97c1bef5bd0ed2',
+        'FROM python:3.11-alpine@sha256:df7ed6319aeb5ac2961e986902ed6557b788e37f0b8409f358eed9e84de9a87f',
     )
     from_lines = [line for line in dockerfile.split('\n')
                   if re.match(r'(?i)^\s*FROM(?:\s|$)', line) is not None]
@@ -655,7 +655,7 @@ def source_base_profile(dockerfile):
 
 def run_source_base_controls():
     debian = 'FROM python:3.11-slim@sha256:673719e071ecf27434fd2635bbd8d00f49f4fdd81f243143438a42ced8bedf60'
-    alpine = 'FROM python:3.11-alpine@sha256:09d17d5e4c16d0a7a1eea690bcb7c6ab8616b211f8421e429e97c1bef5bd0ed2'
+    alpine = 'FROM python:3.11-alpine@sha256:df7ed6319aeb5ac2961e986902ed6557b788e37f0b8409f358eed9e84de9a87f'
     suffix = '\nCOPY --from=ghcr.io/astral-sh/uv:0.12.8 /uv /uvx /bin/\n'
     cases = (
         ('approved-debian', debian + suffix, False),
