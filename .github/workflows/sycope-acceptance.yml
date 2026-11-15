@@ -619,9 +619,9 @@ jobs:
           def ci_fixture_recipe(raw):
               need(type(raw) is bytes and len(raw) in (1422, 1424), 'CI_FIXTURE_SOURCE')
               source_sha = hashlib.sha256(raw).hexdigest()
-              alpine = b'FROM python:3.11-alpine@sha256:09d17d5e4c16d0a7a1eea690bcb7c6ab8616b211f8421e429e97c1bef5bd0ed2\n'
+              alpine = b'FROM python:3.11-alpine@sha256:769f2b47fc4722cc68ce31b9629672b2253919ce8286197c9d4fec7bf44c9ae5\n'
               debian = b'FROM python:3.11-slim@sha256:673719e071ecf27434fd2635bbd8d00f49f4fdd81f243143438a42ced8bedf60\n'
-              if source_sha == '1534d7edfdefb1bbc465f44cef038ff0bf18fed978f18b78ca599e7b38d85d1c':
+              if source_sha == '059a15470300f34cce25780c2bc16e237a567702ad668110d8eed1879492bef9':
                   need(raw.count(alpine) == 1 and raw.count(debian) == 0, 'CI_FIXTURE_SOURCE')
                   recipe = raw.replace(alpine, debian, 1)
               else:
