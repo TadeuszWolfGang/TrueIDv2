@@ -75,7 +75,7 @@ def ci_fixture_read(path):
         before = os.fstat(fd)
         need(stat.S_ISREG(before.st_mode) and before.st_uid == os.geteuid() and
              before.st_nlink == 1 and stat.S_IMODE(before.st_mode) == 0o444 and
-             before.st_size in (1422, 1424), 'CI_FIXTURE_FILE')
+             before.st_size in (1665, 1667), 'CI_FIXTURE_FILE')
         raw = os.read(fd, 4097)
         identity = lambda value: (value.st_dev, value.st_ino, value.st_uid, value.st_gid,
                                   value.st_mode, value.st_nlink, value.st_size,
@@ -88,19 +88,19 @@ def ci_fixture_read(path):
 
 
 def ci_fixture_recipe(raw):
-    need(type(raw) is bytes and len(raw) in (1422, 1424), 'CI_FIXTURE_SOURCE')
+    need(type(raw) is bytes and len(raw) in (1665, 1667), 'CI_FIXTURE_SOURCE')
     source_sha = hashlib.sha256(raw).hexdigest()
-    alpine = b'FROM python:3.11-alpine@sha256:09d17d5e4c16d0a7a1eea690bcb7c6ab8616b211f8421e429e97c1bef5bd0ed2\n'
+    alpine = b'FROM python:3.11-alpine@sha256:769f2b47fc4722cc68ce31b9629672b2253919ce8286197c9d4fec7bf44c9ae5\n'
     debian = b'FROM python:3.11-slim@sha256:673719e071ecf27434fd2635bbd8d00f49f4fdd81f243143438a42ced8bedf60\n'
-    if source_sha == '1534d7edfdefb1bbc465f44cef038ff0bf18fed978f18b78ca599e7b38d85d1c':
+    if source_sha == '9c3014a2bb28d379f53e25e58fbe47c69411807bbf6ce0b35c1004b740a34bdc':
         need(raw.count(alpine) == 1 and raw.count(debian) == 0, 'CI_FIXTURE_SOURCE')
         recipe = raw.replace(alpine, debian, 1)
     else:
-        need(source_sha == '2101be4a4970e1e15eb4e272a50a1ff38c5b71f1556b5fd6eba6d64647ad0ad7' and
+        need(source_sha == '6fb4813edcdcaaed0cf295b1001c16466b3dd13894ddadf793764c18d5150725' and
              raw.count(debian) == 1 and raw.count(alpine) == 0, 'CI_FIXTURE_SOURCE')
         recipe = raw
     need(hashlib.sha256(recipe).hexdigest() ==
-         '2101be4a4970e1e15eb4e272a50a1ff38c5b71f1556b5fd6eba6d64647ad0ad7', 'CI_FIXTURE_RECIPE')
+         '6fb4813edcdcaaed0cf295b1001c16466b3dd13894ddadf793764c18d5150725', 'CI_FIXTURE_RECIPE')
     return recipe
 
 
