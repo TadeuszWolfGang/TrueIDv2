@@ -122,7 +122,19 @@ pub async fn create_key(
 
     let expires_at = body
         .expires_in_days
-        .map(|days| chrono::Utc::now() + chrono::Duration::days(days));
+        .map(|days| {
+            chrono::Duration::try_days(days)
+                .and_then(|duration| chrono::Utc::now().checked_add_signed(duration))
+                .ok_or_else(|| {
+                    ApiError::new(
+                        StatusCode::BAD_REQUEST,
+                        error::INVALID_INPUT,
+                        "expires_in_days is out of range",
+                    )
+                    .with_request_id(&auth.request_id)
+                })
+        })
+        .transpose()?;
 
     let (raw_key, record) = db
         .create_api_key(

@@ -1,0 +1,658 @@
+name: live-auth-acceptance
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-auth-acceptance-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  producer:
+    name: live auth acceptance (producer-only)
+    runs-on: ubuntu-26.04
+    timeout-minutes: 120
+    steps:
+      - id: checkout
+        name: Checkout (persist-credentials=false)
+        timeout-minutes: 2
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - id: buildx
+        name: Docker Buildx (driver docker)
+        timeout-minutes: 2
+        uses: docker/setup-buildx-action@v4
+        with:
+          driver: docker
+
+      - id: prepare
+        name: Canonical source, private directories and saved identity
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 -I -B - <<'PY_PREPARE'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import stat
+
+
+          def _wf_need(ok):
+              if not ok:
+                  raise RuntimeError("LIVE_AUTH_WORKFLOW_INPUT_REJECTED")
+
+
+          def _wf_checked(path, sha256=None, cap=1048576):
+              path = Path(path)
+              _wf_need(path.is_absolute() and path.resolve(strict=True) == path)
+              fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC)
+              try:
+                  before = os.fstat(fd)
+                  _wf_need(stat.S_ISREG(before.st_mode) and before.st_nlink == 1 and
+                       before.st_uid == os.geteuid() and 0 < before.st_size <= cap)
+                  chunks = []
+                  count = 0
+                  while True:
+                      chunk = os.read(fd, min(65536, cap + 1 - count))
+                      if not chunk:
+                          break
+                      chunks.append(chunk)
+                      count += len(chunk)
+                      _wf_need(count <= cap)
+                  after = os.fstat(fd)
+                  fields = lambda s: (s.st_dev, s.st_ino, s.st_mode, s.st_uid, s.st_gid,
+                                      s.st_nlink, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
+                  _wf_need(fields(before) == fields(after) == fields(path.lstat()) and count == before.st_size)
+                  raw = b"".join(chunks)
+                  _wf_need(sha256 is None or hashlib.sha256(raw).hexdigest() == sha256)
+                  return raw
+              finally:
+                  os.close(fd)
+
+
+          def _wf_output(items):
+              allowed = {"source-root", "report-dir", "report-identity", "source-sha256", "home", "tmp-dir", "has-artifacts", "qualification-passed", "artifact-path"}
+              fd = os.open(os.environ["GITHUB_OUTPUT"], os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC)
+              try:
+                  for name, value in items.items():
+                      _wf_need(name in allowed and type(value) is str and "\n" not in value and "\r" not in value)
+                      raw = (name + "=" + value + "\n").encode()
+                      _wf_need(os.write(fd, raw) == len(raw))
+              finally:
+                  os.close(fd)
+
+
+          def _wf_source_pin():
+              root = Path(os.environ["SOURCE_ROOT"])
+              expected = os.environ["SOURCE_SHA256"]
+              _wf_need(root.is_absolute() and root.resolve(strict=True) == root and root.is_dir() and
+                       type(expected) is str and len(expected) == 64 and set(expected) <= set("0123456789abcdef"))
+              _wf_checked(root / "scripts/ci-live-auth-acceptance.py", expected, cap=16777216)
+              return root
+
+
+          import tempfile
+
+          os.umask(0o077)
+          source = Path(os.environ["GITHUB_WORKSPACE"]).resolve(strict=True)
+          runner_temp = Path(os.environ["RUNNER_TEMP"]).resolve(strict=True)
+          home = Path(os.environ["HOME"])
+          _wf_need(source.is_dir() and runner_temp.is_dir() and home.is_absolute() and home.is_dir())
+          _wf_need(not runner_temp.is_relative_to(source))
+          raw = _wf_checked(source / "scripts/ci-live-auth-acceptance.py", cap=16777216)
+          private = Path(tempfile.mkdtemp(prefix="trueid-live-auth-", dir=runner_temp))
+          reports, temporary = private / "reports", private / "tmp"
+          reports.mkdir(mode=0o700)
+          temporary.mkdir(mode=0o700)
+          _wf_need(private.resolve(strict=True) == private and reports.resolve(strict=True) == reports and
+                   not reports.is_relative_to(source))
+          info = reports.lstat()
+          _wf_need(stat.S_ISDIR(info.st_mode) and stat.S_IMODE(info.st_mode) == 0o700 and info.st_uid == os.geteuid())
+          identity = {"device": info.st_dev, "inode": info.st_ino, "uid": info.st_uid}
+          # GITHUB_OUTPUT is outside the report directory and exists before the producer starts.
+          output_path = Path(os.environ["GITHUB_OUTPUT"]).resolve(strict=True)
+          _wf_need(not output_path.is_relative_to(reports) and not output_path.is_relative_to(source))
+          _wf_output({"source-root": str(source), "report-dir": str(reports),
+                      "report-identity": json.dumps(identity, sort_keys=True, separators=(",", ":")),
+                      "source-sha256": hashlib.sha256(raw).hexdigest(), "home": str(home), "tmp-dir": str(temporary)})
+          PY_PREPARE
+
+      - id: producer
+        name: Run producer (single invocation)
+        timeout-minutes: 102
+        shell: bash
+        env:
+          SOURCE_ROOT: ${{ steps.prepare.outputs.source-root }}
+          SOURCE_SHA256: ${{ steps.prepare.outputs.source-sha256 }}
+          REPORT_DIR: ${{ steps.prepare.outputs.report-dir }}
+          REPORT_IDENTITY: ${{ steps.prepare.outputs.report-identity }}
+          ORIGINAL_HOME: ${{ steps.prepare.outputs.home }}
+          PRIVATE_TMP: ${{ steps.prepare.outputs.tmp-dir }}
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 -I -B - <<'PY_SOURCE_PRE'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import stat
+
+
+          def _wf_need(ok):
+              if not ok:
+                  raise RuntimeError("LIVE_AUTH_WORKFLOW_INPUT_REJECTED")
+
+
+          def _wf_checked(path, sha256=None, cap=1048576):
+              path = Path(path)
+              _wf_need(path.is_absolute() and path.resolve(strict=True) == path)
+              fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC)
+              try:
+                  before = os.fstat(fd)
+                  _wf_need(stat.S_ISREG(before.st_mode) and before.st_nlink == 1 and
+                       before.st_uid == os.geteuid() and 0 < before.st_size <= cap)
+                  chunks = []
+                  count = 0
+                  while True:
+                      chunk = os.read(fd, min(65536, cap + 1 - count))
+                      if not chunk:
+                          break
+                      chunks.append(chunk)
+                      count += len(chunk)
+                      _wf_need(count <= cap)
+                  after = os.fstat(fd)
+                  fields = lambda s: (s.st_dev, s.st_ino, s.st_mode, s.st_uid, s.st_gid,
+                                      s.st_nlink, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
+                  _wf_need(fields(before) == fields(after) == fields(path.lstat()) and count == before.st_size)
+                  raw = b"".join(chunks)
+                  _wf_need(sha256 is None or hashlib.sha256(raw).hexdigest() == sha256)
+                  return raw
+              finally:
+                  os.close(fd)
+
+
+          def _wf_output(items):
+              allowed = {"source-root", "report-dir", "report-identity", "source-sha256", "home", "tmp-dir", "has-artifacts", "qualification-passed", "artifact-path"}
+              fd = os.open(os.environ["GITHUB_OUTPUT"], os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC)
+              try:
+                  for name, value in items.items():
+                      _wf_need(name in allowed and type(value) is str and "\n" not in value and "\r" not in value)
+                      raw = (name + "=" + value + "\n").encode()
+                      _wf_need(os.write(fd, raw) == len(raw))
+              finally:
+                  os.close(fd)
+
+
+          def _wf_source_pin():
+              root = Path(os.environ["SOURCE_ROOT"])
+              expected = os.environ["SOURCE_SHA256"]
+              _wf_need(root.is_absolute() and root.resolve(strict=True) == root and root.is_dir() and
+                       type(expected) is str and len(expected) == 64 and set(expected) <= set("0123456789abcdef"))
+              _wf_checked(root / "scripts/ci-live-auth-acceptance.py", expected, cap=16777216)
+              return root
+
+
+          os.umask(0o077)
+          _wf_source_pin()
+          PY_SOURCE_PRE
+          set +e
+          env -i \
+            PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            HOME="$ORIGINAL_HOME" LANG=C.UTF-8 TMPDIR="$PRIVATE_TMP" \
+            PYTHONDONTWRITEBYTECODE=1 PYTHONOPTIMIZE=0 \
+            python3 -I -B "$SOURCE_ROOT/scripts/ci-live-auth-acceptance.py" \
+              --source-root "$SOURCE_ROOT" \
+              --report "$REPORT_DIR/producer-summary.json" \
+              --timeout 6000
+          producer_rc=$?
+          set -e
+          PRODUCER_ACTUAL_EXIT="$producer_rc" python3 -I -B - <<'PY_RECEIPT'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import stat
+
+
+          def _wf_need(ok):
+              if not ok:
+                  raise RuntimeError("LIVE_AUTH_WORKFLOW_INPUT_REJECTED")
+
+
+          def _wf_checked(path, sha256=None, cap=1048576):
+              path = Path(path)
+              _wf_need(path.is_absolute() and path.resolve(strict=True) == path)
+              fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC)
+              try:
+                  before = os.fstat(fd)
+                  _wf_need(stat.S_ISREG(before.st_mode) and before.st_nlink == 1 and
+                       before.st_uid == os.geteuid() and 0 < before.st_size <= cap)
+                  chunks = []
+                  count = 0
+                  while True:
+                      chunk = os.read(fd, min(65536, cap + 1 - count))
+                      if not chunk:
+                          break
+                      chunks.append(chunk)
+                      count += len(chunk)
+                      _wf_need(count <= cap)
+                  after = os.fstat(fd)
+                  fields = lambda s: (s.st_dev, s.st_ino, s.st_mode, s.st_uid, s.st_gid,
+                                      s.st_nlink, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
+                  _wf_need(fields(before) == fields(after) == fields(path.lstat()) and count == before.st_size)
+                  raw = b"".join(chunks)
+                  _wf_need(sha256 is None or hashlib.sha256(raw).hexdigest() == sha256)
+                  return raw
+              finally:
+                  os.close(fd)
+
+
+          def _wf_output(items):
+              allowed = {"source-root", "report-dir", "report-identity", "source-sha256", "home", "tmp-dir", "has-artifacts", "qualification-passed", "artifact-path"}
+              fd = os.open(os.environ["GITHUB_OUTPUT"], os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC)
+              try:
+                  for name, value in items.items():
+                      _wf_need(name in allowed and type(value) is str and "\n" not in value and "\r" not in value)
+                      raw = (name + "=" + value + "\n").encode()
+                      _wf_need(os.write(fd, raw) == len(raw))
+              finally:
+                  os.close(fd)
+
+
+          def _wf_source_pin():
+              root = Path(os.environ["SOURCE_ROOT"])
+              expected = os.environ["SOURCE_SHA256"]
+              _wf_need(root.is_absolute() and root.resolve(strict=True) == root and root.is_dir() and
+                       type(expected) is str and len(expected) == 64 and set(expected) <= set("0123456789abcdef"))
+              _wf_checked(root / "scripts/ci-live-auth-acceptance.py", expected, cap=16777216)
+              return root
+
+
+          os.umask(0o077)
+          text = os.environ["PRODUCER_ACTUAL_EXIT"]
+          _wf_need(text.isascii() and text.isdecimal() and str(int(text)) == text)
+          code = int(text)
+          _wf_need(0 <= code <= 255)
+          reports = Path(os.environ["REPORT_DIR"])
+          identity = json.loads(os.environ["REPORT_IDENTITY"])
+          _wf_need(type(identity) is dict and set(identity) == {"device", "inode", "uid"} and
+                   all(type(value) is int and value >= 0 for value in identity.values()))
+          _wf_need(reports.is_absolute() and reports.resolve(strict=True) == reports)
+          fd = os.open(reports, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
+          try:
+              before = os.fstat(fd)
+              _wf_need(stat.S_ISDIR(before.st_mode) and stat.S_IMODE(before.st_mode) == 0o700 and
+                       before.st_uid == os.geteuid() and identity ==
+                       {"device": before.st_dev, "inode": before.st_ino, "uid": before.st_uid})
+              target = os.open("producer.exit", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                               0o600, dir_fd=fd)
+              try:
+                  info = os.fstat(target)
+                  _wf_need(stat.S_ISREG(info.st_mode) and stat.S_IMODE(info.st_mode) == 0o600 and
+                           info.st_uid == os.geteuid() and info.st_nlink == 1 and info.st_dev == before.st_dev)
+                  raw = (str(code) + "\n").encode("ascii")
+                  _wf_need(os.write(target, raw) == len(raw))
+                  os.fsync(target)
+              finally:
+                  os.close(target)
+              after, visible = os.fstat(fd), reports.lstat()
+              _wf_need((before.st_dev, before.st_ino, before.st_uid, before.st_mode) ==
+                       (after.st_dev, after.st_ino, after.st_uid, after.st_mode) ==
+                       (visible.st_dev, visible.st_ino, visible.st_uid, visible.st_mode))
+          finally:
+              os.close(fd)
+          # The receipt records the real producer rc even if a separate source check fails.
+          _wf_source_pin()
+          PY_RECEIPT
+          exit "$producer_rc"
+
+      - id: check
+        name: Safe producer artifact check (always)
+        if: always()
+        timeout-minutes: 1
+        shell: bash
+        env:
+          SOURCE_ROOT: ${{ steps.prepare.outputs.source-root }}
+          SOURCE_SHA256: ${{ steps.prepare.outputs.source-sha256 }}
+          REPORT_DIR: ${{ steps.prepare.outputs.report-dir }}
+          REPORT_IDENTITY: ${{ steps.prepare.outputs.report-identity }}
+          PRODUCER_OUTCOME: ${{ steps.producer.outcome }}
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 -I -B - <<'PY_SAFE'
+          """Passive inline producer-summary reader; no producer/test import or execution.
+
+          Caller precreates the private report directory and saves its real identity before
+          producer execution. Returned strings/names are fixed; parsed data stays private.
+          """
+          import json
+          import math
+          import os
+          from pathlib import Path
+          import re
+          import stat
+          import time
+
+          MAX_JSON_BYTES = 1048576
+          ARTIFACT_NAMES = ('producer-summary.json',)
+          SIDECAR_NAMES = ('producer.exit',)
+          NATIVE_IDENTITIES = ('source_sha256','helper_sha256','runner_sha256','build_manifest_sha256',
+                               'web_sha256','auth_sha256','rbac_sha256','runtime_sha256','build_capture_sha256')
+
+
+          class ArtifactRejected(Exception):
+              """Fixed private failure with no input content or filesystem path."""
+
+
+          def require(value):
+              if not value:
+                  raise ArtifactRejected()
+
+
+          def closed(value, keys):
+              require(type(value) is dict and set(value) == set(keys))
+
+
+          def integer(value, low, high):
+              require(type(value) is int and low <= value <= high)
+              return value
+
+
+          def sha256_text(value):
+              require(type(value) is str and re.fullmatch('[0-9a-f]{64}', value) is not None)
+
+
+          def image_id(value):
+              require(type(value) is str and re.fullmatch('sha256:[0-9a-f]{64}', value) is not None)
+
+
+          def strict_json(raw):
+              require(type(raw) is bytes and 0 < len(raw) <= MAX_JSON_BYTES)
+              def pairs(items):
+                  result = {}
+                  for key, value in items:
+                      require(key not in result)
+                      result[key] = value
+                  return result
+              def constant(_value):
+                  raise ArtifactRejected()
+              value = json.loads(raw.decode('utf-8'), object_pairs_hook=pairs, parse_constant=constant)
+              def walk(item, depth=0):
+                  require(depth <= 16)
+                  if type(item) is str:
+                      require(len(item) <= 4096 and '\0' not in item and
+                              not any(0xD800 <= ord(c) <= 0xDFFF for c in item))
+                  elif type(item) is dict:
+                      require(len(item) <= 128)
+                      for key, child in item.items():
+                          walk(key, depth+1); walk(child, depth+1)
+                  elif type(item) is list:
+                      require(len(item) <= 512)
+                      for child in item: walk(child, depth+1)
+                  elif type(item) in (int, float):
+                      require(math.isfinite(item) and abs(item) <= 2**63-1)
+                  else:
+                      require(item is None or type(item) is bool)
+              walk(value)
+              return value
+
+
+          def validate_producer(value):
+              closed(value, ('schemaVersion','scope','status','category','counts','identities','images','cleanup'))
+              integer(value['schemaVersion'],1,1)
+              require(value['scope'] == 'C03_S4_CI_AUTH_PRODUCER' and value['status'] in ('PASS','FAIL') and
+                      type(value['cleanup']) is bool)
+              passed = value['status'] == 'PASS'
+              if passed:
+                  require(value['category'] == 'ok' and value['cleanup'] is True)
+              else:
+                  require(type(value['category']) is str and re.fullmatch('[A-Z_]{1,64}', value['category']) is not None)
+              absent = all(value[name] is None for name in ('counts','identities','images'))
+              if absent:
+                  require(not passed)
+                  return False
+              require(all(type(value[name]) is dict for name in ('counts','identities','images')))
+              counts = value['counts']
+              closed(counts, ('discovered','selected','attempted','passed','failed','not_run',
+                              'policy_methods','policy_subtests','rust_tls_positive_exit','rust_tls_negative_exit'))
+              n = integer(counts['discovered'],1,256)
+              for key in ('selected','attempted','passed'): integer(counts[key],n,n)
+              integer(counts['failed'],0,0); integer(counts['not_run'],0,0)
+              integer(counts['policy_methods'],1,256); integer(counts['policy_subtests'],1,8192)
+              integer(counts['rust_tls_positive_exit'],0,0); integer(counts['rust_tls_negative_exit'],1,255)
+              identities = value['identities']
+              closed(identities, ('native','native_report_sha256','host_tools_sha256','rust_tls_proof_sha256'))
+              closed(identities['native'],NATIVE_IDENTITIES)
+              for item in identities['native'].values(): sha256_text(item)
+              for key in ('native_report_sha256','host_tools_sha256','rust_tls_proof_sha256'): sha256_text(identities[key])
+              closed(value['images'],('builder','sdk'))
+              image_id(value['images']['builder']); image_id(value['images']['sdk'])
+              require(value['images']['builder'] != value['images']['sdk'])
+              # A late cleanup failure may truthfully preserve complete observed maps.
+              return passed
+
+
+          def metadata(info):
+              return (info.st_dev,info.st_ino,info.st_mode,info.st_uid,info.st_gid,info.st_nlink,
+                      info.st_size,info.st_mtime_ns,info.st_ctime_ns)
+
+
+          def read_file(directory_fd, name, cap, directory_device, host_uid, deadline):
+              require(name in ARTIFACT_NAMES+SIDECAR_NAMES and '/' not in name)
+              require(time.monotonic() < deadline)
+              try:
+                  before = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+              except FileNotFoundError:
+                  return None
+              require(stat.S_ISREG(before.st_mode) and before.st_nlink == 1 and before.st_uid == host_uid and
+                      before.st_dev == directory_device and stat.S_IMODE(before.st_mode) == 0o600 and
+                      0 < before.st_size <= cap)
+              fd = os.open(name, os.O_RDONLY|os.O_NONBLOCK|os.O_NOFOLLOW|os.O_CLOEXEC, dir_fd=directory_fd)
+              try:
+                  require(metadata(os.fstat(fd)) == metadata(before))
+                  chunks = []; count = 0
+                  while True:
+                      require(time.monotonic() < deadline)
+                      raw = os.read(fd, min(65536,cap+1-count))
+                      if not raw: break
+                      count += len(raw); require(count <= cap); chunks.append(raw)
+                  after = os.fstat(fd)
+                  require(metadata(after) == metadata(before) and count == before.st_size)
+                  require(metadata(os.stat(name,dir_fd=directory_fd,follow_symlinks=False)) == metadata(before))
+                  return {'raw':b''.join(chunks),'metadata':metadata(before)}
+              finally:
+                  os.close(fd)
+
+
+          def exit_code(raw):
+              require(type(raw) is bytes and re.fullmatch(rb'(?:0|[1-9][0-9]{0,2})\n?',raw) is not None)
+              return integer(int(raw),0,255)
+
+
+          def present_names(directory_fd):
+              result = set()
+              with os.scandir(directory_fd) as entries:
+                  for entry in entries:
+                      require(len(result) < len(ARTIFACT_NAMES)+len(SIDECAR_NAMES) and entry.name in ARTIFACT_NAMES+SIDECAR_NAMES)
+                      result.add(entry.name)
+              return result
+
+
+          def check_safe_artifacts(*, report_dir, source_root, created_identity, step_outcome):
+              """Producer-only allowlist. Caller must preserve any failed job independently."""
+              denied = {'status':'REJECTED_SAFE_ARTIFACT_INPUT','has-artifacts':False,
+                        'artifact_names':[],'qualification_passed':False}
+              directory_fd = None
+              deadline = time.monotonic()+15
+              try:
+                  require(type(step_outcome) is str and step_outcome in ('success','failure','skipped','cancelled'))
+                  closed(created_identity,('device','inode','uid'))
+                  integer(created_identity['device'],0,2**63-1); integer(created_identity['inode'],1,2**63-1)
+                  integer(created_identity['uid'],os.geteuid(),os.geteuid())
+                  report_dir,source_root = Path(report_dir),Path(source_root)
+                  require(report_dir.is_absolute() and report_dir.resolve(strict=True) == report_dir and
+                          source_root.is_absolute() and source_root.resolve(strict=True) == source_root and source_root.is_dir() and
+                          not report_dir.is_relative_to(source_root))
+                  before = report_dir.lstat(); host_uid = os.geteuid()
+                  require(stat.S_ISDIR(before.st_mode) and stat.S_IMODE(before.st_mode) == 0o700 and before.st_uid == host_uid and
+                          (before.st_dev,before.st_ino,before.st_uid) ==
+                          (created_identity['device'],created_identity['inode'],created_identity['uid']))
+                  directory_fd = os.open(report_dir,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
+                  require(metadata(os.fstat(directory_fd)) == metadata(before) and time.monotonic() < deadline)
+                  present = present_names(directory_fd)
+                  report_name,exit_name = ARTIFACT_NAMES[0],SIDECAR_NAMES[0]
+                  snapshots = {name:read_file(directory_fd,name,4 if name == exit_name else MAX_JSON_BYTES,
+                                             before.st_dev,host_uid,deadline)
+                               for name in ARTIFACT_NAMES+SIDECAR_NAMES}
+                  item,side = snapshots[report_name],snapshots[exit_name]
+                  allowed = []; qualified = False
+                  if step_outcome == 'skipped':
+                      require(item is None and side is None)
+                  else:
+                      actual_exit = None if side is None else exit_code(side['raw'])
+                      if item is None:
+                          require(step_outcome in ('failure','cancelled') and actual_exit != 0)
+                      else:
+                          require(actual_exit is not None)
+                          passed = validate_producer(strict_json(item['raw']))
+                          if passed:
+                              # A PASS file never overrides the actual command or GitHub outcome.
+                              require(actual_exit == 0 and step_outcome == 'success')
+                          else:
+                              require(1 <= actual_exit <= 255 and step_outcome in ('failure','cancelled'))
+                          allowed.append(report_name); qualified = passed
+                  # Recheck names, full metadata and path identity AFTER all parsing/validation.
+                  require(time.monotonic() < deadline and present_names(directory_fd) == present and
+                          metadata(os.fstat(directory_fd)) == metadata(before) and
+                          report_dir.resolve(strict=True) == report_dir and metadata(report_dir.lstat()) == metadata(before))
+                  for name,item in snapshots.items():
+                      try: current = os.stat(name,dir_fd=directory_fd,follow_symlinks=False)
+                      except FileNotFoundError:
+                          require(item is None)
+                      else:
+                          require(item is not None and metadata(current) == item['metadata'])
+                  require(time.monotonic() < deadline)
+                  return {'status':'CHECKED_SAFE_ARTIFACT_ALLOWLIST_ONLY','has-artifacts':bool(allowed),
+                          'artifact_names':allowed,'qualification_passed':qualified}
+              except (ArtifactRejected,OSError,ValueError,TypeError,KeyError,UnicodeError,RecursionError,OverflowError):
+                  return denied
+              finally:
+                  if directory_fd is not None: os.close(directory_fd)
+
+
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import stat
+
+
+          def _wf_need(ok):
+              if not ok:
+                  raise RuntimeError("LIVE_AUTH_WORKFLOW_INPUT_REJECTED")
+
+
+          def _wf_checked(path, sha256=None, cap=1048576):
+              path = Path(path)
+              _wf_need(path.is_absolute() and path.resolve(strict=True) == path)
+              fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC)
+              try:
+                  before = os.fstat(fd)
+                  _wf_need(stat.S_ISREG(before.st_mode) and before.st_nlink == 1 and
+                       before.st_uid == os.geteuid() and 0 < before.st_size <= cap)
+                  chunks = []
+                  count = 0
+                  while True:
+                      chunk = os.read(fd, min(65536, cap + 1 - count))
+                      if not chunk:
+                          break
+                      chunks.append(chunk)
+                      count += len(chunk)
+                      _wf_need(count <= cap)
+                  after = os.fstat(fd)
+                  fields = lambda s: (s.st_dev, s.st_ino, s.st_mode, s.st_uid, s.st_gid,
+                                      s.st_nlink, s.st_size, s.st_mtime_ns, s.st_ctime_ns)
+                  _wf_need(fields(before) == fields(after) == fields(path.lstat()) and count == before.st_size)
+                  raw = b"".join(chunks)
+                  _wf_need(sha256 is None or hashlib.sha256(raw).hexdigest() == sha256)
+                  return raw
+              finally:
+                  os.close(fd)
+
+
+          def _wf_output(items):
+              allowed = {"source-root", "report-dir", "report-identity", "source-sha256", "home", "tmp-dir", "has-artifacts", "qualification-passed", "artifact-path"}
+              fd = os.open(os.environ["GITHUB_OUTPUT"], os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC)
+              try:
+                  for name, value in items.items():
+                      _wf_need(name in allowed and type(value) is str and "\n" not in value and "\r" not in value)
+                      raw = (name + "=" + value + "\n").encode()
+                      _wf_need(os.write(fd, raw) == len(raw))
+              finally:
+                  os.close(fd)
+
+
+          def _wf_source_pin():
+              root = Path(os.environ["SOURCE_ROOT"])
+              expected = os.environ["SOURCE_SHA256"]
+              _wf_need(root.is_absolute() and root.resolve(strict=True) == root and root.is_dir() and
+                       type(expected) is str and len(expected) == 64 and set(expected) <= set("0123456789abcdef"))
+              _wf_checked(root / "scripts/ci-live-auth-acceptance.py", expected, cap=16777216)
+              return root
+
+
+          import sys
+
+          os.umask(0o077)
+          verdict = {"status": "REJECTED_SAFE_ARTIFACT_INPUT", "has-artifacts": False,
+                     "artifact_names": [], "qualification_passed": False}
+          reports = None
+          try:
+              source = _wf_source_pin()
+              reports = Path(os.environ["REPORT_DIR"])
+              identity = json.loads(os.environ["REPORT_IDENTITY"])
+              actual = check_safe_artifacts(report_dir=reports, source_root=source,
+                                           created_identity=identity,
+                                           step_outcome=os.environ["PRODUCER_OUTCOME"])
+              _wf_source_pin()
+              _wf_need(type(actual) is dict and set(actual) == {"status", "has-artifacts", "artifact_names", "qualification_passed"} and
+                       actual["status"] in ("CHECKED_SAFE_ARTIFACT_ALLOWLIST_ONLY", "REJECTED_SAFE_ARTIFACT_INPUT") and
+                       type(actual["has-artifacts"]) is bool and type(actual["qualification_passed"]) is bool and
+                       type(actual["artifact_names"]) is list and
+                       actual["artifact_names"] == (["producer-summary.json"] if actual["has-artifacts"] else []))
+              _wf_need(not actual["has-artifacts"] or actual["status"] == "CHECKED_SAFE_ARTIFACT_ALLOWLIST_ONLY")
+              _wf_need(not actual["qualification_passed"] or actual["has-artifacts"])
+              verdict = actual
+          except Exception:
+              pass
+          outputs = {"has-artifacts": "true" if verdict["has-artifacts"] else "false",
+                     "qualification-passed": "true" if verdict["qualification_passed"] else "false"}
+          if verdict["has-artifacts"]:
+              outputs["artifact-path"] = str(reports / "producer-summary.json")
+          _wf_output(outputs)
+          sys.exit(0 if verdict["qualification_passed"] else 1)
+          PY_SAFE
+
+      - id: upload
+        name: Upload checked summary
+        if: ${{ always() && steps.check.outputs.has-artifacts == 'true' }}
+        timeout-minutes: 2
+        uses: actions/upload-artifact@v7
+        with:
+          name: producer-summary
+          path: ${{ steps.check.outputs.artifact-path }}
+          if-no-files-found: error
+          retention-days: 7

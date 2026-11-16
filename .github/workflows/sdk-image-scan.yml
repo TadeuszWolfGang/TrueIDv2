@@ -1,0 +1,125 @@
+name: sdk-image-scan
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    - cron: '30 2 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  sdk-image-scan:
+    name: sdk-image-scan
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        timeout-minutes: 2
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up Docker Buildx
+        timeout-minutes: 2
+        uses: docker/setup-buildx-action@v4
+        with:
+          driver: docker
+      - name: Independently scan the unchanged SDK image
+        id: scan
+        timeout-minutes: 52
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$PWD" = "$GITHUB_WORKSPACE"
+          test -f .github/scripts/scan-sdk-image.py
+          test ! -L .github/scripts/scan-sdk-image.py
+          prepare_out="$(
+            env -i PATH="$PATH" HOME="$HOME" RUNNER_TEMP="$RUNNER_TEMP" GITHUB_WORKSPACE="$GITHUB_WORKSPACE" GITHUB_ENV="$GITHUB_ENV" \
+              python3 -I -B - <<'C04_PREP'
+          import json, os, stat, tempfile, signal
+          from pathlib import Path
+          signal.signal(signal.SIGALRM,lambda _n,_f:os._exit(2))
+          signal.setitimer(signal.ITIMER_REAL,30)
+          os.umask(0o077)
+          base=Path(os.environ['RUNNER_TEMP']).resolve(strict=True)
+          source=Path(os.environ['GITHUB_WORKSPACE']).resolve(strict=True)
+          assert base.is_dir() and not base.is_relative_to(source) and os.getuid()>=1000
+          out=Path(tempfile.mkdtemp(prefix='trueid-c04-report-',dir=base))
+          info=out.lstat()
+          assert out.resolve(strict=True)==out and stat.S_ISDIR(info.st_mode) and stat.S_IMODE(info.st_mode)==0o700 and info.st_uid==os.getuid()
+          rows={'C04_REPORT_DIR':str(out),'C04_REPORT_DEV':str(info.st_dev),'C04_REPORT_INO':str(info.st_ino),'C04_REPORT_UID':str(info.st_uid)}
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as stream:
+           for key,value in rows.items():
+            assert '\n' not in value and '\r' not in value
+            stream.write(key+'='+value+'\n')
+          for key in ('C04_REPORT_DIR','C04_REPORT_DEV','C04_REPORT_INO','C04_REPORT_UID'):
+           print(rows[key])
+          C04_PREP
+          )"
+          mapfile -t C04_FIELDS <<< "$prepare_out"
+          test "${#C04_FIELDS[@]}" -eq 4
+          export C04_REPORT_DIR="${C04_FIELDS[0]}" C04_REPORT_DEV="${C04_FIELDS[1]}" C04_REPORT_INO="${C04_FIELDS[2]}" C04_REPORT_UID="${C04_FIELDS[3]}"
+          set +e
+          env -i PATH="$PATH" HOME="$HOME" DOCKER_CONFIG="${DOCKER_CONFIG:-$HOME/.docker}" RUNNER_TEMP="$RUNNER_TEMP" \
+            GITHUB_WORKSPACE="$GITHUB_WORKSPACE" GITHUB_SHA="$GITHUB_SHA" \
+            C04_REPORT_DIR="$C04_REPORT_DIR" C04_REPORT_DEV="$C04_REPORT_DEV" C04_REPORT_INO="$C04_REPORT_INO" C04_REPORT_UID="$C04_REPORT_UID" \
+            python3 -I -B - < .github/scripts/scan-sdk-image.py
+          actual_rc=$?
+          set -e
+          env -i PATH="$PATH" HOME="$HOME" C04_ACTUAL_RC="$actual_rc" \
+            C04_REPORT_DIR="$C04_REPORT_DIR" C04_REPORT_DEV="$C04_REPORT_DEV" C04_REPORT_INO="$C04_REPORT_INO" C04_REPORT_UID="$C04_REPORT_UID" \
+            python3 -I -B - <<'C04_EXIT'
+          import os,re,stat,signal
+          from pathlib import Path
+          signal.signal(signal.SIGALRM,lambda _n,_f:os._exit(2))
+          signal.setitimer(signal.ITIMER_REAL,30)
+          os.umask(0o077)
+          raw=os.environ['C04_ACTUAL_RC'].encode('ascii')
+          assert re.fullmatch(rb'(?:0|[1-9][0-9]{0,2})',raw) and int(raw)<=255
+          path=Path(os.environ['C04_REPORT_DIR'])
+          info=path.lstat()
+          assert path.resolve(strict=True)==path and stat.S_ISDIR(info.st_mode) and stat.S_IMODE(info.st_mode)==0o700
+          assert (info.st_dev,info.st_ino,info.st_uid)==tuple(int(os.environ[key])for key in ('C04_REPORT_DEV','C04_REPORT_INO','C04_REPORT_UID'))
+          assert info.st_uid==os.getuid()
+          fd=os.open(path,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
+          try:
+           current=os.fstat(fd)
+           assert (current.st_dev,current.st_ino,current.st_uid)==(info.st_dev,info.st_ino,info.st_uid)
+           out=os.open('producer.exit',os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW|os.O_CLOEXEC,0o600,dir_fd=fd)
+           try:
+            assert os.write(out,raw+b'\n')==len(raw)+1
+            os.fsync(out)
+           finally:os.close(out)
+           os.fsync(fd)
+           current=path.lstat()
+           assert (current.st_dev,current.st_ino,current.st_uid)==(info.st_dev,info.st_ino,info.st_uid) and path.resolve(strict=True)==path
+          finally:os.close(fd)
+          C04_EXIT
+          exit "$actual_rc"
+      - name: Validate one safe SDK receipt and preserve the actual outcome
+        id: safe
+        if: always()
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$PWD" = "$GITHUB_WORKSPACE"
+          test -f .github/scripts/check-sdk-image-receipt.py
+          test ! -L .github/scripts/check-sdk-image-receipt.py
+          env -i PATH="$PATH" HOME="$HOME" GITHUB_WORKSPACE="$GITHUB_WORKSPACE" GITHUB_OUTPUT="$GITHUB_OUTPUT" \
+            C04_REPORT_DIR="${C04_REPORT_DIR:-}" C04_REPORT_DEV="${C04_REPORT_DEV:-}" C04_REPORT_INO="${C04_REPORT_INO:-}" C04_REPORT_UID="${C04_REPORT_UID:-}" \
+            C04_SCAN_OUTCOME="${{ steps.scan.outcome }}" python3 -I -B - < .github/scripts/check-sdk-image-receipt.py
+      - name: Upload the validated safe SDK receipt
+        if: always() && steps.safe.outputs.has-artifacts == 'true'
+        timeout-minutes: 2
+        uses: actions/upload-artifact@v7
+        with:
+          name: sdk-image-scan-receipt
+          path: ${{ env.C04_REPORT_DIR }}/sdk-image-scan-receipt.json
+          if-no-files-found: error
+          retention-days: 7
