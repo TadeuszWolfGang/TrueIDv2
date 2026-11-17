@@ -33,3 +33,6 @@ certs/*.key
 tls/*.key
 !certs/.gitkeep
 !tls/.gitkeep
+
+# Local AI tooling state
+.deepcode/
