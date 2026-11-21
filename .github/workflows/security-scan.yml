@@ -325,7 +325,7 @@ jobs:
                 chmod 0700 "$template_dir"
                 nuclei -ut -ud "$template_dir" -no-color \
                   > /reports/nuclei-bootstrap.log 2>&1 || true
-                yaml_count="$(find "$template_dir" -type f -name '*.yaml' | wc -l | tr -d ' ')"
+                yaml_count="$(find "$template_dir" -type f -name "*.yaml" | wc -l | tr -d " ")"
                 if [ "$yaml_count" -gt 0 ]; then
                   echo "Nuclei templates present: ${yaml_count} *.yaml (attempt ${attempt})"
                   break
