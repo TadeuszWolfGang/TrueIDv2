@@ -314,8 +314,33 @@ jobs:
                 fi
               done
               nuclei -version > /reports/nuclei-version.txt 2>&1
-              nuclei -ut -ud "$template_dir" -no-color \
-                > /reports/nuclei-bootstrap.log 2>&1
+              # nuclei -ut can finish with an empty dir; the later -tl check
+              # did not catch that on 18.11 (job 134736745932) and 20.11
+              # (job 136224722222). Require at least one *.yaml and retry.
+              attempt=1
+              max_attempts=3
+              while :; do
+                rm -rf "$template_dir"
+                mkdir -p "$template_dir"
+                chmod 0700 "$template_dir"
+                nuclei -ut -ud "$template_dir" -no-color \
+                  > /reports/nuclei-bootstrap.log 2>&1 || true
+                yaml_count="$(find "$template_dir" -type f -name '*.yaml' | wc -l | tr -d ' ')"
+                if [ "$yaml_count" -gt 0 ]; then
+                  echo "Nuclei templates present: ${yaml_count} *.yaml (attempt ${attempt})"
+                  break
+                fi
+                if [ "$attempt" -ge "$max_attempts" ]; then
+                  echo "Nuclei template download failed after ${max_attempts} attempts: no *.yaml files in ${template_dir}."
+                  echo "This is an infrastructure / template-download failure, not an application finding."
+                  echo "Last bootstrap log:"
+                  cat /reports/nuclei-bootstrap.log || true
+                  exit 1
+                fi
+                echo "Nuclei template directory empty after attempt ${attempt}; retrying..."
+                sleep $((attempt * 5))
+                attempt=$((attempt + 1))
+              done
               nuclei -duc -ud "$template_dir" -t "$template_dir" \
                 -severity high,critical -tl -silent -no-color \
                 > /reports/nuclei-eligible-templates.txt \
