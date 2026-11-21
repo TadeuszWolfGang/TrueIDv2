@@ -1,0 +1,98 @@
+# TrueIDv2 Gitleaks config (R-08).
+# Extends the default rule set and adds checks for hardcoded password /
+# secret literals assigned to env-style names (*_PASS, *_PASSWORD, *_SECRET),
+# e.g. Python ADMIN_PASS = "...", shell FOO_PASS=..., YAML FOO_PASSWORD: "...".
+# Historical findings are ignored by fingerprint in .gitleaksignore, not by
+# path. Rotation of any historical value that may still be in use is a
+# decision for the repository owner.
+
+title = "TrueIDv2 gitleaks config"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Env templates may contain empty or placeholder assignment examples"
+paths = [
+    '''(?:^|/)\.env\.example$''',
+]
+
+# Quoted literals in any language, including Rust `const NAME: &str = "..."`.
+[[rules]]
+id = "hardcoded-password-literal"
+description = "Hardcoded password or secret literal assigned to an env-style *_PASS, *_PASSWORD, or *_SECRET name."
+regex = '''\b[A-Z][A-Z0-9_]*_(?:PASS(?:WORD)?|SECRET)(?:\s*:\s*&(?:'static\s+)?str|\s*:\s*String)?\s*(?:=|:)\s*['"]([^'"\n]{1,256})['"]'''
+secretGroup = 1
+keywords = [
+    "pass",
+    "password",
+    "secret",
+]
+
+    [[rules.allowlists]]
+    description = "Env-var / secrets references and documentation placeholders (by value)"
+    regexTarget = "secret"
+    regexes = [
+        '''^\$''',
+        '''(?i)^(?:your[-_A-Za-z0-9].*|changeme|placeholder|example(?:[-_].+)?|xxx+|replace[-_]?me|password|secret|pass|\.{3}|…)$''',
+    ]
+
+    [[rules.allowlists]]
+    description = "Env lookups, generated values, fake/test identifiers, and a documented public test vector"
+    regexTarget = "line"
+    regexes = [
+        '''\$\{\{\s*(?:secrets|env|vars|github)\.''',
+        '''os\.environ''',
+        '''os\.getenv''',
+        '''std::env''',
+        '''env::var''',
+        '''openssl rand''',
+        '''(?i)(?:^|[^A-Za-z0-9_])(?:FAKE|DUMMY|EXAMPLE|SAMPLE|PLACEHOLDER)_(?:PASS(?:WORD)?|SECRET)\b''',
+        '''(?i)(?:^|[^A-Za-z0-9_])[A-Z0-9_]*_TEST_(?:PASS(?:WORD)?|SECRET)\b''',
+        '''(?:^|[^A-Za-z0-9_])EXTERNAL_VECTOR_SECRET\b''',
+    ]
+
+    [[rules.allowlists]]
+    description = "Do not scan env templates with this rule"
+    paths = [
+        '''(?:^|/)\.env\.example$''',
+    ]
+
+# Unquoted assignments in shell, YAML, env files, Makefiles, and docs.
+[[rules]]
+id = "hardcoded-password-literal-unquoted"
+description = "Hardcoded unquoted password or secret assigned to an env-style *_PASS, *_PASSWORD, or *_SECRET name."
+path = '''(?i)(?:^|/)?(?:.*\.(?:sh|bash|zsh|env|ya?ml|toml|md)|Makefile|Dockerfile)$'''
+regex = '''\b[A-Z][A-Z0-9_]*_(?:PASS(?:WORD)?|SECRET)\s*(?:=\s*|\s*:\s+)([^'"\s#\n$%]{1,256})'''
+secretGroup = 1
+keywords = [
+    "pass",
+    "password",
+    "secret",
+]
+
+    [[rules.allowlists]]
+    description = "Env-var / secrets references and documentation placeholders (by value)"
+    regexTarget = "secret"
+    regexes = [
+        '''^\$''',
+        '''(?i)^(?:your[-_A-Za-z0-9].*|changeme|placeholder|example(?:[-_].+)?|xxx+|replace[-_]?me|password|secret|pass|\.{3}|…)$''',
+    ]
+
+    [[rules.allowlists]]
+    description = "Env lookups, generated values, and fake/test identifiers"
+    regexTarget = "line"
+    regexes = [
+        '''\$\{\{\s*(?:secrets|env|vars|github)\.''',
+        '''os\.environ''',
+        '''os\.getenv''',
+        '''openssl rand''',
+        '''(?i)(?:^|[^A-Za-z0-9_])(?:FAKE|DUMMY|EXAMPLE|SAMPLE|PLACEHOLDER)_(?:PASS(?:WORD)?|SECRET)\b''',
+        '''(?i)(?:^|[^A-Za-z0-9_])[A-Z0-9_]*_TEST_(?:PASS(?:WORD)?|SECRET)\b''',
+    ]
+
+    [[rules.allowlists]]
+    description = "Do not scan env templates with this rule"
+    paths = [
+        '''(?:^|/)\.env\.example$''',
+    ]
