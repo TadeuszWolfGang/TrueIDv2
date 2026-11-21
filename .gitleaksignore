@@ -1,0 +1,53 @@
+# Historical Gitleaks findings. Fingerprints contain no secret values.
+# These leaks were removed from the current tree or are documented local CI
+# fixtures. Path-wide allowlists are intentionally not used, so a future leak
+# in the same file still fails CI. Rotation of any historical value that may
+# still be in use outside this repository is the repository owner's decision.
+#
+# Sources:
+# - 21.11.2026 full-history scan (default rules, 9 findings)
+# - additional hits from the R-08 hardcoded-password-literal rules
+
+# scripts/smoke-test.sh — introduced 6e7eb74 (2026-02-08), later moved to env.
+6e7eb7448f94467c6aaee8fb1e33bd8af38d7f97:scripts/smoke-test.sh:generic-api-key:45
+
+# Early test fixtures introduced in 6e7eb74; later rewritten on main.
+6e7eb7448f94467c6aaee8fb1e33bd8af38d7f97:tests/auth_integration.rs:hardcoded-password-literal:16
+6e7eb7448f94467c6aaee8fb1e33bd8af38d7f97:tests/rbac_matrix.rs:hardcoded-password-literal:21
+
+# .github/workflows/security-scan.yml — hardcoded CI secrets from 13.03.2026
+# through 01.04.2026, removed in c8d7cea (2026-04-03). Parallel commit SHAs
+# from PR refs are included so a full-clone scan stays green.
+e8e9c8a1bc07dac85af0f7636699c94b99143c41:.github/workflows/security-scan.yml:hardcoded-password-literal:14
+e8e9c8a1bc07dac85af0f7636699c94b99143c41:.github/workflows/security-scan.yml:generic-api-key:14
+e8e9c8a1bc07dac85af0f7636699c94b99143c41:.github/workflows/security-scan.yml:generic-api-key:15
+e8e9c8a1bc07dac85af0f7636699c94b99143c41:.github/workflows/security-scan.yml:generic-api-key:16
+e8e9c8a1bc07dac85af0f7636699c94b99143c41:.github/workflows/security-scan.yml:hardcoded-password-literal:17
+70ecf80bfeab14fdd00b4564c0ebb32c9e829b46:.github/workflows/security-scan.yml:hardcoded-password-literal:14
+70ecf80bfeab14fdd00b4564c0ebb32c9e829b46:.github/workflows/security-scan.yml:generic-api-key:14
+70ecf80bfeab14fdd00b4564c0ebb32c9e829b46:.github/workflows/security-scan.yml:generic-api-key:15
+70ecf80bfeab14fdd00b4564c0ebb32c9e829b46:.github/workflows/security-scan.yml:generic-api-key:16
+70ecf80bfeab14fdd00b4564c0ebb32c9e829b46:.github/workflows/security-scan.yml:hardcoded-password-literal:17
+893db4441e5c6ed1c2f47af9efe2e6dff5314c9e:.github/workflows/security-scan.yml:hardcoded-password-literal:17
+640807aa43f93df8929f2be78700890cc2e1421c:.github/workflows/security-scan.yml:hardcoded-password-literal:17
+
+# Demo-script admin password literals introduced 2dcc812/23e656b (2026-04-07),
+# removed from the current tree by #73 (27fc5a0).
+2dcc81268958084e309ab065cd9dfbe05cec51e2:scripts/capture-screenshots.py:hardcoded-password-literal:15
+2dcc81268958084e309ab065cd9dfbe05cec51e2:scripts/inject-demo-data.py:hardcoded-password-literal:12
+23e656b8485ac0c42e6d375ec769330dc6fa7051:scripts/capture-screenshots.py:hardcoded-password-literal:15
+23e656b8485ac0c42e6d375ec769330dc6fa7051:scripts/inject-demo-data.py:hardcoded-password-literal:12
+
+# Off-main findings from the 21.11.2026 default-rule full scan (PR refs).
+77afbb0c9c46eb5183e6308a6a7e0a8e5afe6aee:apps/web/src/auth.rs:jwt:369
+24219994013a48abc38ba8a0e90b118bc9573e49:apps/web/tests/api_v2_tests.rs:generic-api-key:7001
+
+# Local CI fixtures still present on main (docker smoke / glibc-compat).
+# Ignored by fingerprint only, not by path. Git-mode uses the introducing
+# commit; no-git uses path:rule:line at the current line numbers.
+d62ed981325758f5a55f4bfce4f56c8dd65b0092:scripts/docker-smoke-test.sh:hardcoded-password-literal:41
+d8836b20b53680e9d0f9137563cd2e67ae1f8144:scripts/docker-smoke-test.sh:hardcoded-password-literal:41
+scripts/docker-smoke-test.sh:hardcoded-password-literal:41
+700c4ff25bbbd70379044b6eefa519eb9e331f20:.github/workflows/glibc-compat.yml:hardcoded-password-literal-unquoted:71
+0397f02535b90d0b10b03bf4bf9607e77e24bbb8:.github/workflows/glibc-compat.yml:hardcoded-password-literal-unquoted:71
+.github/workflows/glibc-compat.yml:hardcoded-password-literal-unquoted:76

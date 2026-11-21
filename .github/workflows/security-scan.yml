@@ -26,6 +26,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -46,8 +48,11 @@ jobs:
           mkdir -p security-reports
           docker run --rm \
             -v "$PWD:/repo" \
+            -w /repo \
             ghcr.io/gitleaks/gitleaks:v8.30.0 detect \
             --source /repo \
+            --config /repo/.gitleaks.toml \
+            --gitleaks-ignore-path /repo/.gitleaksignore \
             --report-format sarif \
             --report-path /repo/security-reports/gitleaks.sarif \
             --redact \
