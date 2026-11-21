@@ -4,9 +4,12 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-1.95.0-orange.svg)](https://rustup.rs)
 
-**Real-time identity correlation platform**
-TrueID maps IP addresses to users and devices from multiple telemetry sources and exposes
-RBAC-protected APIs, dashboard workflows, and integration outputs for SOC operations.
+TrueID is an open-source IP-to-user mapping and identity correlation engine for SOC and NOC teams.
+It correlates telemetry from RADIUS (802.1X accounting), Active Directory syslog, DHCP syslog, VPN syslog (AnyConnect, GlobalProtect, Fortinet), and a Windows agent into IP-user-device mappings, then exposes RBAC-protected APIs and a dashboard and can push User-ID to firewalls (PAN-OS, FortiGate) or forward events to a SIEM (CEF, LEEF, JSON).
+
+TrueID is not an eKYC or identity-verification product and is unrelated to trueid.me or the Vietnamese TrueID company.
+
+A sourced comparison of TrueID with RadiUID and with Cisco ISE, limited to IP-to-user mapping, is in [Comparison: TrueID, RadiUID, and Cisco ISE](docs/COMPARISON.md).
 
 ## Requirements
 
@@ -53,6 +56,7 @@ make web
 ## Documentation
 
 - [Integration Guide](docs/INTEGRATION_GUIDE.md)
+- [Comparison: TrueID, RadiUID, and Cisco ISE (IP-to-user mapping)](docs/COMPARISON.md)
 - [Deployment Guide](docs/DEPLOYMENT.md)
 - [HA Notes](docs/HA.md)
 - [Lab Validation Report (2026-04-03)](docs/LAB_TEST_REPORT_2026-04-03.md)
