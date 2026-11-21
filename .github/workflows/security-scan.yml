@@ -297,51 +297,73 @@ jobs:
         run: |
           mkdir -p security-reports
           rm -f security-reports/nuclei-report.jsonl
+
+          # Pin nuclei-templates so DAST does not depend on a live
+          # `nuclei -ut` fetch. That fetch wrote v10.5.2 into
+          # /tmp/trueid-nuclei-templates.CFHHEF on main df3c5d0
+          # (06:54 Istanbul, 4994 HIGH/CRITICAL listed, 4539 loaded)
+          # but on the same image in PR job 136724164461 it exited
+          # after only the banner and left the -ud directory empty.
+          templates_tag="v10.5.2"
+          templates_sha256="016b7abbf931d4d1a851a5a568e44510dc61691dc8a5202e3b24e701515ec574"
+          templates_url="https://github.com/projectdiscovery/nuclei-templates/archive/refs/tags/${templates_tag}.tar.gz"
+          templates_root="${RUNNER_TEMP:-/tmp}"
+          templates_dir="$(mktemp -d "${templates_root}/trueid-nuclei-templates.XXXXXX")"
+          tarball="$(mktemp "${templates_root}/nuclei-templates.XXXXXX.tar.gz")"
+          chmod 0700 "$templates_dir"
+          attempt=1
+          max_attempts=3
+          while :; do
+            rm -rf "$templates_dir"
+            mkdir -p "$templates_dir"
+            chmod 0700 "$templates_dir"
+            rm -f "$tarball"
+            if curl -fsSL --retry 3 --retry-delay 2 -o "$tarball" "$templates_url" \
+              && echo "${templates_sha256}  ${tarball}" | sha256sum -c - \
+              && tar -xzf "$tarball" -C "$templates_dir" --strip-components=1; then
+              yaml_count="$(find "$templates_dir" -type f -name "*.yaml" | wc -l | tr -d " ")"
+              if [ "$yaml_count" -gt 0 ]; then
+                echo "Nuclei templates present: ${yaml_count} *.yaml (tag ${templates_tag}, attempt ${attempt})"
+                printf '%s\n' "$yaml_count" > security-reports/nuclei-pinned-yaml-count.txt
+                printf 'pinned %s sha256:%s\n' "$templates_tag" "$templates_sha256" \
+                  > security-reports/nuclei-template-version.txt
+                break
+              fi
+            fi
+            if [ "$attempt" -ge "$max_attempts" ]; then
+              echo "Nuclei template download failed after ${max_attempts} attempts: no verified *.yaml files in ${templates_dir}."
+              echo "This is an infrastructure / template-download failure, not an application finding."
+              ls -la "$templates_dir" || true
+              exit 1
+            fi
+            echo "Nuclei template fetch/verify failed after attempt ${attempt}; retrying..."
+            sleep $((attempt * 5))
+            attempt=$((attempt + 1))
+          done
+          rm -f "$tarball"
+
           docker run --rm --network host \
             --entrypoint /bin/sh \
             -v "$PWD/security-reports:/reports:rw" \
+            -v "$templates_dir:/templates:ro" \
             projectdiscovery/nuclei@sha256:582d5546902e67052097cb2d07296c642d50a1afc5e44623cb038845df9a32eb \
             -ec '
-              umask 077
-              template_dir="$(mktemp -d /tmp/trueid-nuclei-templates.XXXXXX)"
-              chmod 0700 "$template_dir"
               umask 022
+              yaml_count="$(find /templates -type f -name "*.yaml" | wc -l | tr -d " ")"
+              if [ "$yaml_count" -eq 0 ]; then
+                echo "Mounted nuclei-templates directory has no *.yaml files"
+                exit 1
+              fi
+              echo "Nuclei templates visible in container: ${yaml_count} *.yaml"
               nuclei -h > /reports/nuclei-help.txt 2>&1
-              for flag in ut ud duc tl tv; do
+              for flag in ud duc tl tv; do
                 if ! grep -Eq "(^|[[:space:],])-${flag}([[:space:],]|$)" /reports/nuclei-help.txt; then
                   echo "Pinned Nuclei image lacks a required template flag"
                   exit 1
                 fi
               done
               nuclei -version > /reports/nuclei-version.txt 2>&1
-              # nuclei -ut can finish with an empty dir; the later -tl check
-              # did not catch that on 18.11 (job 134736745932) and 20.11
-              # (job 136224722222). Require at least one *.yaml and retry.
-              attempt=1
-              max_attempts=3
-              while :; do
-                rm -rf "$template_dir"
-                mkdir -p "$template_dir"
-                chmod 0700 "$template_dir"
-                nuclei -ut -ud "$template_dir" -no-color \
-                  > /reports/nuclei-bootstrap.log 2>&1 || true
-                yaml_count="$(find "$template_dir" -type f -name "*.yaml" | wc -l | tr -d " ")"
-                if [ "$yaml_count" -gt 0 ]; then
-                  echo "Nuclei templates present: ${yaml_count} *.yaml (attempt ${attempt})"
-                  break
-                fi
-                if [ "$attempt" -ge "$max_attempts" ]; then
-                  echo "Nuclei template download failed after ${max_attempts} attempts: no *.yaml files in ${template_dir}."
-                  echo "This is an infrastructure / template-download failure, not an application finding."
-                  echo "Last bootstrap log:"
-                  cat /reports/nuclei-bootstrap.log || true
-                  exit 1
-                fi
-                echo "Nuclei template directory empty after attempt ${attempt}; retrying..."
-                sleep $((attempt * 5))
-                attempt=$((attempt + 1))
-              done
-              nuclei -duc -ud "$template_dir" -t "$template_dir" \
+              nuclei -duc -ud /templates -t /templates \
                 -severity high,critical -tl -silent -no-color \
                 > /reports/nuclei-eligible-templates.txt \
                 2> /reports/nuclei-list.log
@@ -353,10 +375,10 @@ jobs:
                 > /reports/nuclei-template-count.txt
               sha256sum /reports/nuclei-eligible-templates.txt \
                 > /reports/nuclei-template-list.sha256
-              nuclei -duc -ud "$template_dir" -tv -no-color \
-                > /reports/nuclei-template-version.txt 2>&1
+              nuclei -duc -ud /templates -tv -no-color \
+                > /reports/nuclei-template-tv.txt 2>&1 || true
               [ -s /reports/nuclei-template-version.txt ]
-              if nuclei -duc -ud "$template_dir" -t "$template_dir" \
+              if nuclei -duc -ud /templates -t /templates \
                 -u http://127.0.0.1:3000 \
                 -severity high,critical -jsonl -no-color \
                 -o /reports/nuclei-report.jsonl \
