@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
-"""Inject realistic demo data into TrueID for screenshot/demo purposes."""
+"""Inject realistic demo data into TrueID for screenshot/demo purposes.
+
+Requires TRUEID_ADMIN_PASS (or TRUEID_SMOKE_ADMIN_PASS) for the bootstrap admin.
+
+Usage:
+  TRUEID_ADMIN_PASS=... python3 scripts/inject-demo-data.py [base_url]
+"""
 
 import json
+import os
 import random
 import sys
 import urllib.request
@@ -9,7 +16,12 @@ from datetime import datetime, timedelta, timezone
 
 BASE_URL = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:3000"
 ADMIN_USER = "admin"
-ADMIN_PASS = "integration12345"
+ADMIN_PASS = os.environ.get("TRUEID_ADMIN_PASS") or os.environ.get("TRUEID_SMOKE_ADMIN_PASS")
+if not ADMIN_PASS:
+    sys.exit(
+        "Set TRUEID_ADMIN_PASS (or TRUEID_SMOKE_ADMIN_PASS) "
+        "before running inject-demo-data.py"
+    )
 
 # --- Demo users across multiple sources ---
 DEMO_ENTRIES = [

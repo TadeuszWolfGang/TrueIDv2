@@ -1,18 +1,29 @@
 #!/usr/bin/env python3
-"""Capture TrueID UI screenshots using Playwright."""
+"""Capture TrueID UI screenshots using Playwright.
+
+Requires TRUEID_ADMIN_PASS (or TRUEID_SMOKE_ADMIN_PASS) for the bootstrap admin.
+
+Usage:
+  TRUEID_ADMIN_PASS=... python3 scripts/capture-screenshots.py [base_url]
+"""
 
 import os
 import sys
 import time
+
+ADMIN_USER = "admin"
+ADMIN_PASS = os.environ.get("TRUEID_ADMIN_PASS") or os.environ.get("TRUEID_SMOKE_ADMIN_PASS")
+if not ADMIN_PASS:
+    sys.exit(
+        "Set TRUEID_ADMIN_PASS (or TRUEID_SMOKE_ADMIN_PASS) "
+        "before running capture-screenshots.py"
+    )
 
 from playwright.sync_api import sync_playwright
 
 BASE_URL = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:3000"
 OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "screenshots")
 os.makedirs(OUT_DIR, exist_ok=True)
-
-ADMIN_USER = "admin"
-ADMIN_PASS = "integration12345"
 
 TABS = [
     ("mappings", "Mappings"),
@@ -57,17 +68,18 @@ def main():
 
         # 2. Perform login via API (bypass force_password_change UI)
         print("Logging in via API...")
-        page.evaluate(f"""
-            async () => {{
-                const resp = await fetch('/api/auth/login', {{
+        page.evaluate(
+            """async ({username, password}) => {
+                const resp = await fetch('/api/auth/login', {
                     method: 'POST',
-                    headers: {{'Content-Type': 'application/json'}},
+                    headers: {'Content-Type': 'application/json'},
                     credentials: 'include',
-                    body: JSON.stringify({{username: '{ADMIN_USER}', password: '{ADMIN_PASS}'}})
-                }});
+                    body: JSON.stringify({username, password})
+                });
                 return resp.ok;
-            }}
-        """)
+            }""",
+            {"username": ADMIN_USER, "password": ADMIN_PASS},
+        )
         page.goto(f"{BASE_URL}/", wait_until="domcontentloaded")
         time.sleep(5)
 
