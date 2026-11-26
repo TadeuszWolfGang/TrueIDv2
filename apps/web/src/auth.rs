@@ -99,7 +99,7 @@ pub fn create_access_token(config: &JwtConfig, user: &User) -> Result<String> {
     let token = encode(
         &Header::new(Algorithm::HS256),
         &claims,
-        &EncodingKey::from_secret(config.secret.as_bytes()),
+        &EncodingKey::from_secret(config.secret.as_bytes())?,
     )?;
 
     Ok(token)
@@ -112,7 +112,7 @@ pub fn create_access_token(config: &JwtConfig, user: &User) -> Result<String> {
 pub fn validate_token(config: &JwtConfig, token: &str) -> Result<Claims> {
     let data = decode::<Claims>(
         token,
-        &DecodingKey::from_secret(config.secret.as_bytes()),
+        &DecodingKey::from_secret(config.secret.as_bytes())?,
         &Validation::new(Algorithm::HS256),
     )?;
     Ok(data.claims)
@@ -333,12 +333,12 @@ mod tests {
         let hs384_token = encode(
             &Header::new(Algorithm::HS384),
             &claims,
-            &EncodingKey::from_secret(config.secret.as_bytes()),
+            &EncodingKey::from_secret(config.secret.as_bytes()).expect("hmac key"),
         )
         .unwrap();
         decode::<Claims>(
             &hs384_token,
-            &DecodingKey::from_secret(config.secret.as_bytes()),
+            &DecodingKey::from_secret(config.secret.as_bytes()).expect("hmac key"),
             &Validation::new(Algorithm::HS384),
         )
         .expect("the rejected token must have a valid HS384 signature");
