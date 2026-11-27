@@ -17,12 +17,6 @@ all-features = true
 [advisories]
 unmaintained = "all"
 ignore = [
-    # Temporary: sqlx-sqlite 0.9.0 selects libsqlite3-sys >=0.30.1,<0.38.0, so the
-    # patched 0.39.x line (SQLite 3.54.x; RUSTSEC-2026-0459 / CVE-2026-119375) is
-    # not selectable yet. The flaw requires a locally crafted database plus sibling
-    # -wal file opened by the victim. Remove this entry once a sqlx release allows
-    # libsqlite3-sys >= 0.39 (check with: cargo update -p libsqlite3-sys --dry-run).
-    "RUSTSEC-2026-0459",
     # Temporary: chrono 0.4.45 is unmaintained (RUSTSEC-2026-0543, published
     # 2026-11-17). No patched release exists; upstream points to jiff or time.
     # Used across the workspace and transitively via sqlx 0.9.0 and radius 0.4.0.
